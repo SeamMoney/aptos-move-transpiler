@@ -1,0 +1,743 @@
+/**
+ * Move Code Generator
+ * Generates Move v2 source code from Move AST
+ */
+
+import type {
+  MoveModule,
+  MoveUseDeclaration,
+  MoveStruct,
+  MoveFunction,
+  MoveEnum,
+  MoveConstant,
+  MoveStatement,
+  MoveExpression,
+  MoveType,
+  MoveAbility,
+  MoveStructField,
+  MoveFunctionParam,
+  MoveTypeParameter,
+} from '../types/move-ast.js';
+
+/**
+ * Generate Move source code from a module AST
+ */
+export function generateMoveCode(module: MoveModule): string {
+  const lines: string[] = [];
+
+  // Module declaration
+  lines.push(`module ${module.address}::${module.name} {`);
+
+  // Use declarations
+  if (module.uses.length > 0) {
+    lines.push('');
+    for (const use of module.uses) {
+      lines.push(`    ${generateUse(use)}`);
+    }
+  }
+
+  // Friend declarations
+  if (module.friends.length > 0) {
+    lines.push('');
+    for (const friend of module.friends) {
+      lines.push(`    friend ${friend};`);
+    }
+  }
+
+  // Constants
+  if (module.constants.length > 0) {
+    lines.push('');
+    lines.push('    // Error codes');
+    for (const constant of module.constants) {
+      lines.push(`    ${generateConstant(constant)}`);
+    }
+  }
+
+  // Structs
+  for (const struct of module.structs) {
+    lines.push('');
+    lines.push(generateStruct(struct, 4));
+  }
+
+  // Enums
+  for (const enumDef of module.enums) {
+    lines.push('');
+    lines.push(generateEnum(enumDef, 4));
+  }
+
+  // Functions
+  for (const func of module.functions) {
+    lines.push('');
+    lines.push(generateFunction(func, 4));
+  }
+
+  lines.push('}');
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate use declaration
+ */
+function generateUse(use: MoveUseDeclaration): string {
+  if (use.members && use.members.length > 0) {
+    const members = use.members.join(', ');
+    return `use ${use.module}::{${members}};`;
+  }
+  if (use.alias) {
+    return `use ${use.module} as ${use.alias};`;
+  }
+  return `use ${use.module};`;
+}
+
+/**
+ * Generate constant declaration
+ */
+function generateConstant(constant: MoveConstant): string {
+  const typeStr = generateType(constant.type);
+  const valueStr = generateExpression(constant.value);
+  return `const ${constant.name}: ${typeStr} = ${valueStr};`;
+}
+
+/**
+ * Generate struct definition
+ */
+function generateStruct(struct: MoveStruct, indent: number): string {
+  const pad = ' '.repeat(indent);
+  const lines: string[] = [];
+
+  // Event attribute
+  if (struct.isEvent) {
+    lines.push(`${pad}#[event]`);
+  }
+
+  // Struct declaration
+  let decl = `${pad}struct ${struct.name}`;
+
+  // Type parameters
+  if (struct.typeParams && struct.typeParams.length > 0) {
+    decl += `<${struct.typeParams.map(generateTypeParam).join(', ')}>`;
+  }
+
+  // Abilities
+  if (struct.abilities.length > 0) {
+    decl += ` has ${struct.abilities.join(', ')}`;
+  }
+
+  decl += ' {';
+  lines.push(decl);
+
+  // Fields
+  for (let i = 0; i < struct.fields.length; i++) {
+    const field = struct.fields[i];
+    const comma = i < struct.fields.length - 1 ? ',' : '';
+    lines.push(`${pad}    ${field.name}: ${generateType(field.type)}${comma}`);
+  }
+
+  lines.push(`${pad}}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate enum definition
+ */
+function generateEnum(enumDef: MoveEnum, indent: number): string {
+  const pad = ' '.repeat(indent);
+  const lines: string[] = [];
+
+  let decl = `${pad}enum ${enumDef.name}`;
+
+  if (enumDef.typeParams && enumDef.typeParams.length > 0) {
+    decl += `<${enumDef.typeParams.map(generateTypeParam).join(', ')}>`;
+  }
+
+  if (enumDef.abilities.length > 0) {
+    decl += ` has ${enumDef.abilities.join(', ')}`;
+  }
+
+  decl += ' {';
+  lines.push(decl);
+
+  for (let i = 0; i < enumDef.variants.length; i++) {
+    const variant = enumDef.variants[i];
+    const comma = i < enumDef.variants.length - 1 ? ',' : '';
+
+    if (variant.fields && variant.fields.length > 0) {
+      const fields = variant.fields
+        .map(f => `${f.name}: ${generateType(f.type)}`)
+        .join(', ');
+      lines.push(`${pad}    ${variant.name} { ${fields} }${comma}`);
+    } else {
+      lines.push(`${pad}    ${variant.name}${comma}`);
+    }
+  }
+
+  lines.push(`${pad}}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate function definition
+ */
+function generateFunction(func: MoveFunction, indent: number): string {
+  const pad = ' '.repeat(indent);
+  const lines: string[] = [];
+
+  // View attribute
+  if (func.isView) {
+    lines.push(`${pad}#[view]`);
+  }
+
+  // Function signature
+  let sig = pad;
+
+  // Visibility
+  if (func.visibility === 'public') {
+    sig += 'public ';
+  } else if (func.visibility === 'public(friend)') {
+    sig += 'public(friend) ';
+  } else if (func.visibility === 'public(package)') {
+    sig += 'public(package) ';
+  }
+
+  // Entry
+  if (func.isEntry) {
+    sig += 'entry ';
+  }
+
+  sig += `fun ${func.name}`;
+
+  // Type parameters
+  if (func.typeParams && func.typeParams.length > 0) {
+    sig += `<${func.typeParams.map(generateTypeParam).join(', ')}>`;
+  }
+
+  // Parameters
+  sig += '(';
+  sig += func.params.map(p => `${p.name}: ${generateType(p.type)}`).join(', ');
+  sig += ')';
+
+  // Return type
+  if (func.returnType) {
+    if (Array.isArray(func.returnType)) {
+      sig += `: (${func.returnType.map(generateType).join(', ')})`;
+    } else {
+      sig += `: ${generateType(func.returnType)}`;
+    }
+  }
+
+  // Acquires
+  if (func.acquires && func.acquires.length > 0) {
+    sig += ` acquires ${func.acquires.join(', ')}`;
+  }
+
+  sig += ' {';
+  lines.push(sig);
+
+  // Body
+  for (const stmt of func.body) {
+    lines.push(generateStatement(stmt, indent + 4));
+  }
+
+  lines.push(`${pad}}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate type parameter
+ */
+function generateTypeParam(param: MoveTypeParameter): string {
+  let str = '';
+  if (param.isPhantom) {
+    str += 'phantom ';
+  }
+  str += param.name;
+  if (param.constraints && param.constraints.length > 0) {
+    str += `: ${param.constraints.join(' + ')}`;
+  }
+  return str;
+}
+
+/**
+ * Generate type
+ */
+function generateType(type: MoveType): string {
+  switch (type.kind) {
+    case 'primitive':
+      return type.name;
+
+    case 'vector':
+      return `vector<${generateType(type.elementType)}>`;
+
+    case 'struct':
+      let str = '';
+      if (type.module) {
+        str += `${type.module}::`;
+      }
+      str += type.name;
+      if (type.typeArgs && type.typeArgs.length > 0) {
+        str += `<${type.typeArgs.map(generateType).join(', ')}>`;
+      }
+      return str;
+
+    case 'reference':
+      const prefix = type.mutable ? '&mut ' : '&';
+      return prefix + generateType(type.innerType);
+
+    case 'generic':
+      return type.name;
+
+    default:
+      return 'unknown';
+  }
+}
+
+/**
+ * Generate statement
+ */
+function generateStatement(stmt: MoveStatement, indent: number): string {
+  const pad = ' '.repeat(indent);
+
+  switch (stmt.kind) {
+    case 'let':
+      return generateLetStatement(stmt, pad);
+
+    case 'assign':
+      return generateAssignStatement(stmt, pad);
+
+    case 'if':
+      return generateIfStatement(stmt, indent);
+
+    case 'while':
+      return generateWhileStatement(stmt, indent);
+
+    case 'loop':
+      return generateLoopStatement(stmt, indent);
+
+    case 'for':
+      return generateForStatement(stmt, indent);
+
+    case 'return':
+      if (stmt.value) {
+        return `${pad}${generateExpression(stmt.value)}`;
+      }
+      return `${pad}return`;
+
+    case 'abort':
+      return `${pad}abort ${generateExpression(stmt.code)}`;
+
+    case 'expression':
+      const exprStr = generateExpression(stmt.expression);
+      // Skip empty expressions (e.g., from modifier placeholders)
+      if (!exprStr || exprStr.trim() === '' || exprStr === '/* unsupported expression */') {
+        return '';
+      }
+      return `${pad}${exprStr};`;
+
+    case 'block':
+      const lines = ['{'];
+      for (const s of stmt.statements) {
+        lines.push(generateStatement(s, indent + 4));
+      }
+      lines.push(`${pad}}`);
+      return lines.map((l, i) => i === 0 ? `${pad}${l}` : l).join('\n');
+
+    default:
+      return `${pad}// Unsupported statement`;
+  }
+}
+
+/**
+ * Generate let statement
+ */
+function generateLetStatement(stmt: any, pad: string): string {
+  let str = `${pad}let `;
+
+  if (stmt.mutable) {
+    str += 'mut ';
+  }
+
+  // Pattern
+  if (Array.isArray(stmt.pattern)) {
+    str += `(${stmt.pattern.join(', ')})`;
+  } else {
+    str += stmt.pattern;
+  }
+
+  // Type annotation
+  if (stmt.type) {
+    str += `: ${generateType(stmt.type)}`;
+  }
+
+  // Value
+  if (stmt.value) {
+    str += ` = ${generateExpression(stmt.value)}`;
+  }
+
+  return str + ';';
+}
+
+/**
+ * Generate assign statement
+ */
+function generateAssignStatement(stmt: any, pad: string): string {
+  const target = generateExpression(stmt.target);
+  const value = generateExpression(stmt.value);
+  const op = stmt.operator || '=';
+
+  return `${pad}${target} ${op} ${value};`;
+}
+
+/**
+ * Generate if statement
+ */
+function generateIfStatement(stmt: any, indent: number): string {
+  const pad = ' '.repeat(indent);
+  const lines: string[] = [];
+
+  lines.push(`${pad}if (${generateExpression(stmt.condition)}) {`);
+
+  for (const s of stmt.thenBlock) {
+    lines.push(generateStatement(s, indent + 4));
+  }
+
+  if (stmt.elseBlock && stmt.elseBlock.length > 0) {
+    lines.push(`${pad}} else {`);
+    for (const s of stmt.elseBlock) {
+      lines.push(generateStatement(s, indent + 4));
+    }
+  }
+
+  lines.push(`${pad}}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate while statement
+ */
+function generateWhileStatement(stmt: any, indent: number): string {
+  const pad = ' '.repeat(indent);
+  const lines: string[] = [];
+
+  let header = `${pad}`;
+  if (stmt.label) {
+    header += `'${stmt.label}: `;
+  }
+  header += `while (${generateExpression(stmt.condition)}) {`;
+  lines.push(header);
+
+  for (const s of stmt.body) {
+    lines.push(generateStatement(s, indent + 4));
+  }
+
+  lines.push(`${pad}}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate loop statement
+ */
+function generateLoopStatement(stmt: any, indent: number): string {
+  const pad = ' '.repeat(indent);
+  const lines: string[] = [];
+
+  let header = `${pad}`;
+  if (stmt.label) {
+    header += `'${stmt.label}: `;
+  }
+  header += 'loop {';
+  lines.push(header);
+
+  for (const s of stmt.body) {
+    lines.push(generateStatement(s, indent + 4));
+  }
+
+  lines.push(`${pad}}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate for statement (Move 2.0+ foreach)
+ */
+function generateForStatement(stmt: any, indent: number): string {
+  const pad = ' '.repeat(indent);
+  const lines: string[] = [];
+
+  let header = `${pad}`;
+  if (stmt.label) {
+    header += `'${stmt.label}: `;
+  }
+
+  // Handle range-based iteration (range(start, end) -> start..end)
+  let iterableStr: string;
+  if (stmt.iterable?.kind === 'call' && stmt.iterable.function === 'range' && stmt.iterable.args?.length === 2) {
+    const start = generateExpression(stmt.iterable.args[0]);
+    const end = generateExpression(stmt.iterable.args[1]);
+    iterableStr = `${start}..${end}`;
+  } else {
+    iterableStr = generateExpression(stmt.iterable);
+  }
+
+  header += `for (${stmt.iterator} in ${iterableStr}) {`;
+  lines.push(header);
+
+  for (const s of stmt.body) {
+    lines.push(generateStatement(s, indent + 4));
+  }
+
+  lines.push(`${pad}}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate expression
+ */
+function generateExpression(expr: MoveExpression): string {
+  switch (expr.kind) {
+    case 'literal':
+      return generateLiteral(expr);
+
+    case 'identifier':
+      return expr.name;
+
+    case 'binary':
+      return `(${generateExpression(expr.left)} ${expr.operator} ${generateExpression(expr.right)})`;
+
+    case 'unary':
+      return `${expr.operator}${generateExpression(expr.operand)}`;
+
+    case 'call':
+      return generateCallExpression(expr);
+
+    case 'method_call':
+      const receiver = generateExpression(expr.receiver);
+      const args = expr.args.map(generateExpression).join(', ');
+      let methodCall = `${receiver}.${expr.method}`;
+      if (expr.typeArgs && expr.typeArgs.length > 0) {
+        methodCall += `<${expr.typeArgs.map(generateType).join(', ')}>`;
+      }
+      return `${methodCall}(${args})`;
+
+    case 'field_access':
+      return `${generateExpression(expr.object)}.${expr.field}`;
+
+    case 'index':
+      return `${generateExpression(expr.object)}[${generateExpression(expr.index)}]`;
+
+    case 'struct':
+      return generateStructExpression(expr);
+
+    case 'borrow':
+      const borrowPrefix = expr.mutable ? '&mut ' : '&';
+      return borrowPrefix + generateExpression(expr.value);
+
+    case 'dereference':
+      return `*${generateExpression(expr.value)}`;
+
+    case 'cast':
+      return `(${generateExpression(expr.value)} as ${generateType(expr.targetType)})`;
+
+    case 'if_expr':
+      const cond = generateExpression(expr.condition);
+      const thenExpr = generateExpression(expr.thenExpr);
+      if (expr.elseExpr) {
+        return `if (${cond}) ${thenExpr} else ${generateExpression(expr.elseExpr)}`;
+      }
+      return `if (${cond}) ${thenExpr}`;
+
+    case 'tuple':
+      return `(${expr.elements.map(generateExpression).join(', ')})`;
+
+    case 'vector':
+      if (expr.elements.length === 0) {
+        if (expr.elementType) {
+          return `vector<${generateType(expr.elementType)}>[]`;
+        }
+        return 'vector[]';
+      }
+      return `vector[${expr.elements.map(generateExpression).join(', ')}]`;
+
+    case 'break':
+      if (expr.label) {
+        return `break '${expr.label}`;
+      }
+      return 'break';
+
+    case 'continue':
+      if (expr.label) {
+        return `continue '${expr.label}`;
+      }
+      return 'continue';
+
+    case 'move':
+      return `move ${generateExpression(expr.value)}`;
+
+    case 'copy':
+      return `copy ${generateExpression(expr.value)}`;
+
+    default:
+      return '/* unsupported expression */';
+  }
+}
+
+/**
+ * Generate literal
+ */
+function generateLiteral(expr: any): string {
+  switch (expr.type) {
+    case 'number':
+      // Convert the value, handling scientific notation
+      const numValue = normalizeNumber(String(expr.value));
+      if (expr.suffix) {
+        return `${numValue}${expr.suffix}`;
+      }
+      return numValue;
+
+    case 'bool':
+      return expr.value ? 'true' : 'false';
+
+    case 'address':
+      return expr.value;
+
+    case 'bytestring':
+      return expr.value;
+
+    case 'string':
+      return `"${expr.value}"`;
+
+    default:
+      return String(expr.value);
+  }
+}
+
+/**
+ * Normalize a number string, converting scientific notation to full integer
+ * Move doesn't support scientific notation like 1e18
+ */
+function normalizeNumber(value: string): string {
+  // Check for scientific notation (e.g., 1e18, 1E18, 10e5)
+  const sciMatch = value.match(/^(\d+(?:\.\d+)?)[eE]\+?(\d+)$/);
+  if (sciMatch) {
+    const mantissa = sciMatch[1];
+    const exponent = parseInt(sciMatch[2], 10);
+
+    // Handle mantissa with decimal point
+    if (mantissa.includes('.')) {
+      const [intPart, decPart] = mantissa.split('.');
+      const decLen = decPart.length;
+      if (exponent >= decLen) {
+        // All decimals move to integer part, add zeros
+        return intPart + decPart + '0'.repeat(exponent - decLen);
+      } else {
+        // Some decimals remain - but for integer types, truncate
+        return intPart + decPart.slice(0, exponent);
+      }
+    } else {
+      // No decimal point, just add zeros
+      return mantissa + '0'.repeat(exponent);
+    }
+  }
+
+  // Handle hex numbers
+  if (value.startsWith('0x') || value.startsWith('0X')) {
+    return value;
+  }
+
+  // Return as-is if already a plain number
+  return value;
+}
+
+/**
+ * Generate call expression
+ */
+function generateCallExpression(expr: any): string {
+  let funcName = expr.function;
+
+  // Handle module-qualified functions
+  if (expr.module) {
+    funcName = `${expr.module}::${funcName}`;
+  }
+
+  // Type arguments
+  if (expr.typeArgs && expr.typeArgs.length > 0) {
+    funcName += `<${expr.typeArgs.map(generateType).join(', ')}>`;
+  }
+
+  // Arguments
+  const args = expr.args.map(generateExpression).join(', ');
+
+  return `${funcName}(${args})`;
+}
+
+/**
+ * Generate struct expression
+ */
+function generateStructExpression(expr: any): string {
+  let name = expr.name;
+  if (expr.module) {
+    name = `${expr.module}::${name}`;
+  }
+
+  if (expr.typeArgs && expr.typeArgs.length > 0) {
+    name += `<${expr.typeArgs.map(generateType).join(', ')}>`;
+  }
+
+  if (expr.fields.length === 0) {
+    return `${name} {}`;
+  }
+
+  const fields = expr.fields
+    .map((f: any) => `${f.name}: ${generateExpression(f.value)}`)
+    .join(', ');
+
+  return `${name} { ${fields} }`;
+}
+
+/**
+ * Generate Move.toml file
+ */
+export function generateMoveToml(
+  packageName: string,
+  moduleAddress: string,
+  options: { includeTokenObjects?: boolean } = {}
+): string {
+  const { includeTokenObjects = false } = options;
+
+  let dependencies = `AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "main" }
+AptosStdlib = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-stdlib", rev = "main" }
+MoveStdlib = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/move-stdlib", rev = "main" }`;
+
+  if (includeTokenObjects) {
+    dependencies += `
+AptosTokenObjects = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-token-objects", rev = "main" }`;
+  }
+
+  let addresses = `${packageName} = "${moduleAddress}"`;
+  if (includeTokenObjects) {
+    addresses += `
+aptos_token_objects = "0x4"`;
+  }
+
+  return `[package]
+name = "${packageName}"
+version = "1.0.0"
+authors = []
+
+[addresses]
+${addresses}
+
+[dependencies]
+${dependencies}
+
+[dev-addresses]
+
+[dev-dependencies]
+`;
+}
