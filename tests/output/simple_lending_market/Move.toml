@@ -5,6 +5,7 @@ authors = []
 
 [addresses]
 simple_lending_market = "0x1"
+transpiler = "0x42"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "main" }

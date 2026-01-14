@@ -26,22 +26,16 @@ module 0x1::nested_loops {
 
     #[view]
     public fun matrix(rows: u256, cols: u256): u256 {
-        {
-            let i: u256 = 0u256;
-            while ((i < rows)) {
-                {
-                    {
-                        let j: u256 = 0u256;
-                        while ((j < cols)) {
-                            {
-                                sum += (i * j);
-                            }
-                            (j + 1);
-                        }
-                    }
-                }
-                (i + 1);
+        let sum = 0u256;
+        let i: u256 = 0u256;
+        while ((i < rows)) {
+            let j: u256 = 0u256;
+            while ((j < cols)) {
+                sum += (i * j);
+                (j + 1);
             }
+            (i + 1);
         }
+        sum
     }
 }

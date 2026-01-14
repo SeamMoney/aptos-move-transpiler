@@ -120,7 +120,7 @@ module transpiler::evm_compat {
         ((a % n) * (b % n)) % n
     }
 
-    /// Exponentiation
+    /// Exponentiation (square-and-multiply algorithm)
     public fun exp_u256(base: u256, exp: u256): u256 {
         if (exp == 0) {
             return 1
@@ -136,6 +136,77 @@ module transpiler::evm_compat {
             e = e >> 1;
         };
         result
+    }
+
+    /// Integer square root using Babylonian method
+    /// Returns floor(sqrt(x))
+    /// Critical for AMM liquidity calculations (Uniswap-style)
+    public fun sqrt(x: u256): u256 {
+        if (x == 0) {
+            return 0
+        };
+
+        // Initial guess: start with x/2 or a better estimate
+        let z = x;
+        let y = (x + 1) / 2;
+
+        // Babylonian method: iterate until convergence
+        while (y < z) {
+            z = y;
+            y = (x / y + y) / 2;
+        };
+
+        z
+    }
+
+    /// Multiply then divide: (a * b) / c
+    /// Handles the case where a * b would overflow
+    /// Uses the identity: (a * b) / c = a * (b / c) + a * (b % c) / c
+    public fun mulDiv(a: u256, b: u256, c: u256): u256 {
+        assert!(c > 0, E_DIVISION_BY_ZERO);
+
+        if (a == 0 || b == 0) {
+            return 0
+        };
+
+        // If a * b won't overflow, do it directly
+        // Check: a <= MAX_U256 / b
+        let max_u256 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+        if (a <= max_u256 / b) {
+            return (a * b) / c
+        };
+
+        // Otherwise, use the decomposition to avoid overflow
+        // (a * b) / c = a * (b / c) + (a * (b % c)) / c
+        let b_div_c = b / c;
+        let b_mod_c = b % c;
+
+        // a * (b / c) - this part is safe if b >= c
+        let part1 = a * b_div_c;
+
+        // (a * (b % c)) / c - b % c < c, so if a < MAX/c this is safe
+        // Otherwise we need further decomposition
+        let part2 = if (a <= max_u256 / b_mod_c) {
+            (a * b_mod_c) / c
+        } else {
+            // Further decompose a
+            let a_div_c = a / c;
+            let a_mod_c = a % c;
+            a_div_c * b_mod_c + (a_mod_c * b_mod_c) / c
+        };
+
+        part1 + part2
+    }
+
+    /// Multiply then divide with rounding up
+    public fun mulDivRoundingUp(a: u256, b: u256, c: u256): u256 {
+        let result = mulDiv(a, b, c);
+        // Check if there's a remainder
+        if (mulmod(a, b, c) > 0) {
+            result + 1
+        } else {
+            result
+        }
     }
 
     // ============================================
@@ -204,7 +275,8 @@ module transpiler::evm_compat {
     /// Get byte at position (0-31, big-endian like EVM)
     public fun byte_at(value: u256, pos: u8): u8 {
         assert!(pos < 32, E_OVERFLOW);
-        (((value >> ((31 - (pos as u256)) * 8)) & 0xFF) as u8)
+        let shift_amount: u8 = (31 - pos) * 8;
+        (((value >> shift_amount) & 0xFF) as u8)
     }
 
     // ============================================
@@ -371,19 +443,6 @@ module transpiler::evm_compat {
             vector::push_back(&mut addr_bytes, 0u8);
         };
         aptos_std::from_bcs::to_address(addr_bytes)
-    }
-
-    /// Convert address to u256
-    public fun address_to_u256(addr: address): u256 {
-        let bytes = bcs::to_bytes(&addr);
-        let result: u256 = 0;
-        let i = 0;
-        let len = vector::length(&bytes);
-        while (i < len) {
-            result = (result << 8) | (*vector::borrow(&bytes, i) as u256);
-            i = i + 1;
-        };
-        result
     }
 
     /// Check if two addresses are equal

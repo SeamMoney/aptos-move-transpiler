@@ -26,14 +26,12 @@ module 0x1::for_loops {
 
     #[view]
     public fun sum(n: u256): u256 {
-        {
-            let i: u256 = 0u256;
-            while ((i < n)) {
-                {
-                    total += i;
-                }
-                (i + 1);
-            }
+        let total = 0u256;
+        let i: u256 = 0u256;
+        while ((i < n)) {
+            total += i;
+            (i + 1);
         }
+        total
     }
 }

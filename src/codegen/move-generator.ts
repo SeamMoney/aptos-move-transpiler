@@ -338,12 +338,12 @@ function generateStatement(stmt: MoveStatement, indent: number): string {
       return `${pad}${exprStr};`;
 
     case 'block':
-      const lines = ['{'];
-      for (const s of stmt.statements) {
-        lines.push(generateStatement(s, indent + 4));
-      }
-      lines.push(`${pad}}`);
-      return lines.map((l, i) => i === 0 ? `${pad}${l}` : l).join('\n');
+      // Generate statements without wrapping braces (flattened)
+      // Nested blocks from unchecked are handled in if-statement generator
+      return stmt.statements
+        .map((s: any) => generateStatement(s, indent))
+        .filter((s: string) => s.trim() !== '')
+        .join('\n');
 
     default:
       return `${pad}// Unsupported statement`;
@@ -352,23 +352,22 @@ function generateStatement(stmt: MoveStatement, indent: number): string {
 
 /**
  * Generate let statement
+ * Note: Move doesn't use 'mut' keyword - all local variables are mutable by default
  */
 function generateLetStatement(stmt: any, pad: string): string {
   let str = `${pad}let `;
-
-  if (stmt.mutable) {
-    str += 'mut ';
-  }
+  const isTuple = Array.isArray(stmt.pattern);
 
   // Pattern
-  if (Array.isArray(stmt.pattern)) {
+  if (isTuple) {
     str += `(${stmt.pattern.join(', ')})`;
   } else {
     str += stmt.pattern;
   }
 
-  // Type annotation
-  if (stmt.type) {
+  // Type annotation - only add for non-tuple patterns
+  // Move tuple destructuring infers types from the value
+  if (stmt.type && !isTuple) {
     str += `: ${generateType(stmt.type)}`;
   }
 
@@ -393,6 +392,8 @@ function generateAssignStatement(stmt: any, pad: string): string {
 
 /**
  * Generate if statement
+ * Flattens nested block statements from unchecked blocks
+ * In Move, if-else used as statement needs trailing semicolon
  */
 function generateIfStatement(stmt: any, indent: number): string {
   const pad = ' '.repeat(indent);
@@ -400,20 +401,40 @@ function generateIfStatement(stmt: any, indent: number): string {
 
   lines.push(`${pad}if (${generateExpression(stmt.condition)}) {`);
 
-  for (const s of stmt.thenBlock) {
+  // Flatten block statements in then block
+  for (const s of flattenStatements(stmt.thenBlock)) {
     lines.push(generateStatement(s, indent + 4));
   }
 
   if (stmt.elseBlock && stmt.elseBlock.length > 0) {
     lines.push(`${pad}} else {`);
-    for (const s of stmt.elseBlock) {
+    // Flatten block statements in else block
+    for (const s of flattenStatements(stmt.elseBlock)) {
       lines.push(generateStatement(s, indent + 4));
     }
   }
 
-  lines.push(`${pad}}`);
+  // Add trailing semicolon - in Move, if-else as statement needs it
+  lines.push(`${pad}};`);
 
   return lines.join('\n');
+}
+
+/**
+ * Flatten nested block statements (from unchecked blocks)
+ * If a statement is a block with just statements inside, inline those statements
+ */
+function flattenStatements(stmts: any[]): any[] {
+  const result: any[] = [];
+  for (const s of stmts) {
+    if (s.kind === 'block' && s.statements) {
+      // Inline the block's statements
+      result.push(...s.statements);
+    } else {
+      result.push(s);
+    }
+  }
+  return result;
 }
 
 /**
@@ -706,9 +727,9 @@ function generateStructExpression(expr: any): string {
 export function generateMoveToml(
   packageName: string,
   moduleAddress: string,
-  options: { includeTokenObjects?: boolean } = {}
+  options: { includeTokenObjects?: boolean; includeEvmCompat?: boolean } = {}
 ): string {
-  const { includeTokenObjects = false } = options;
+  const { includeTokenObjects = false, includeEvmCompat = true } = options;
 
   let dependencies = `AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "main" }
 AptosStdlib = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-stdlib", rev = "main" }
@@ -720,6 +741,13 @@ AptosTokenObjects = { git = "https://github.com/aptos-labs/aptos-core.git", subd
   }
 
   let addresses = `${packageName} = "${moduleAddress}"`;
+
+  // Add transpiler address for evm_compat module
+  if (includeEvmCompat) {
+    addresses += `
+transpiler = "0x42"`;
+  }
+
   if (includeTokenObjects) {
     addresses += `
 aptos_token_objects = "0x4"`;

@@ -136,7 +136,8 @@ export type IRStatement =
   | IRBreakStatement
   | IRContinueStatement
   | IRTryStatement
-  | IRUncheckedBlock;
+  | IRUncheckedBlock
+  | IRPlaceholderStatement;
 
 export interface IRVariableDeclaration {
   kind: 'variable_declaration';
@@ -219,6 +220,10 @@ export interface IRBreakStatement {
 
 export interface IRContinueStatement {
   kind: 'continue';
+}
+
+export interface IRPlaceholderStatement {
+  kind: 'placeholder';
 }
 
 export interface IRTryStatement {
@@ -358,6 +363,7 @@ export interface TranspileContext {
   localVariables: Map<string, IRType>;
   events: Map<string, IREvent>;  // Event definitions for field name lookup
   modifiers?: Map<string, IRModifier>;  // Modifier definitions for inlining
+  constants?: Map<string, { type: any; value: any }>;  // Constant definitions (not in state)
   errorCodes?: Map<string, { message: string; code: number }>;  // Error code mappings
   enums?: Map<string, IREnum>;  // Enum definitions for variant lookup
   errors: TranspileError[];

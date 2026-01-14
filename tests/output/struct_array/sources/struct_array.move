@@ -38,7 +38,7 @@ module 0x1::struct_array {
         move_to(deployer, StructArrayState { items: vector::empty() });
     }
 
-    public entry fun add_item(account: &signer, id: u256, name: vector<u8>) acquires StructArrayState {
+    public entry fun add_item(account: &signer, id: u256, name: vector<u8>) {
         vector::push_back(&mut state.items, item(id, name));
     }
 }

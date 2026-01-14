@@ -45,8 +45,7 @@ module 0x1::enum_param {
     }
 
     #[view]
-    public fun is_active(id: u256): bool acquires EnumParamState {
-        let state = borrow_global<EnumParamState>(@0x1);
+    public fun is_active(id: u256): bool {
         (*table::borrow(&state.item_status, id) == Status::Active)
     }
 }

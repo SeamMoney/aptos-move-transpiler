@@ -4,7 +4,6 @@ module 0x1::multi_sig {
     use aptos_std::table;
     use aptos_framework::event;
     use std::vector;
-    use transpiler::evm_compat;
     use std::string;
 
     // Error codes
@@ -109,73 +108,62 @@ module 0x1::multi_sig {
     public entry fun initialize(deployer: &signer, owners: vector<address>, num_confirmations_required: u256) {
         assert!((owners.length > 0u256), E_OWNERS_REQUIRED);
         assert!(((num_confirmations_required > 0u256) && (num_confirmations_required <= owners.length)), E_INVALID_NUMBER_OF_REQUIRED_CON);
-        {
-            let i: u256 = 0u256;
-            while ((i < owners.length)) {
-                {
-                    let owner: address = *vector::borrow(&owners, i);
-                    assert!((owner != @0x0), E_INVALID_OWNER);
-                    assert!(!*table::borrow(&state.is_owner, owner), E_OWNER_NOT_UNIQUE);
-                    *table::borrow_mut(&mut state.is_owner, owner) = true;
-                    vector::push_back(&mut state.owners, owner);
-                }
-                (i + 1);
-            }
+        let i: u256 = 0u256;
+        while ((i < owners.length)) {
+            let owner: address = *vector::borrow(&owners, i);
+            assert!((owner != @0x0), E_INVALID_OWNER);
+            assert!(!*table::borrow(&state.is_owner, owner), E_OWNER_NOT_UNIQUE);
+            *table::borrow_mut(&mut state.is_owner, owner) = true;
+            vector::push_back(&mut state.owners, owner);
+            (i + 1);
         }
         move_to(deployer, MultiSigState { owners: vector::empty(), is_owner: table::new(), num_confirmations_required: num_confirmations_required, transactions: vector::empty(), is_confirmed: table::new(), nonce: 0 });
     }
 
     public entry fun submit_transaction(account: &signer, to: address, value: u256, data: vector<u8>): u256 acquires MultiSigState {
-        assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         let state = borrow_global_mut<MultiSigState>(@0x1);
+        let tx_index = 0u256;
+        assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         tx_index = state.transactions.length;
         vector::push_back(&mut state.transactions, transaction(to, value, data, false, 0u256));
         event::emit(SubmitTransaction { owner: signer::address_of(account), tx_index: tx_index, to: to, value: value, data: data });
         confirm_transaction(tx_index);
+        tx_index
     }
 
     public entry fun confirm_transaction(account: &signer, tx_index: u256) acquires MultiSigState {
+        let state = borrow_global_mut<MultiSigState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         assert!((tx_index < state.transactions.length), E_NOT_FOUND);
-
         assert!(!*vector::borrow(&state.transactions, tx_index).executed, E_TX_ALREADY_EXECUTED);
-
         assert!(!*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), signer::address_of(account)), E_TX_ALREADY_CONFIRMED);
-
-        let state = borrow_global_mut<MultiSigState>(@0x1);
         let transaction: Transaction = *vector::borrow(&state.transactions, tx_index);
         transaction.num_confirmations += 1u256;
         *table::borrow_mut(&mut *table::borrow_mut(&mut state.is_confirmed, tx_index), signer::address_of(account)) = true;
         event::emit(ConfirmTransaction { owner: signer::address_of(account), tx_index: tx_index });
         if ((transaction.num_confirmations >= state.num_confirmations_required)) {
-            {
-                execute_transaction(tx_index);
-            }
-        }
+            execute_transaction(tx_index);
+        };
     }
 
     public entry fun execute_transaction(account: &signer, tx_index: u256) acquires MultiSigState {
+        let state = borrow_global_mut<MultiSigState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         assert!((tx_index < state.transactions.length), E_NOT_FOUND);
-
         assert!(!*vector::borrow(&state.transactions, tx_index).executed, E_TX_ALREADY_EXECUTED);
-
-        let state = borrow_global_mut<MultiSigState>(@0x1);
         let transaction: Transaction = *vector::borrow(&state.transactions, tx_index);
         assert!((transaction.num_confirmations >= state.num_confirmations_required), E_INSUFFICIENT_BALANCE);
         transaction.executed = true;
-        let (success, ): bool = unknown(transaction.data);
+        let (success, ) = unknown(transaction.data);
         assert!(success, E_TX_EXECUTION_FAILED);
         event::emit(ExecuteTransaction { owner: signer::address_of(account), tx_index: tx_index });
     }
 
     public entry fun revoke_confirmation(account: &signer, tx_index: u256) acquires MultiSigState {
+        let state = borrow_global_mut<MultiSigState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         assert!((tx_index < state.transactions.length), E_NOT_FOUND);
-
         assert!(!*vector::borrow(&state.transactions, tx_index).executed, E_TX_ALREADY_EXECUTED);
-
-        let state = borrow_global_mut<MultiSigState>(@0x1);
         assert!(*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), signer::address_of(account)), E_TX_NOT_CONFIRMED);
         let transaction: Transaction = *vector::borrow(&state.transactions, tx_index);
         transaction.num_confirmations -= 1u256;
@@ -185,7 +173,7 @@ module 0x1::multi_sig {
 
     public entry fun add_owner(account: &signer, owner: address) acquires MultiSigState {
         let state = borrow_global_mut<MultiSigState>(@0x1);
-        assert!((signer::address_of(account) == evm_compat::to_address(this)), E_ONLY_VIA_MULTISIG);
+        assert!((signer::address_of(account) == @0x1), E_ONLY_VIA_MULTISIG);
         assert!((owner != @0x0), E_INVALID_OWNER);
         assert!(!*table::borrow(&state.is_owner, owner), E_ALREADY_EXISTS);
         *table::borrow_mut(&mut state.is_owner, owner) = true;
@@ -195,31 +183,25 @@ module 0x1::multi_sig {
 
     public entry fun remove_owner(account: &signer, owner: address) acquires MultiSigState {
         let state = borrow_global_mut<MultiSigState>(@0x1);
-        assert!((signer::address_of(account) == evm_compat::to_address(this)), E_ONLY_VIA_MULTISIG);
+        assert!((signer::address_of(account) == @0x1), E_ONLY_VIA_MULTISIG);
         assert!(*table::borrow(&state.is_owner, owner), E_UNAUTHORIZED);
         assert!(((state.owners.length - 1u256) >= state.num_confirmations_required), E_UNAUTHORIZED);
         *table::borrow_mut(&mut state.is_owner, owner) = false;
-        {
-            let i: u256 = 0u256;
-            while ((i < state.owners.length)) {
-                {
-                    if ((*vector::borrow(&state.owners, i) == owner)) {
-                        {
-                            *vector::borrow_mut(&mut state.owners, i) = *vector::borrow(&state.owners, (state.owners.length - 1u256));
-                            vector::pop_back(&mut state.owners);
-                            break;
-                        }
-                    }
-                }
-                (i + 1);
-            }
+        let i: u256 = 0u256;
+        while ((i < state.owners.length)) {
+            if ((*vector::borrow(&state.owners, i) == owner)) {
+                *vector::borrow_mut(&mut state.owners, i) = *vector::borrow(&state.owners, (state.owners.length - 1u256));
+                vector::pop_back(&mut state.owners);
+                break;
+            };
+            (i + 1);
         }
         event::emit(OwnerRemoved { owner: owner });
     }
 
     public entry fun change_requirement(account: &signer, required: u256) acquires MultiSigState {
         let state = borrow_global_mut<MultiSigState>(@0x1);
-        assert!((signer::address_of(account) == evm_compat::to_address(this)), E_ONLY_VIA_MULTISIG);
+        assert!((signer::address_of(account) == @0x1), E_ONLY_VIA_MULTISIG);
         assert!(((required > 0u256) && (required <= state.owners.length)), E_INVALID_REQUIREMENT);
         state.num_confirmations_required = required;
         event::emit(RequirementChanged { required: required });
@@ -232,111 +214,84 @@ module 0x1::multi_sig {
     }
 
     #[view]
-    public fun get_transaction_count(): u256 acquires MultiSigState {
-        let state = borrow_global<MultiSigState>(@0x1);
+    public fun get_transaction_count(): u256 {
         state.transactions.length
     }
 
     #[view]
-    public fun get_transaction(tx_index: u256): (address, u256, vector<u8>, bool, u256) acquires MultiSigState {
-        let state = borrow_global<MultiSigState>(@0x1);
+    public fun get_transaction(tx_index: u256): (address, u256, vector<u8>, bool, u256) {
+        let to = @0x0;
+        let value = 0u256;
+        let data = vector::empty();
+        let executed = false;
+        let num_confirmations = 0u256;
         let transaction: Transaction = *vector::borrow(&state.transactions, tx_index);
         (transaction.to, transaction.value, transaction.data, transaction.executed, transaction.num_confirmations)
     }
 
     #[view]
-    public fun get_pending_transactions(): vector<u256> acquires MultiSigState {
-        let state = borrow_global<MultiSigState>(@0x1);
+    public fun get_pending_transactions(): vector<u256> {
         let pending_count: u256 = 0u256;
-        {
-            let i: u256 = 0u256;
-            while ((i < state.transactions.length)) {
-                {
-                    if (!*vector::borrow(&state.transactions, i).executed) {
-                        {
-                            (pending_count + 1);
-                        }
-                    }
-                }
-                (i + 1);
-            }
+        let i: u256 = 0u256;
+        while ((i < state.transactions.length)) {
+            if (!*vector::borrow(&state.transactions, i).executed) {
+                (pending_count + 1);
+            };
+            (i + 1);
         }
         let pending: vector<u256> = unknown(pending_count);
         let index: u256 = 0u256;
-        {
-            let i: u256 = 0u256;
-            while ((i < state.transactions.length)) {
-                {
-                    if (!*vector::borrow(&state.transactions, i).executed) {
-                        {
-                            *vector::borrow_mut(&mut pending, index) = i;
-                            (index + 1);
-                        }
-                    }
-                }
-                (i + 1);
-            }
+        let i: u256 = 0u256;
+        while ((i < state.transactions.length)) {
+            if (!*vector::borrow(&state.transactions, i).executed) {
+                *vector::borrow_mut(&mut pending, index) = i;
+                (index + 1);
+            };
+            (i + 1);
         }
         pending
     }
 
     #[view]
-    public fun is_transaction_confirmed_by(tx_index: u256, owner: address): bool acquires MultiSigState {
-        let state = borrow_global<MultiSigState>(@0x1);
+    public fun is_transaction_confirmed_by(tx_index: u256, owner: address): bool {
         *table::borrow(&*table::borrow(&state.is_confirmed, tx_index), owner)
     }
 
     #[view]
-    public fun get_confirmations(tx_index: u256): vector<address> acquires MultiSigState {
-        let state = borrow_global<MultiSigState>(@0x1);
+    public fun get_confirmations(tx_index: u256): vector<address> {
         let count: u256 = 0u256;
-        {
-            let i: u256 = 0u256;
-            while ((i < state.owners.length)) {
-                {
-                    if (*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), *vector::borrow(&state.owners, i))) {
-                        {
-                            (count + 1);
-                        }
-                    }
-                }
-                (i + 1);
-            }
+        let i: u256 = 0u256;
+        while ((i < state.owners.length)) {
+            if (*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), *vector::borrow(&state.owners, i))) {
+                (count + 1);
+            };
+            (i + 1);
         }
         let confirmations: vector<address> = unknown(count);
         let index: u256 = 0u256;
-        {
-            let i: u256 = 0u256;
-            while ((i < state.owners.length)) {
-                {
-                    if (*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), *vector::borrow(&state.owners, i))) {
-                        {
-                            *vector::borrow_mut(&mut confirmations, index) = *vector::borrow(&state.owners, i);
-                            (index + 1);
-                        }
-                    }
-                }
-                (i + 1);
-            }
+        let i: u256 = 0u256;
+        while ((i < state.owners.length)) {
+            if (*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), *vector::borrow(&state.owners, i))) {
+                *vector::borrow_mut(&mut confirmations, index) = *vector::borrow(&state.owners, i);
+                (index + 1);
+            };
+            (i + 1);
         }
         confirmations
     }
 
     #[view]
     public fun encode_add_owner(owner: address): vector<u8> {
-        let state = borrow_global<MultiSigState>(@0x1);
         abi.encode_with_signature(string::utf8(b"addOwner(address)"), owner)
     }
 
     #[view]
     public fun encode_remove_owner(owner: address): vector<u8> {
-        let state = borrow_global<MultiSigState>(@0x1);
         abi.encode_with_signature(string::utf8(b"removeOwner(address)"), owner)
     }
 
     #[view]
     public fun encode_change_requirement(required: u256): vector<u8> {
-        let state = borrow_global<MultiSigState>(@0x1);
         abi.encode_with_signature(string::utf8(b"changeRequirement(uint256)"), required)
     }
 }

@@ -310,6 +310,11 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     module.structs.push(eventStruct);
   }
 
+  // Transform Solidity constants to Move const declarations FIRST
+  // This populates context.constants so function transformation knows about constants
+  const stateConstants = generateStateConstants(flattenedIR.stateVariables, context);
+  module.constants.push(...stateConstants);
+
   // Transform constructor to init_module
   if (flattenedIR.constructor) {
     const initFn = transformConstructor(flattenedIR.constructor, flattenedIR.name, flattenedIR.stateVariables, context);
@@ -319,13 +324,15 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
   }
 
-  // Transform functions
+  // Transform functions BEFORE generating error constants
+  // This allows error codes from require/assert messages to be discovered first
   for (const fn of flattenedIR.functions) {
     const moveFn = transformFunction(fn, context);
     module.functions.push(moveFn);
   }
 
-  // Add error constants
+  // Add error constants AFTER function transformation
+  // so dynamically discovered error codes from require messages are included
   const errorConstants = generateErrorConstants(flattenedIR, context);
   module.constants.push(...errorConstants);
 
@@ -475,13 +482,18 @@ function generateErrorConstants(ir: IRContract, context: TranspileContext): Move
   }
 
   // Add custom errors from the contract (starting at 0x100 to avoid conflicts)
+  // Check for duplicates to avoid redefining standard error codes
   let customErrorCode = 0x100;
   for (const error of ir.errors) {
-    constants.push({
-      name: `E_${toScreamingSnakeCase(error.name)}`,
-      type: { kind: 'primitive', name: 'u64' },
-      value: { kind: 'literal', type: 'number', value: customErrorCode++, suffix: 'u64' },
-    });
+    const errorName = `E_${toScreamingSnakeCase(error.name)}`;
+    // Skip if already defined (e.g., E_OVERFLOW, E_LOCKED are standard codes)
+    if (!constants.some(c => c.name === errorName)) {
+      constants.push({
+        name: errorName,
+        type: { kind: 'primitive', name: 'u64' },
+        value: { kind: 'literal', type: 'number', value: customErrorCode++, suffix: 'u64' },
+      });
+    }
   }
 
   // Add dynamically discovered error codes from require/revert messages
@@ -498,6 +510,103 @@ function generateErrorConstants(ir: IRContract, context: TranspileContext): Move
   }
 
   return constants;
+}
+
+/**
+ * Generate Move const declarations from Solidity constant state variables
+ */
+function generateStateConstants(
+  stateVariables: IRStateVariable[],
+  context: TranspileContext
+): MoveConstant[] {
+  const constants: MoveConstant[] = [];
+
+  for (const variable of stateVariables) {
+    if (variable.mutability !== 'constant') continue;
+
+    // Get the Move type for this constant
+    const moveType = variable.type.move || { kind: 'primitive', name: 'u256' };
+
+    // Transform the initial value to a Move expression
+    let value: any;
+    if (variable.initialValue) {
+      value = transformConstantValue(variable.initialValue, moveType);
+    } else {
+      value = getDefaultConstantValue(moveType);
+    }
+
+    // Add to context so expression transformer knows this is a constant
+    if (!context.constants) {
+      context.constants = new Map();
+    }
+    context.constants.set(variable.name, { type: moveType, value });
+
+    constants.push({
+      name: toScreamingSnakeCase(variable.name),
+      type: moveType,
+      value,
+    });
+  }
+
+  return constants;
+}
+
+/**
+ * Transform a constant initial value to Move expression
+ */
+function transformConstantValue(expr: any, targetType: any): any {
+  if (!expr) return getDefaultConstantValue(targetType);
+
+  // Handle literals
+  if (expr.kind === 'literal') {
+    const suffix = getMoveTypeSuffix(targetType);
+    return {
+      kind: 'literal',
+      type: expr.type,
+      value: expr.value,
+      suffix,
+    };
+  }
+
+  // Handle identifiers (references to other constants)
+  if (expr.kind === 'identifier') {
+    return { kind: 'identifier', name: toScreamingSnakeCase(expr.name) };
+  }
+
+  // Handle binary operations (for compile-time constant expressions)
+  if (expr.kind === 'binary') {
+    return {
+      kind: 'binary',
+      operator: expr.operator,
+      left: transformConstantValue(expr.left, targetType),
+      right: transformConstantValue(expr.right, targetType),
+    };
+  }
+
+  // Default: return as-is with suffix
+  return expr;
+}
+
+/**
+ * Get Move type suffix for literals
+ */
+function getMoveTypeSuffix(type: any): string {
+  if (type?.name?.startsWith('u')) return type.name;
+  if (type?.name?.startsWith('i')) return type.name;
+  return 'u256';
+}
+
+/**
+ * Get default value for a constant type
+ */
+function getDefaultConstantValue(type: any): any {
+  if (type?.kind === 'primitive') {
+    if (type.name === 'bool') return { kind: 'literal', type: 'bool', value: false };
+    if (type.name.startsWith('u') || type.name.startsWith('i')) {
+      return { kind: 'literal', type: 'number', value: 0, suffix: type.name };
+    }
+  }
+  return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
 }
 
 /**
@@ -658,6 +767,10 @@ function toSnakeCase(str: string): string {
  * Handles spaces, camelCase, and special characters
  */
 function toScreamingSnakeCase(str: string): string {
+  // Already in SCREAMING_SNAKE_CASE format
+  if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
+    return str;
+  }
   return str
     .replace(/\s+/g, '_')           // Replace spaces with underscores
     .replace(/([A-Z])/g, '_$1')     // Add underscore before capitals

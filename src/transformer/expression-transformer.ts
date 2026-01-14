@@ -24,8 +24,12 @@ export function solidityStatementToIR(stmt: any): IRStatement {
       };
 
     case 'ExpressionStatement':
-      // Check if this is an assignment expression (a = b or a += b, etc.)
+      // Check if this is a modifier placeholder (_)
       const exprNode = stmt.expression;
+      if (exprNode?.type === 'Identifier' && exprNode.name === '_') {
+        return { kind: 'placeholder' };
+      }
+      // Check if this is an assignment expression (a = b or a += b, etc.)
       if (exprNode?.type === 'BinaryOperation' && isAssignmentOperator(exprNode.operator)) {
         return {
           kind: 'assignment',
@@ -108,6 +112,10 @@ export function solidityStatementToIR(stmt: any): IRStatement {
         kind: 'unchecked',
         statements: (stmt.block?.statements || []).map(solidityStatementToIR),
       };
+
+    case 'PlaceholderStatement':
+      // The _ placeholder in modifiers - indicates where function body is inserted
+      return { kind: 'placeholder' };
 
     default:
       // Fallback for unsupported statements
@@ -362,6 +370,8 @@ export function transformStatement(
 
     case 'unchecked':
       // Move doesn't have unchecked blocks - operations are unchecked by default
+      // We return undefined here and handle flattening at a higher level
+      // For now, just transform to a block (will be handled by if-statement flattening)
       return {
         kind: 'block',
         statements: stmt.statements
@@ -956,8 +966,26 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
 function transformIdentifier(expr: any, context: TranspileContext): MoveExpression {
   const name = toSnakeCase(expr.name);
 
-  // Check if it's a state variable
-  if (context.stateVariables.has(expr.name)) {
+  // Handle 'this' - refers to the current contract address
+  if (expr.name === 'this') {
+    return {
+      kind: 'literal',
+      type: 'address',
+      value: `@${context.moduleAddress}`,
+    };
+  }
+
+  // Check if it's a constant - constants are accessed directly by their SCREAMING_SNAKE_CASE name
+  if (context.constants?.has(expr.name)) {
+    return {
+      kind: 'identifier',
+      name: toScreamingSnakeCase(expr.name),
+    };
+  }
+
+  // Check if it's a state variable (but not a constant)
+  const stateVar = context.stateVariables.get(expr.name);
+  if (stateVar && stateVar.mutability !== 'constant') {
     return {
       kind: 'field_access',
       object: { kind: 'identifier', name: 'state' },
@@ -1478,6 +1506,10 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
 
   // Special case: address(0) -> @0x0 (zero address)
   if (targetTypeName === 'address') {
+    // If already an address literal, return as-is (e.g., address(this) where this is @0x1)
+    if (value.kind === 'literal' && (value as any).type === 'address') {
+      return value;
+    }
     // Check if converting a literal number to address
     if (value.kind === 'literal' && value.type === 'number') {
       const numValue = value.value;
@@ -1626,6 +1658,10 @@ function toSnakeCase(str: string): string {
  */
 function toScreamingSnakeCase(str: string): string {
   if (!str) return '';
+  // Already in SCREAMING_SNAKE_CASE format
+  if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
+    return str;
+  }
   return str
     .replace(/\s+/g, '_')           // Replace spaces with underscores
     .replace(/([A-Z])/g, '_$1')     // Add underscore before capitals

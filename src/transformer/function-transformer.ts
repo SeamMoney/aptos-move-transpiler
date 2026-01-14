@@ -26,17 +26,110 @@ export function transformFunction(
   const usesMsgSender = bodyUsesMsgSender(fn.body);
 
   // Transform parameters
-  const params = transformParams(fn.params, fn.stateMutability, context, usesMsgSender);
+  const params = transformParams(fn.params, fn.stateMutability, fn.visibility, context, usesMsgSender);
 
   // Transform return type
   const returnType = transformReturnType(fn.returnParams, context);
 
-  // Transform body with modifier assertions prepended
-  const body = transformFunctionBody(fn.body, fn, context);
+  // Check if modifiers need state access
+  const modifiersNeedState = modifiersRequireState(fn.modifiers || []);
 
-  // Prepend modifier checks as inline assertions
+  // Build the function body in correct order:
+  // 1. Borrow state (if needed by modifiers or body)
+  // 2. Modifier checks
+  // 3. Function body statements
+  // 4. Reentrancy guard cleanup (if nonReentrant modifier)
+  const fullBody: MoveStatement[] = [];
+
+  // Check if we need state borrowing
+  // Pure functions NEVER need state - they are pure computations
+  const isPureFunction = fn.stateMutability === 'pure';
+  const bodyNeedsMutState = !isPureFunction && fn.stateMutability !== 'view' &&
+    statementsModifyState(fn.body, context);
+  const bodyNeedsReadState = !isPureFunction && accessesState(fn.body, context);
+  const needsState = !isPureFunction && (modifiersNeedState || bodyNeedsMutState || bodyNeedsReadState);
+  const needsMutableState = modifiersNeedState || bodyNeedsMutState;
+
+  // Add state borrow FIRST (before modifiers)
+  if (needsState) {
+    fullBody.push({
+      kind: 'let',
+      pattern: 'state',
+      mutable: false,
+      value: {
+        kind: 'call',
+        function: needsMutableState ? 'borrow_global_mut' : 'borrow_global',
+        typeArgs: [{ kind: 'struct', name: `${context.contractName}State` }],
+        args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
+      },
+    });
+  }
+
+  // Declare named return parameters (Solidity: returns (uint256 liquidity))
+  // These need to be declared as mutable local variables in Move
+  const namedReturnParams = fn.returnParams.filter(p => p.name && p.name !== '');
+  for (const param of namedReturnParams) {
+    const moveType = param.type.move || { kind: 'primitive', name: 'u256' };
+    fullBody.push({
+      kind: 'let',
+      pattern: toSnakeCase(param.name),
+      mutable: true,
+      value: getDefaultValueForType(moveType),
+    });
+    // Add to local variables so assignments know it's already declared
+    context.localVariables.set(param.name, param.type);
+  }
+
+  // Add modifier PRE-checks SECOND (after state is borrowed)
   const modifierChecks = transformModifiers(fn.modifiers || [], context);
-  const fullBody = [...modifierChecks, ...body];
+  fullBody.push(...modifierChecks);
+
+  // Get modifier POST-statements (cleanup code)
+  const modifierCleanup = getModifiersPostStatements(fn.modifiers || [], context);
+  const hasCleanup = modifierCleanup.length > 0;
+  const hasReturnValue = fn.returnParams && fn.returnParams.length > 0;
+
+  // Transform body statements THIRD (without re-adding state borrow)
+  // If we have cleanup and return values, we need special handling
+  if (hasCleanup && hasReturnValue) {
+    const bodyStatements = transformFunctionBodyStatementsWithCleanup(fn.body, modifierCleanup, context);
+    fullBody.push(...bodyStatements);
+  } else {
+    const bodyStatements = transformFunctionBodyStatements(fn.body, context);
+    fullBody.push(...bodyStatements);
+
+    // Add modifier POST-statements FOURTH (cleanup code after function body)
+    fullBody.push(...modifierCleanup);
+  }
+
+  // Add return statement for functions with named return params
+  // In Solidity, named return params are implicitly returned
+  // In Move, we need explicit return statements
+  if (namedReturnParams.length > 0) {
+    // Check if the last statement is already a return
+    const lastStmt = fullBody[fullBody.length - 1];
+    const hasExplicitReturn = lastStmt?.kind === 'return' ||
+      (lastStmt?.kind === 'expression' && (lastStmt as any).expression?.kind === 'return');
+
+    if (!hasExplicitReturn) {
+      if (namedReturnParams.length === 1) {
+        // Single return value
+        fullBody.push({
+          kind: 'return',
+          value: { kind: 'identifier', name: toSnakeCase(namedReturnParams[0].name) },
+        });
+      } else {
+        // Multiple return values - return as tuple
+        fullBody.push({
+          kind: 'return',
+          value: {
+            kind: 'tuple',
+            elements: namedReturnParams.map(p => ({ kind: 'identifier', name: toSnakeCase(p.name) })),
+          },
+        });
+      }
+    }
+  }
 
   // Determine if this needs acquires
   const acquires = determineAcquires(fn, context);
@@ -64,7 +157,15 @@ export function transformFunction(
 }
 
 /**
- * Transform modifiers to inline assertion statements
+ * Check if any modifiers require state access
+ */
+function modifiersRequireState(modifiers: Array<{ name: string; args?: any[] }>): boolean {
+  const stateModifiers = ['onlyOwner', 'nonReentrant', 'whenNotPaused', 'whenPaused', 'onlyRole'];
+  return modifiers.some(m => stateModifiers.includes(m.name) || m.name.startsWith('only'));
+}
+
+/**
+ * Transform modifiers to inline assertion statements (PRE-placeholder only)
  * Based on e2m's approach of inlining modifier logic
  */
 function transformModifiers(
@@ -79,6 +180,57 @@ function transformModifiers(
   }
 
   return statements;
+}
+
+/**
+ * Get all POST-placeholder statements from modifiers
+ * These are cleanup statements that should run after the function body
+ */
+function getModifiersPostStatements(
+  modifiers: Array<{ name: string; args?: any[] }>,
+  context: TranspileContext
+): MoveStatement[] {
+  const statements: MoveStatement[] = [];
+
+  for (const modifier of modifiers) {
+    const postStatements = getModifierPostStatementsForModifier(modifier, context);
+    statements.push(...postStatements);
+  }
+
+  return statements;
+}
+
+/**
+ * Get POST-placeholder statements for a single modifier
+ */
+function getModifierPostStatementsForModifier(
+  modifier: { name: string; args?: any[] },
+  context: TranspileContext
+): MoveStatement[] {
+  const name = modifier.name;
+
+  // Built-in modifiers with cleanup
+  switch (name) {
+    case 'nonReentrant':
+      // Reset reentrancy status after function body
+      return [{
+        kind: 'assign',
+        target: {
+          kind: 'field_access',
+          object: { kind: 'identifier', name: 'state' },
+          field: 'reentrancy_status',
+        },
+        value: { kind: 'literal', type: 'number', value: 1, suffix: 'u8' },
+      }];
+
+    default:
+      // Check if we have a custom modifier definition
+      const modifierDef = context.modifiers?.get(name);
+      if (modifierDef) {
+        return getModifierPostStatements(modifierDef, modifier.args, context);
+      }
+      return [];
+  }
 }
 
 /**
@@ -279,7 +431,8 @@ function generateRoleCheck(roleArg: any, context: TranspileContext): MoveStateme
 }
 
 /**
- * Inline a custom modifier body
+ * Inline a custom modifier body - returns only PRE-placeholder statements
+ * Post-placeholder statements are handled by getModifierPostStatements
  */
 function inlineModifierBody(
   modifierDef: any,
@@ -298,16 +451,48 @@ function inlineModifierBody(
     });
   }
 
-  // Transform modifier body, substituting parameters and stopping at _
+  // Transform modifier body BEFORE the placeholder only
+  let foundPlaceholder = false;
   for (const stmt of modifierDef.body || []) {
-    // Skip the placeholder _; (where function body goes)
+    // Stop at the placeholder _; (where function body goes)
     if (stmt.kind === 'placeholder') {
-      continue;
+      foundPlaceholder = true;
+      break;
     }
 
     const transformed = transformStatement(stmt, context);
     if (transformed) {
       statements.push(transformed);
+    }
+  }
+
+  return statements;
+}
+
+/**
+ * Get post-placeholder statements from a custom modifier
+ * These should be added AFTER the function body
+ */
+function getModifierPostStatements(
+  modifierDef: any,
+  args: any[] | undefined,
+  context: TranspileContext
+): MoveStatement[] {
+  const statements: MoveStatement[] = [];
+
+  // Find statements AFTER the placeholder
+  let foundPlaceholder = false;
+  for (const stmt of modifierDef.body || []) {
+    if (stmt.kind === 'placeholder') {
+      foundPlaceholder = true;
+      continue;
+    }
+
+    if (foundPlaceholder) {
+      const transformed = transformStatement(stmt, context);
+      if (transformed) {
+        statements.push(transformed);
+      }
     }
   }
 
@@ -500,19 +685,26 @@ function shouldBeEntry(fn: IRFunction): boolean {
 function transformParams(
   params: IRFunctionParam[],
   stateMutability: string,
+  visibility: string,
   context: TranspileContext,
   usesMsgSender: boolean = false
 ): MoveFunctionParam[] {
   const moveParams: MoveFunctionParam[] = [];
 
-  // Add signer parameter for non-view functions
-  if (stateMutability !== 'view' && stateMutability !== 'pure') {
+  // Determine if this is a public-facing function that needs a signer
+  // Private/internal functions only need signer if they use msg.sender
+  const isPublicFunction = visibility === 'public' || visibility === 'external';
+  const needsSigner = isPublicFunction ||
+    (usesMsgSender && stateMutability !== 'view' && stateMutability !== 'pure');
+
+  // Add signer parameter for non-view functions that are public or use msg.sender
+  if (stateMutability !== 'view' && stateMutability !== 'pure' && needsSigner) {
     moveParams.push({
       name: 'account',
       type: MoveTypes.ref(MoveTypes.signer()),
     });
   } else if (usesMsgSender) {
-    // View functions that use msg.sender need an address parameter
+    // View/pure functions that use msg.sender need an address parameter
     moveParams.push({
       name: 'account',
       type: MoveTypes.address(),
@@ -623,7 +815,97 @@ function transformReturnType(
 }
 
 /**
- * Transform function body
+ * Transform function body statements only (without state borrowing)
+ * Used when state borrow is handled separately (e.g., for modifiers)
+ */
+function transformFunctionBodyStatements(
+  statements: IRStatement[],
+  context: TranspileContext
+): MoveStatement[] {
+  const moveStatements: MoveStatement[] = [];
+
+  // Transform each statement
+  for (const stmt of statements) {
+    const transformed = transformStatement(stmt, context);
+    if (transformed) {
+      moveStatements.push(transformed);
+    }
+  }
+
+  return moveStatements;
+}
+
+/**
+ * Transform function body with cleanup code inserted before returns
+ * This ensures cleanup runs before any return statement
+ */
+function transformFunctionBodyStatementsWithCleanup(
+  statements: IRStatement[],
+  cleanupStatements: MoveStatement[],
+  context: TranspileContext
+): MoveStatement[] {
+  const moveStatements: MoveStatement[] = [];
+
+  // Transform each statement, inserting cleanup before returns
+  for (let i = 0; i < statements.length; i++) {
+    const stmt = statements[i];
+    const isLastStatement = i === statements.length - 1;
+
+    if (stmt.kind === 'return') {
+      // For return statements: save value, run cleanup, then return
+      if (stmt.value) {
+        const transformedValue = transformStatement({ kind: 'expression', expression: stmt.value }, context);
+        // Store the return value
+        moveStatements.push({
+          kind: 'let',
+          pattern: '__return_value',
+          mutable: false,
+          value: transformedValue?.kind === 'expression' ? (transformedValue as any).expression : transformedValue,
+        });
+        // Add cleanup statements
+        moveStatements.push(...cleanupStatements);
+        // Return the stored value
+        moveStatements.push({
+          kind: 'expression',
+          expression: { kind: 'identifier', name: '__return_value' },
+        });
+      } else {
+        // No return value, just add cleanup
+        moveStatements.push(...cleanupStatements);
+      }
+    } else if (isLastStatement && stmt.kind === 'expression') {
+      // Last expression might be an implicit return
+      // Store it, run cleanup, then return it
+      const transformed = transformStatement(stmt, context);
+      if (transformed) {
+        moveStatements.push({
+          kind: 'let',
+          pattern: '__return_value',
+          mutable: false,
+          value: (transformed as any).expression || transformed,
+        });
+        // Add cleanup statements
+        moveStatements.push(...cleanupStatements);
+        // Return the stored value
+        moveStatements.push({
+          kind: 'expression',
+          expression: { kind: 'identifier', name: '__return_value' },
+        });
+      }
+    } else {
+      const transformed = transformStatement(stmt, context);
+      if (transformed) {
+        moveStatements.push(transformed);
+      }
+    }
+  }
+
+  return moveStatements;
+}
+
+/**
+ * Transform function body (legacy - includes state borrowing)
+ * @deprecated Use transformFunctionBodyStatements with explicit state borrowing
  */
 function transformFunctionBody(
   statements: IRStatement[],
@@ -877,16 +1159,93 @@ function statementModifiesState(
 }
 
 /**
- * Check if statements access state
+ * Check if statements actually access state variables
  */
 function accessesState(
   statements: IRStatement[],
   context: TranspileContext
 ): boolean {
-  // Simple check - if any state variable names appear, assume state access
   const stateVarNames = new Set(context.stateVariables.keys());
-  // This is a simplified check - a real implementation would do proper analysis
-  return stateVarNames.size > 0;
+  if (stateVarNames.size === 0) return false;
+
+  // Recursively check if any statement references state variables
+  function checkExpression(expr: any): boolean {
+    if (!expr) return false;
+
+    switch (expr.kind) {
+      case 'identifier':
+        return stateVarNames.has(expr.name);
+
+      case 'field_access':
+        // Check if accessing state.field
+        if (expr.object?.kind === 'identifier' && expr.object.name === 'state') {
+          return true;
+        }
+        return checkExpression(expr.object);
+
+      case 'binary':
+        return checkExpression(expr.left) || checkExpression(expr.right);
+
+      case 'unary':
+        return checkExpression(expr.operand);
+
+      case 'call':
+        return expr.args?.some((arg: any) => checkExpression(arg)) || false;
+
+      case 'index_access':
+        return checkExpression(expr.object) || checkExpression(expr.index);
+
+      case 'conditional':
+        return checkExpression(expr.condition) ||
+               checkExpression(expr.trueExpr) ||
+               checkExpression(expr.falseExpr);
+
+      case 'tuple':
+        return expr.elements?.some((el: any) => checkExpression(el)) || false;
+
+      case 'function_call':
+        return expr.args?.some((arg: any) => checkExpression(arg)) || false;
+
+      default:
+        return false;
+    }
+  }
+
+  function checkStatement(stmt: any): boolean {
+    if (!stmt) return false;
+
+    switch (stmt.kind) {
+      case 'variable_declaration':
+        return checkExpression(stmt.value);
+
+      case 'assignment':
+        return checkExpression(stmt.target) || checkExpression(stmt.value);
+
+      case 'expression':
+        return checkExpression(stmt.expression);
+
+      case 'if':
+        return checkExpression(stmt.condition) ||
+               stmt.thenStatements?.some(checkStatement) ||
+               stmt.elseStatements?.some(checkStatement);
+
+      case 'while':
+      case 'for':
+        return checkExpression(stmt.condition) ||
+               stmt.body?.some(checkStatement);
+
+      case 'return':
+        return checkExpression(stmt.value);
+
+      case 'block':
+        return stmt.statements?.some(checkStatement);
+
+      default:
+        return false;
+    }
+  }
+
+  return statements.some(checkStatement);
 }
 
 /**
@@ -898,9 +1257,21 @@ function determineAcquires(
 ): string[] {
   const acquires: string[] = [];
 
-  // If function accesses state, it acquires the state resource
-  if (fn.stateMutability !== 'pure') {
-    acquires.push(`${context.contractName}State`);
+  // Pure functions don't acquire any resources
+  if (fn.stateMutability === 'pure') {
+    return acquires;
+  }
+
+  // Check if function actually accesses state
+  const bodyAccessesState = accessesState(fn.body, context);
+  const modifiersNeedState = fn.modifiers && fn.modifiers.length > 0 &&
+    fn.modifiers.some(m => ['onlyOwner', 'nonReentrant', 'whenNotPaused', 'whenPaused'].includes(m.name));
+
+  if (bodyAccessesState || modifiersNeedState || fn.stateMutability !== 'view') {
+    // Check if we actually modify or read state
+    if (statementsModifyState(fn.body, context) || bodyAccessesState || modifiersNeedState) {
+      acquires.push(`${context.contractName}State`);
+    }
   }
 
   return acquires;
@@ -1082,6 +1453,34 @@ function getDefaultValue(
 
     default:
       return { kind: 'literal', type: 'number', value: 0 };
+  }
+}
+
+/**
+ * Get default value for a Move type
+ */
+function getDefaultValueForType(moveType: any): any {
+  if (!moveType) {
+    return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+  }
+
+  switch (moveType.kind) {
+    case 'primitive':
+      switch (moveType.name) {
+        case 'bool':
+          return { kind: 'literal', type: 'bool', value: false };
+        case 'address':
+          return { kind: 'literal', type: 'address', value: '@0x0' };
+        default:
+          // Numeric types (u8, u64, u128, u256, etc.)
+          return { kind: 'literal', type: 'number', value: 0, suffix: moveType.name };
+      }
+
+    case 'vector':
+      return { kind: 'call', function: 'vector::empty', args: [] };
+
+    default:
+      return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
   }
 }
 

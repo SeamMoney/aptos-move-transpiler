@@ -294,7 +294,7 @@ describe('Move Code Generator', () => {
       expect(code).toContain('let x: u64 = 10');
     });
 
-    it('should generate mutable let statement', () => {
+    it('should generate let statement (Move has no mut keyword - all locals are mutable)', () => {
       const func: MoveFunction = {
         name: 'test',
         visibility: 'private',
@@ -306,7 +306,9 @@ describe('Move Code Generator', () => {
       const module = createModule({ functions: [func] });
       const code = generateMoveCode(module);
 
-      expect(code).toContain('let mut x');
+      // Move doesn't use 'mut' keyword - all local variables are mutable by default
+      expect(code).toContain('let x = 0');
+      expect(code).not.toContain('mut');
     });
 
     it('should generate if statement', () => {

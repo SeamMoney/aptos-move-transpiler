@@ -3,6 +3,8 @@ module 0x1::reentrancy_guard {
     use std::signer;
 
     // Error codes
+    const NOT_ENTERED: u256 = 1u256;
+    const ENTERED: u256 = 2u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -33,7 +35,9 @@ module 0x1::reentrancy_guard {
     }
 
     public entry fun withdraw(account: &signer, amount: u256) acquires ReentrancyGuardState {
+        let state = borrow_global_mut<ReentrancyGuardState>(@0x1);
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
+        state.reentrancy_status = 1u8;
     }
 }

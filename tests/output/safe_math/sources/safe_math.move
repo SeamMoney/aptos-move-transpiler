@@ -32,23 +32,19 @@ module 0x1::safe_math {
 
     #[view]
     public fun sqrt(y: u256): u256 {
+        let z = 0u256;
         if ((y > 3u256)) {
-            {
-                z = y;
-                let x: u256 = ((y / 2u256) + 1u256);
-                while ((x < z)) {
-                    {
-                        z = x;
-                        x = ((((y / x) + x)) / 2u256);
-                    }
-                }
+            z = y;
+            let x: u256 = ((y / 2u256) + 1u256);
+            while ((x < z)) {
+                z = x;
+                x = ((((y / x) + x)) / 2u256);
             }
         } else {
             if ((y != 0u256)) {
-                {
-                    z = 1u256;
-                }
-            }
-        }
+                z = 1u256;
+            };
+        };
+        z
     }
 }

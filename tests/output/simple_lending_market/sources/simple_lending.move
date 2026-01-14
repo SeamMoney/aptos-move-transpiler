@@ -7,6 +7,10 @@ module 0x1::simple_lending {
     use std::vector;
 
     // Error codes
+    const BASE_RATE: u256 = 20000000000000000u256;
+    const MULTIPLIER: u256 = 100000000000000000u256;
+    const JUMP_MULTIPLIER: u256 = 2000000000000000000u256;
+    const KINK: u256 = 800000000000000000u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -31,13 +35,11 @@ module 0x1::simple_lending {
     const E_INSUFFICIENT_COLLATERAL: u64 = 257u64;
     const E_INSUFFICIENT_LIQUIDITY: u64 = 258u64;
     const E_NOT_LIQUIDATABLE: u64 = 259u64;
-    const E_UNAUTHORIZED: u64 = 260u64;
-    const E_INVALID_AMOUNT: u64 = 261u64;
-    const E_ALREADY_LISTED: u64 = 262u64;
-    const E_INVALID_COLLATERAL_FACTOR: u64 = 263u64;
-    const E_CANNOT_SELFLIQUIDATE: u64 = 264u64;
-    const E_REPAY_EXCEEDS_DEBT: u64 = 265u64;
-    const E_INSUFFICIENT_COLLATERAL_TO_SEI: u64 = 266u64;
+    const E_ALREADY_LISTED: u64 = 260u64;
+    const E_INVALID_COLLATERAL_FACTOR: u64 = 261u64;
+    const E_CANNOT_SELFLIQUIDATE: u64 = 262u64;
+    const E_REPAY_EXCEEDS_DEBT: u64 = 263u64;
+    const E_INSUFFICIENT_COLLATERAL_TO_SEI: u64 = 264u64;
 
     struct SimpleLendingState has key {
         admin: address,
@@ -120,9 +122,8 @@ module 0x1::simple_lending {
     }
 
     public entry fun list_market(account: &signer, asset: address, collateral_factor: u256, liquidation_threshold: u256, liquidation_bonus: u256) acquires SimpleLendingState {
-        assert!((signer::address_of(account) == state.admin), E_UNAUTHORIZED);
-
         let state = borrow_global_mut<SimpleLendingState>(@0x1);
+        assert!((signer::address_of(account) == state.admin), E_UNAUTHORIZED);
         assert!(!*table::borrow(&state.markets, asset).is_listed, E_ALREADY_LISTED);
         assert!((collateral_factor <= 1000000000000000000u256), E_INVALID_COLLATERAL_FACTOR);
         *table::borrow_mut(&mut state.markets, asset) = market(true, collateral_factor, liquidation_threshold, liquidation_bonus, 0u256, 0u256, 1000000000000000000u256, block::get_current_block_height());
@@ -130,9 +131,8 @@ module 0x1::simple_lending {
     }
 
     public entry fun set_price(account: &signer, asset: address, price: u256) acquires SimpleLendingState {
-        assert!((signer::address_of(account) == state.admin), E_UNAUTHORIZED);
-
         let state = borrow_global_mut<SimpleLendingState>(@0x1);
+        assert!((signer::address_of(account) == state.admin), E_UNAUTHORIZED);
         *table::borrow_mut(&mut state.asset_prices, asset) = price;
     }
 
@@ -144,10 +144,8 @@ module 0x1::simple_lending {
         accrue_interest(asset);
         let position: UserPosition = *table::borrow(&*table::borrow(&state.user_positions, signer::address_of(account)), asset);
         if ((position.deposit_balance == 0u256)) {
-            {
-                vector::push_back(&mut *table::borrow(&state.user_assets, signer::address_of(account)), asset);
-            }
-        }
+            vector::push_back(&mut *table::borrow(&state.user_assets, signer::address_of(account)), asset);
+        };
         position.deposit_balance += amount;
         market.total_deposits += amount;
         event::emit(Deposit { user: signer::address_of(account), asset: asset, amount: amount });
@@ -219,45 +217,37 @@ module 0x1::simple_lending {
     }
 
     #[view]
-    public fun get_account_liquidity(user: address): (u256, u256, u256, u256) acquires SimpleLendingState {
-        let state = borrow_global<SimpleLendingState>(@0x1);
+    public fun get_account_liquidity(user: address): (u256, u256, u256, u256) {
+        let total_collateral_value = 0u256;
+        let total_borrow_value = 0u256;
+        let available_borrow = 0u256;
+        let shortfall = 0u256;
         let assets: vector<address> = *table::borrow(&state.user_assets, user);
-        {
-            let i: u256 = 0u256;
-            while ((i < assets.length)) {
-                {
-                    let asset: address = *vector::borrow(&assets, i);
-                    let market: Market = *table::borrow(&state.markets, asset);
-                    let position: UserPosition = *table::borrow(&*table::borrow(&state.user_positions, user), asset);
-                    if ((position.deposit_balance > 0u256)) {
-                        {
-                            let deposit_value: u256 = (((position.deposit_balance * *table::borrow(&state.asset_prices, asset))) / 1000000000000000000u256);
-                            let adjusted_collateral: u256 = (((deposit_value * market.collateral_factor)) / 1000000000000000000u256);
-                            total_collateral_value += adjusted_collateral;
-                        }
-                    }
-                    if ((position.borrow_balance > 0u256)) {
-                        {
-                            let borrow_balance: u256 = borrow_balance_with_interest(user, asset);
-                            let borrow_value: u256 = (((borrow_balance * *table::borrow(&state.asset_prices, asset))) / 1000000000000000000u256);
-                            total_borrow_value += borrow_value;
-                        }
-                    }
-                }
-                (i + 1);
-            }
+        let i: u256 = 0u256;
+        while ((i < assets.length)) {
+            let asset: address = *vector::borrow(&assets, i);
+            let market: Market = *table::borrow(&state.markets, asset);
+            let position: UserPosition = *table::borrow(&*table::borrow(&state.user_positions, user), asset);
+            if ((position.deposit_balance > 0u256)) {
+                let deposit_value: u256 = (((position.deposit_balance * *table::borrow(&state.asset_prices, asset))) / 1000000000000000000u256);
+                let adjusted_collateral: u256 = (((deposit_value * market.collateral_factor)) / 1000000000000000000u256);
+                total_collateral_value += adjusted_collateral;
+            };
+            if ((position.borrow_balance > 0u256)) {
+                let borrow_balance: u256 = borrow_balance_with_interest(user, asset);
+                let borrow_value: u256 = (((borrow_balance * *table::borrow(&state.asset_prices, asset))) / 1000000000000000000u256);
+                total_borrow_value += borrow_value;
+            };
+            (i + 1);
         }
         if ((total_collateral_value > total_borrow_value)) {
-            {
-                available_borrow = (total_collateral_value - total_borrow_value);
-                shortfall = 0u256;
-            }
+            available_borrow = (total_collateral_value - total_borrow_value);
+            shortfall = 0u256;
         } else {
-            {
-                available_borrow = 0u256;
-                shortfall = (total_borrow_value - total_collateral_value);
-            }
-        }
+            available_borrow = 0u256;
+            shortfall = (total_borrow_value - total_collateral_value);
+        };
+        (total_collateral_value, total_borrow_value, available_borrow, shortfall)
     }
 
     #[view]
@@ -265,47 +255,36 @@ module 0x1::simple_lending {
         let state = borrow_global<SimpleLendingState>(@0x1);
         let market: Market = *table::borrow(&state.markets, asset);
         if ((market.total_deposits == 0u256)) {
-            {
-                state.base_rate
-            }
-        }
+            BASE_RATE
+        };
         let utilization: u256 = (((market.total_borrows * 1000000000000000000u256)) / market.total_deposits);
-        if ((utilization <= state.kink)) {
-            {
-                (state.base_rate + (((utilization * state.multiplier)) / 1000000000000000000u256))
-            }
+        if ((utilization <= KINK)) {
+            (BASE_RATE + (((utilization * MULTIPLIER)) / 1000000000000000000u256))
         } else {
-            {
-                let normal_rate: u256 = (state.base_rate + (((state.kink * state.multiplier)) / 1000000000000000000u256));
-                let excess_utilization: u256 = (utilization - state.kink);
-                (normal_rate + (((excess_utilization * state.jump_multiplier)) / 1000000000000000000u256))
-            }
-        }
+            let normal_rate: u256 = (BASE_RATE + (((KINK * MULTIPLIER)) / 1000000000000000000u256));
+            let excess_utilization: u256 = (utilization - KINK);
+            (normal_rate + (((excess_utilization * JUMP_MULTIPLIER)) / 1000000000000000000u256))
+        };
     }
 
     #[view]
-    public fun get_supply_rate(asset: address): u256 acquires SimpleLendingState {
-        let state = borrow_global<SimpleLendingState>(@0x1);
+    public fun get_supply_rate(asset: address): u256 {
         let market: Market = *table::borrow(&state.markets, asset);
         if ((market.total_deposits == 0u256)) {
-            {
-                0u256
-            }
-        }
+            0u256
+        };
         let utilization: u256 = (((market.total_borrows * 1000000000000000000u256)) / market.total_deposits);
         let borrow_rate: u256 = get_borrow_rate(asset);
         (((borrow_rate * utilization)) / 1000000000000000000u256)
     }
 
-    public(package) fun accrue_interest(account: &signer, asset: address) acquires SimpleLendingState {
+    public(package) fun accrue_interest(asset: address) acquires SimpleLendingState {
         let state = borrow_global_mut<SimpleLendingState>(@0x1);
         let market: Market = *table::borrow(&state.markets, asset);
         let block_delta: u256 = (block::get_current_block_height() - market.last_update_block);
         if ((block_delta == 0u256)) {
-            {
-                return
-            }
-        }
+            return
+        };
         let borrow_rate: u256 = get_borrow_rate(asset);
         let interest_factor: u256 = (borrow_rate * block_delta);
         let interest_accumulated: u256 = (((market.total_borrows * interest_factor)) / 1000000000000000000u256);
@@ -315,15 +294,12 @@ module 0x1::simple_lending {
     }
 
     #[view]
-    public(package) fun borrow_balance_with_interest(user: address, asset: address): u256 acquires SimpleLendingState {
-        let state = borrow_global<SimpleLendingState>(@0x1);
+    public(package) fun borrow_balance_with_interest(user: address, asset: address): u256 {
         let position: UserPosition = *table::borrow(&*table::borrow(&state.user_positions, user), asset);
         let market: Market = *table::borrow(&state.markets, asset);
         if ((position.borrow_balance == 0u256)) {
-            {
-                0u256
-            }
-        }
+            0u256
+        };
         let principal_times_index: u256 = (position.borrow_balance * market.borrow_index);
         (principal_times_index / position.borrow_index)
     }

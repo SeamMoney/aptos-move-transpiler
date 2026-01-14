@@ -33,6 +33,7 @@ module 0x1::ownable {
     }
 
     public entry fun do_something(account: &signer) acquires OwnableState {
+        let state = borrow_global_mut<OwnableState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
     }
 }
