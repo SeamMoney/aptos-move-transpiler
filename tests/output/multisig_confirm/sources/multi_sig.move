@@ -112,15 +112,15 @@ module 0x1::multi_sig {
         while ((i < owners.length)) {
             let owner: address = *vector::borrow(&owners, i);
             assert!((owner != @0x0), E_INVALID_OWNER);
-            assert!(!*table::borrow(&state.is_owner, owner), E_OWNER_NOT_UNIQUE);
-            *table::borrow_mut(&mut state.is_owner, owner) = true;
+            assert!(!*table::borrow_with_default(&state.is_owner, owner, &false), E_OWNER_NOT_UNIQUE);
+            *table::borrow_mut_with_default(&mut state.is_owner, owner, false) = true;
             vector::push_back(&mut state.owners, owner);
-            (i + 1);
+            i = (i + 1);
         }
         move_to(deployer, MultiSigState { owners: vector::empty(), is_owner: table::new(), num_confirmations_required: num_confirmations_required, transactions: vector::empty(), is_confirmed: table::new(), nonce: 0 });
     }
 
-    public entry fun submit_transaction(account: &signer, to: address, value: u256, data: vector<u8>): u256 acquires MultiSigState {
+    public fun submit_transaction(account: &signer, to: address, value: u256, data: vector<u8>): u256 acquires MultiSigState {
         let state = borrow_global_mut<MultiSigState>(@0x1);
         let tx_index = 0u256;
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
@@ -136,10 +136,10 @@ module 0x1::multi_sig {
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         assert!((tx_index < state.transactions.length), E_NOT_FOUND);
         assert!(!*vector::borrow(&state.transactions, tx_index).executed, E_TX_ALREADY_EXECUTED);
-        assert!(!*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), signer::address_of(account)), E_TX_ALREADY_CONFIRMED);
+        assert!(!*table::borrow(&*table::borrow_with_default(&state.is_confirmed, tx_index, &0u256), signer::address_of(account)), E_TX_ALREADY_CONFIRMED);
         let transaction: Transaction = *vector::borrow(&state.transactions, tx_index);
         transaction.num_confirmations += 1u256;
-        *table::borrow_mut(&mut *table::borrow_mut(&mut state.is_confirmed, tx_index), signer::address_of(account)) = true;
+        *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.is_confirmed, tx_index, 0u256), signer::address_of(account)) = true;
         event::emit(ConfirmTransaction { owner: signer::address_of(account), tx_index: tx_index });
         if ((transaction.num_confirmations >= state.num_confirmations_required)) {
             execute_transaction(tx_index);
@@ -154,7 +154,7 @@ module 0x1::multi_sig {
         let transaction: Transaction = *vector::borrow(&state.transactions, tx_index);
         assert!((transaction.num_confirmations >= state.num_confirmations_required), E_INSUFFICIENT_BALANCE);
         transaction.executed = true;
-        let (success, ) = unknown(transaction.data);
+        let (success, 1) = unknown(transaction.data);
         assert!(success, E_TX_EXECUTION_FAILED);
         event::emit(ExecuteTransaction { owner: signer::address_of(account), tx_index: tx_index });
     }
@@ -164,10 +164,10 @@ module 0x1::multi_sig {
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         assert!((tx_index < state.transactions.length), E_NOT_FOUND);
         assert!(!*vector::borrow(&state.transactions, tx_index).executed, E_TX_ALREADY_EXECUTED);
-        assert!(*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), signer::address_of(account)), E_TX_NOT_CONFIRMED);
+        assert!(*table::borrow(&*table::borrow_with_default(&state.is_confirmed, tx_index, &0u256), signer::address_of(account)), E_TX_NOT_CONFIRMED);
         let transaction: Transaction = *vector::borrow(&state.transactions, tx_index);
         transaction.num_confirmations -= 1u256;
-        *table::borrow_mut(&mut *table::borrow_mut(&mut state.is_confirmed, tx_index), signer::address_of(account)) = false;
+        *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.is_confirmed, tx_index, 0u256), signer::address_of(account)) = false;
         event::emit(RevokeConfirmation { owner: signer::address_of(account), tx_index: tx_index });
     }
 
@@ -175,8 +175,8 @@ module 0x1::multi_sig {
         let state = borrow_global_mut<MultiSigState>(@0x1);
         assert!((signer::address_of(account) == @0x1), E_ONLY_VIA_MULTISIG);
         assert!((owner != @0x0), E_INVALID_OWNER);
-        assert!(!*table::borrow(&state.is_owner, owner), E_ALREADY_EXISTS);
-        *table::borrow_mut(&mut state.is_owner, owner) = true;
+        assert!(!*table::borrow_with_default(&state.is_owner, owner, &false), E_ALREADY_EXISTS);
+        *table::borrow_mut_with_default(&mut state.is_owner, owner, false) = true;
         vector::push_back(&mut state.owners, owner);
         event::emit(OwnerAdded { owner: owner });
     }
@@ -184,9 +184,9 @@ module 0x1::multi_sig {
     public entry fun remove_owner(account: &signer, owner: address) acquires MultiSigState {
         let state = borrow_global_mut<MultiSigState>(@0x1);
         assert!((signer::address_of(account) == @0x1), E_ONLY_VIA_MULTISIG);
-        assert!(*table::borrow(&state.is_owner, owner), E_UNAUTHORIZED);
+        assert!(*table::borrow_with_default(&state.is_owner, owner, &false), E_UNAUTHORIZED);
         assert!(((state.owners.length - 1u256) >= state.num_confirmations_required), E_UNAUTHORIZED);
-        *table::borrow_mut(&mut state.is_owner, owner) = false;
+        *table::borrow_mut_with_default(&mut state.is_owner, owner, false) = false;
         let i: u256 = 0u256;
         while ((i < state.owners.length)) {
             if ((*vector::borrow(&state.owners, i) == owner)) {
@@ -194,7 +194,7 @@ module 0x1::multi_sig {
                 vector::pop_back(&mut state.owners);
                 break;
             };
-            (i + 1);
+            i = (i + 1);
         }
         event::emit(OwnerRemoved { owner: owner });
     }
@@ -235,9 +235,9 @@ module 0x1::multi_sig {
         let i: u256 = 0u256;
         while ((i < state.transactions.length)) {
             if (!*vector::borrow(&state.transactions, i).executed) {
-                (pending_count + 1);
+                pending_count = (pending_count + 1);
             };
-            (i + 1);
+            i = (i + 1);
         }
         let pending: vector<u256> = unknown(pending_count);
         let index: u256 = 0u256;
@@ -245,16 +245,16 @@ module 0x1::multi_sig {
         while ((i < state.transactions.length)) {
             if (!*vector::borrow(&state.transactions, i).executed) {
                 *vector::borrow_mut(&mut pending, index) = i;
-                (index + 1);
+                index = (index + 1);
             };
-            (i + 1);
+            i = (i + 1);
         }
         pending
     }
 
     #[view]
     public fun is_transaction_confirmed_by(tx_index: u256, owner: address): bool {
-        *table::borrow(&*table::borrow(&state.is_confirmed, tx_index), owner)
+        *table::borrow(&*table::borrow_with_default(&state.is_confirmed, tx_index, &0u256), owner)
     }
 
     #[view]
@@ -262,20 +262,20 @@ module 0x1::multi_sig {
         let count: u256 = 0u256;
         let i: u256 = 0u256;
         while ((i < state.owners.length)) {
-            if (*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), *vector::borrow(&state.owners, i))) {
-                (count + 1);
+            if (*table::borrow(&*table::borrow_with_default(&state.is_confirmed, tx_index, &0u256), *vector::borrow(&state.owners, i))) {
+                count = (count + 1);
             };
-            (i + 1);
+            i = (i + 1);
         }
         let confirmations: vector<address> = unknown(count);
         let index: u256 = 0u256;
         let i: u256 = 0u256;
         while ((i < state.owners.length)) {
-            if (*table::borrow(&*table::borrow(&state.is_confirmed, tx_index), *vector::borrow(&state.owners, i))) {
+            if (*table::borrow(&*table::borrow_with_default(&state.is_confirmed, tx_index, &0u256), *vector::borrow(&state.owners, i))) {
                 *vector::borrow_mut(&mut confirmations, index) = *vector::borrow(&state.owners, i);
-                (index + 1);
+                index = (index + 1);
             };
-            (i + 1);
+            i = (i + 1);
         }
         confirmations
     }

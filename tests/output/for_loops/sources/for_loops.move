@@ -30,7 +30,7 @@ module 0x1::for_loops {
         let i: u256 = 0u256;
         while ((i < n)) {
             total += i;
-            (i + 1);
+            i = (i + 1);
         }
         total
     }

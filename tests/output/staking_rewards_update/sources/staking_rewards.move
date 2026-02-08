@@ -96,7 +96,7 @@ module 0x1::staking_rewards {
 
     #[view]
     public fun earned(account: address): u256 {
-        ((((*table::borrow(&state.staked_balance, account) * ((reward_per_token() - *table::borrow(&state.user_reward_per_token_paid, account)))) / 1000000000000000000u256)) + *table::borrow(&state.rewards, account))
+        ((((*table::borrow_with_default(&state.staked_balance, account, &0u256) * ((reward_per_token() - *table::borrow_with_default(&state.user_reward_per_token_paid, account, &0u256)))) / 1000000000000000000u256)) + *table::borrow_with_default(&state.rewards, account, &0u256))
     }
 
     #[view]
@@ -110,12 +110,12 @@ module 0x1::staking_rewards {
         state.reward_per_token_stored = reward_per_token();
         state.last_update_time = last_time_reward_applicable();
         if ((account != @0x0)) {
-            *table::borrow_mut(&mut state.rewards, account) = earned(account);
-            *table::borrow_mut(&mut state.user_reward_per_token_paid, account) = state.reward_per_token_stored;
+            *table::borrow_mut_with_default(&mut state.rewards, account, 0u256) = earned(account);
+            *table::borrow_mut_with_default(&mut state.user_reward_per_token_paid, account, 0u256) = state.reward_per_token_stored;
         };
         assert!((amount > 0u256), E_INVALID_AMOUNT);
         state.total_staked += amount;
-        *table::borrow_mut(&mut state.staked_balance, signer::address_of(account)) += amount;
+        *table::borrow_mut_with_default(&mut state.staked_balance, signer::address_of(account), 0u256) += amount;
         event::emit(Staked { user: signer::address_of(account), amount: amount });
     }
 
@@ -124,13 +124,13 @@ module 0x1::staking_rewards {
         state.reward_per_token_stored = reward_per_token();
         state.last_update_time = last_time_reward_applicable();
         if ((account != @0x0)) {
-            *table::borrow_mut(&mut state.rewards, account) = earned(account);
-            *table::borrow_mut(&mut state.user_reward_per_token_paid, account) = state.reward_per_token_stored;
+            *table::borrow_mut_with_default(&mut state.rewards, account, 0u256) = earned(account);
+            *table::borrow_mut_with_default(&mut state.user_reward_per_token_paid, account, 0u256) = state.reward_per_token_stored;
         };
         assert!((amount > 0u256), E_INVALID_AMOUNT);
         assert!((user != @0x0), E_INVALID_USER);
         state.total_staked += amount;
-        *table::borrow_mut(&mut state.staked_balance, user) += amount;
+        *table::borrow_mut_with_default(&mut state.staked_balance, user, 0u256) += amount;
         event::emit(Staked { user: user, amount: amount });
     }
 
@@ -139,13 +139,13 @@ module 0x1::staking_rewards {
         state.reward_per_token_stored = reward_per_token();
         state.last_update_time = last_time_reward_applicable();
         if ((account != @0x0)) {
-            *table::borrow_mut(&mut state.rewards, account) = earned(account);
-            *table::borrow_mut(&mut state.user_reward_per_token_paid, account) = state.reward_per_token_stored;
+            *table::borrow_mut_with_default(&mut state.rewards, account, 0u256) = earned(account);
+            *table::borrow_mut_with_default(&mut state.user_reward_per_token_paid, account, 0u256) = state.reward_per_token_stored;
         };
         assert!((amount > 0u256), E_INVALID_AMOUNT);
-        assert!((*table::borrow(&state.staked_balance, signer::address_of(account)) >= amount), E_INSUFFICIENT_BALANCE);
+        assert!((*table::borrow_with_default(&state.staked_balance, signer::address_of(account), &0u256) >= amount), E_INSUFFICIENT_BALANCE);
         state.total_staked -= amount;
-        *table::borrow_mut(&mut state.staked_balance, signer::address_of(account)) -= amount;
+        *table::borrow_mut_with_default(&mut state.staked_balance, signer::address_of(account), 0u256) -= amount;
         event::emit(Withdrawn { user: signer::address_of(account), amount: amount });
     }
 
@@ -154,18 +154,18 @@ module 0x1::staking_rewards {
         state.reward_per_token_stored = reward_per_token();
         state.last_update_time = last_time_reward_applicable();
         if ((account != @0x0)) {
-            *table::borrow_mut(&mut state.rewards, account) = earned(account);
-            *table::borrow_mut(&mut state.user_reward_per_token_paid, account) = state.reward_per_token_stored;
+            *table::borrow_mut_with_default(&mut state.rewards, account, 0u256) = earned(account);
+            *table::borrow_mut_with_default(&mut state.user_reward_per_token_paid, account, 0u256) = state.reward_per_token_stored;
         };
-        let reward: u256 = *table::borrow(&state.rewards, signer::address_of(account));
+        let reward: u256 = *table::borrow_with_default(&state.rewards, signer::address_of(account), &0u256);
         if ((reward > 0u256)) {
-            *table::borrow_mut(&mut state.rewards, signer::address_of(account)) = 0u256;
+            *table::borrow_mut_with_default(&mut state.rewards, signer::address_of(account), 0u256) = 0u256;
             event::emit(RewardPaid { user: signer::address_of(account), reward: reward });
         };
     }
 
     public entry fun exit(account: &signer) {
-        withdraw(*table::borrow(&state.staked_balance, signer::address_of(account)));
+        withdraw(*table::borrow_with_default(&state.staked_balance, signer::address_of(account), &0u256));
         get_reward();
     }
 
@@ -175,8 +175,8 @@ module 0x1::staking_rewards {
         state.reward_per_token_stored = reward_per_token();
         state.last_update_time = last_time_reward_applicable();
         if ((account != @0x0)) {
-            *table::borrow_mut(&mut state.rewards, account) = earned(account);
-            *table::borrow_mut(&mut state.user_reward_per_token_paid, account) = state.reward_per_token_stored;
+            *table::borrow_mut_with_default(&mut state.rewards, account, 0u256) = earned(account);
+            *table::borrow_mut_with_default(&mut state.user_reward_per_token_paid, account, 0u256) = state.reward_per_token_stored;
         };
         if ((timestamp::now_seconds() >= state.period_finish)) {
             state.reward_rate = (reward / state.rewards_duration);

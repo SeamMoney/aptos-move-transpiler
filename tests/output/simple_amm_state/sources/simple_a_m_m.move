@@ -82,7 +82,7 @@ module 0x1::simple_a_m_m {
         move_to(deployer, SimpleAMMState { token0: token0, token1: token1, reserve0: 0, reserve1: 0, total_supply: 0, balance_of: table::new(), unlocked: 0 });
     }
 
-    public entry fun mint(account: &signer, to: address): u256 acquires SimpleAMMState {
+    public fun mint(account: &signer, to: address): u256 acquires SimpleAMMState {
         let state = borrow_global_mut<SimpleAMMState>(@0x1);
         let liquidity = 0u256;
         assert!((state.unlocked == 1u256), E_LOCKED);
@@ -95,20 +95,20 @@ module 0x1::simple_a_m_m {
         let total_supply: u256 = state.total_supply;
         if ((total_supply == 0u256)) {
             liquidity = (sqrt((amount0 * amount1)) - MINIMUM_LIQUIDITY);
-            *table::borrow_mut(&mut state.balance_of, @0x0) = MINIMUM_LIQUIDITY;
+            *table::borrow_mut_with_default(&mut state.balance_of, @0x0, 0u256) = MINIMUM_LIQUIDITY;
             state.total_supply = MINIMUM_LIQUIDITY;
         } else {
             liquidity = min((((amount0 * total_supply)) / reserve0), (((amount1 * total_supply)) / reserve1));
         };
         assert!((liquidity > 0u256), E_INSUFFICIENT_LIQUIDITY_MINTED);
-        *table::borrow_mut(&mut state.balance_of, to) += liquidity;
+        *table::borrow_mut_with_default(&mut state.balance_of, to, 0u256) += liquidity;
         state.total_supply += liquidity;
         update(balance0, balance1);
         event::emit(Mint { sender: signer::address_of(account), amount0: amount0, amount1: amount1 });
         liquidity
     }
 
-    public entry fun burn(account: &signer, to: address): (u256, u256) acquires SimpleAMMState {
+    public fun burn(account: &signer, to: address): (u256, u256) acquires SimpleAMMState {
         let state = borrow_global_mut<SimpleAMMState>(@0x1);
         let amount0 = 0u256;
         let amount1 = 0u256;
@@ -116,12 +116,12 @@ module 0x1::simple_a_m_m {
         state.unlocked = 0u256;
         let balance0: u256 = get_balance0();
         let balance1: u256 = get_balance1();
-        let liquidity: u256 = *table::borrow(&state.balance_of, @0x1);
+        let liquidity: u256 = *table::borrow_with_default(&state.balance_of, @0x1, &0u256);
         let total_supply: u256 = state.total_supply;
         amount0 = (((liquidity * balance0)) / total_supply);
         amount1 = (((liquidity * balance1)) / total_supply);
         assert!(((amount0 > 0u256) && (amount1 > 0u256)), E_INSUFFICIENT_LIQUIDITY_BURNED);
-        *table::borrow_mut(&mut state.balance_of, @0x1) -= liquidity;
+        *table::borrow_mut_with_default(&mut state.balance_of, @0x1, 0u256) -= liquidity;
         state.total_supply -= liquidity;
         update((balance0 - amount0), (balance1 - amount1));
         event::emit(Burn { sender: signer::address_of(account), amount0: amount0, amount1: amount1, to: to });
@@ -178,22 +178,19 @@ module 0x1::simple_a_m_m {
         (state.reserve0, state.reserve1)
     }
 
-    fun update(balance0: u256, balance1: u256) acquires SimpleAMMState {
-        let state = borrow_global_mut<SimpleAMMState>(@0x1);
+    fun update(balance0: u256, balance1: u256, state: &mut SimpleAMMState) {
         state.reserve0 = balance0;
         state.reserve1 = balance1;
         event::emit(Sync { reserve0: state.reserve0, reserve1: state.reserve1 });
     }
 
     #[view]
-    public(package) fun get_balance0(): u256 acquires SimpleAMMState {
-        let state = borrow_global<SimpleAMMState>(@0x1);
+    public(package) fun get_balance0(state: &SimpleAMMState): u256 {
         state.reserve0
     }
 
     #[view]
-    public(package) fun get_balance1(): u256 acquires SimpleAMMState {
-        let state = borrow_global<SimpleAMMState>(@0x1);
+    public(package) fun get_balance1(state: &SimpleAMMState): u256 {
         state.reserve1
     }
 

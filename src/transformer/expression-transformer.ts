@@ -18,7 +18,7 @@ export function solidityStatementToIR(stmt: any): IRStatement {
       const vars = stmt.variables || [];
       return {
         kind: 'variable_declaration',
-        name: vars.map((v: any) => v?.name || '_').filter(Boolean),
+        name: vars.map((v: any, i: number) => v?.name ? v.name : `_${i}`),
         type: vars[0]?.typeName ? createIRType(vars[0].typeName) : undefined,
         initialValue: stmt.initialValue ? solidityExpressionToIR(stmt.initialValue) : undefined,
       };
@@ -271,6 +271,18 @@ export function solidityExpressionToIR(expr: any): IRExpression {
         };
       }
 
+      // Handle type(T).max, type(T).min patterns
+      if (expr.expression?.type === 'FunctionCall' &&
+          expr.expression?.expression?.name === 'type') {
+        const typeArg = expr.expression.arguments?.[0];
+        const typeName = typeArg?.name || typeArg?.type || 'uint256';
+        return {
+          kind: 'type_member',
+          typeName,
+          member: expr.memberName,
+        } as any;
+      }
+
       return {
         kind: 'member_access',
         object: baseExpr,
@@ -462,6 +474,32 @@ function transformIf(stmt: any, context: TranspileContext): MoveStatement {
 }
 
 /**
+ * Transform an increment/decrement expression (i++, ++i, i--, --i) into an assignment statement.
+ * Returns undefined if the expression is not an increment/decrement.
+ */
+function transformIncrementDecrementToAssignment(
+  expr: any,
+  context: TranspileContext
+): MoveStatement | undefined {
+  if (expr.kind !== 'unary') return undefined;
+  if (expr.operator !== '++' && expr.operator !== '--') return undefined;
+
+  const operand = transformExpression(expr.operand, context);
+  const op = expr.operator === '++' ? '+' : '-';
+
+  return {
+    kind: 'assign',
+    target: operand,
+    value: {
+      kind: 'binary',
+      operator: op as any,
+      left: operand,
+      right: { kind: 'literal', type: 'number', value: 1 },
+    },
+  };
+}
+
+/**
  * Transform for loop
  * Detects range-based loops and uses Move 2.0 native for loops when possible
  */
@@ -506,10 +544,15 @@ function transformFor(stmt: any, context: TranspileContext): MoveStatement {
 
   // Add update at end of body
   if (stmt.update) {
-    body.push({
-      kind: 'expression',
-      expression: transformExpression(stmt.update, context),
-    });
+    const updateStmt = transformIncrementDecrementToAssignment(stmt.update, context);
+    if (updateStmt) {
+      body.push(updateStmt);
+    } else {
+      body.push({
+        kind: 'expression',
+        expression: transformExpression(stmt.update, context),
+      });
+    }
   }
 
   statements.push({
@@ -775,6 +818,12 @@ function transformExpressionStatement(
     }
   }
 
+  // Handle standalone increment/decrement (i++, i--, ++i, --i)
+  if (expr.kind === 'unary' && (expr.operator === '++' || expr.operator === '--')) {
+    const assignStmt = transformIncrementDecrementToAssignment(expr, context);
+    if (assignStmt) return assignStmt;
+  }
+
   return {
     kind: 'expression',
     expression: transformExpression(expr, context),
@@ -892,6 +941,9 @@ export function transformExpression(
 
     case 'tx_access':
       return transformTxAccess(expr, context);
+
+    case 'type_member':
+      return transformTypeMember(expr, context);
 
     default:
       return { kind: 'literal', type: 'number', value: 0 };
@@ -1318,6 +1370,15 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
   const funcExpr = expr.function ? transformExpression(expr.function, context) : null;
   const funcName = funcExpr?.kind === 'identifier' ? funcExpr.name : undefined;
 
+  // If calling an internal/private function that takes state, append state arg
+  // This prevents double mutable borrow - internal functions receive state as param
+  if (funcName && funcName !== 'unknown') {
+    const originalName = expr.function?.name;
+    if (originalName && isInternalStateFunction(originalName, context)) {
+      args.push({ kind: 'identifier', name: 'state' });
+    }
+  }
+
   return {
     kind: 'call',
     function: funcName || 'unknown',
@@ -1362,16 +1423,18 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
     if (stateVar?.isMapping) {
       context.usedModules.add('aptos_std::table');
 
-      // Check context to determine if this is a mutable access (assignment target)
-      // For now we assume read access - mutation will be handled in assignment transform
+      // Use table::borrow_with_default for safe access
+      // Solidity mappings return 0/false/address(0) for missing keys
+      const defaultValue = getDefaultForMappingValue(stateVar, context);
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow',
+          function: 'table::borrow_with_default',
           args: [
             { kind: 'borrow', mutable: false, value: base },
             index,
+            { kind: 'borrow', mutable: false, value: defaultValue },
           ],
         },
       };
@@ -1413,6 +1476,26 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
 }
 
 /**
+ * Get the default value for a mapping's value type.
+ * Solidity mappings return 0/false/address(0) for missing keys.
+ */
+function getDefaultForMappingValue(stateVar: any, context: TranspileContext): MoveExpression {
+  const valueType = stateVar.mappingValueType?.move;
+  if (!valueType) {
+    return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+  }
+
+  switch (valueType.kind) {
+    case 'primitive':
+      if (valueType.name === 'bool') return { kind: 'literal', type: 'bool', value: false };
+      if (valueType.name === 'address') return { kind: 'literal', type: 'address', value: '@0x0' };
+      return { kind: 'literal', type: 'number', value: 0, suffix: valueType.name };
+    default:
+      return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+  }
+}
+
+/**
  * Transform index access for mutation (assignment target)
  * Returns a mutable borrow suitable for assignment
  */
@@ -1425,14 +1508,17 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
     const stateVar = context.stateVariables.get(expr.base.name);
     if (stateVar?.isMapping) {
       context.usedModules.add('aptos_std::table');
+      // Use table::upsert pattern: add default if key doesn't exist, then borrow_mut
+      // This mirrors Solidity's behavior where writing to mapping[key] auto-initializes
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow_mut',
+          function: 'table::borrow_mut_with_default',
           args: [
             { kind: 'borrow', mutable: true, value: base },
             index,
+            getDefaultForMappingValue(stateVar, context),
           ],
         },
       };
@@ -1485,13 +1571,20 @@ function transformConditional(expr: any, context: TranspileContext): MoveExpress
 
 /**
  * Transform tuple
+ * Preserves null elements as underscore-prefixed placeholders for destructuring
  */
 function transformTuple(expr: any, context: TranspileContext): MoveExpression {
+  let placeholderIdx = 0;
   return {
     kind: 'tuple',
-    elements: (expr.elements || [])
-      .filter((e: any) => e !== null)
-      .map((e: any) => transformExpression(e, context)),
+    elements: (expr.elements || []).map((e: any) => {
+      if (e === null) {
+        // Generate a placeholder for ignored tuple elements: _0, _1, _2, etc.
+        return { kind: 'identifier', name: `_${placeholderIdx++}` };
+      }
+      placeholderIdx++;
+      return transformExpression(e, context);
+    }),
   };
 }
 
@@ -1620,6 +1713,66 @@ function transformBlockAccess(expr: any, context: TranspileContext): MoveExpress
       });
       return { kind: 'literal', type: 'number', value: 0 };
   }
+}
+
+/**
+ * Transform type(T).max, type(T).min patterns
+ * Maps to Move numeric maximum/minimum constants
+ */
+function transformTypeMember(expr: any, context: TranspileContext): MoveExpression {
+  const typeName = String(expr.typeName).toLowerCase();
+  const member = expr.member;
+
+  // Map Solidity types to Move max values
+  const maxValues: Record<string, { value: string; suffix: string }> = {
+    'uint8': { value: '255', suffix: 'u8' },
+    'uint16': { value: '65535', suffix: 'u16' },
+    'uint32': { value: '4294967295', suffix: 'u32' },
+    'uint64': { value: '18446744073709551615', suffix: 'u64' },
+    'uint128': { value: '340282366920938463463374607431768211455', suffix: 'u128' },
+    'uint256': { value: '115792089237316195423570985008687907853269984665640564039457584007913129639935', suffix: 'u256' },
+    'uint': { value: '115792089237316195423570985008687907853269984665640564039457584007913129639935', suffix: 'u256' },
+  };
+
+  if (member === 'max') {
+    const maxInfo = maxValues[typeName];
+    if (maxInfo) {
+      return {
+        kind: 'literal',
+        type: 'number',
+        value: maxInfo.value,
+        suffix: maxInfo.suffix,
+      };
+    }
+    // Fallback for unknown types
+    context.warnings.push({
+      message: `type(${expr.typeName}).max not fully supported, using u256 max`,
+      severity: 'warning',
+    });
+    return {
+      kind: 'literal',
+      type: 'number',
+      value: '115792089237316195423570985008687907853269984665640564039457584007913129639935',
+      suffix: 'u256',
+    };
+  }
+
+  if (member === 'min') {
+    // All unsigned types have min of 0
+    const suffix = maxValues[typeName]?.suffix || 'u256';
+    return {
+      kind: 'literal',
+      type: 'number',
+      value: '0',
+      suffix,
+    };
+  }
+
+  context.warnings.push({
+    message: `type(${expr.typeName}).${member} not supported`,
+    severity: 'warning',
+  });
+  return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
 }
 
 /**
@@ -1907,6 +2060,32 @@ function transformERC721Call(
         args: tokenAddress ? [tokenAddress, ...args] : args,
       };
   }
+}
+
+/**
+ * Check if a function is an internal/private function that accesses state.
+ * These functions receive state as a parameter to avoid double mutable borrow.
+ */
+function isInternalStateFunction(name: string, context: TranspileContext): boolean {
+  // Look up the function in the contract's IR to check visibility
+  const contractFunctions = context.inheritedContracts?.values();
+  if (!contractFunctions) {
+    // Check if it's in the stateVariables context (heuristic: if the function
+    // name matches an internal function we've seen, assume it accesses state)
+    // A more precise approach would store function metadata in context
+    return false;
+  }
+
+  // If we have a functionRegistry in context, use it
+  const registry = (context as any).functionRegistry as Map<string, { visibility: string; accessesState: boolean }> | undefined;
+  if (registry) {
+    const info = registry.get(name);
+    if (info) {
+      return (info.visibility === 'private' || info.visibility === 'internal') && info.accessesState;
+    }
+  }
+
+  return false;
 }
 
 /**

@@ -41,11 +41,11 @@ module 0x1::enum_param {
 
     public entry fun set_status(account: &signer, id: u256, status: Status) acquires EnumParamState {
         let state = borrow_global_mut<EnumParamState>(@0x1);
-        *table::borrow_mut(&mut state.item_status, id) = status;
+        *table::borrow_mut_with_default(&mut state.item_status, id, 0u256) = status;
     }
 
     #[view]
     public fun is_active(id: u256): bool {
-        (*table::borrow(&state.item_status, id) == Status::Active)
+        (*table::borrow_with_default(&state.item_status, id, &0u256) == Status::Active)
     }
 }

@@ -32,9 +32,9 @@ module 0x1::nested_loops {
             let j: u256 = 0u256;
             while ((j < cols)) {
                 sum += (i * j);
-                (j + 1);
+                j = (j + 1);
             }
-            (i + 1);
+            i = (i + 1);
         }
         sum
     }

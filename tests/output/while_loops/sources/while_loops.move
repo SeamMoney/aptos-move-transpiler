@@ -29,7 +29,7 @@ module 0x1::while_loops {
         let result: u256 = 0u256;
         while ((n > 0u256)) {
             result += n;
-            (n - 1);
+            n = (n - 1);
         }
         result
     }

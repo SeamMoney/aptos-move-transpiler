@@ -250,11 +250,120 @@ function resolveInheritanceChain(
 }
 
 /**
+ * Check if an IR statement references any of the given names (for state access detection)
+ */
+function stmtReferencesAny(stmt: any, names: Set<string>): boolean {
+  if (!stmt) return false;
+
+  function exprRefs(expr: any): boolean {
+    if (!expr) return false;
+    if (expr.kind === 'identifier' && names.has(expr.name)) return true;
+    if (expr.kind === 'binary') return exprRefs(expr.left) || exprRefs(expr.right);
+    if (expr.kind === 'unary') return exprRefs(expr.operand);
+    if (expr.kind === 'function_call') return (expr.args || []).some(exprRefs);
+    if (expr.kind === 'member_access') return exprRefs(expr.object);
+    if (expr.kind === 'index_access') return exprRefs(expr.base) || exprRefs(expr.index);
+    if (expr.kind === 'conditional') return exprRefs(expr.condition) || exprRefs(expr.trueExpression) || exprRefs(expr.falseExpression);
+    return false;
+  }
+
+  switch (stmt.kind) {
+    case 'variable_declaration': return stmt.initialValue ? exprRefs(stmt.initialValue) : false;
+    case 'assignment': return exprRefs(stmt.target) || exprRefs(stmt.value);
+    case 'expression': return exprRefs(stmt.expression);
+    case 'if': return exprRefs(stmt.condition) || (stmt.thenBlock || []).some((s: any) => stmtReferencesAny(s, names)) || (stmt.elseBlock || []).some((s: any) => stmtReferencesAny(s, names));
+    case 'for': case 'while': case 'do_while': return (stmt.body || []).some((s: any) => stmtReferencesAny(s, names));
+    case 'return': return stmt.value ? exprRefs(stmt.value) : false;
+    case 'block': return (stmt.statements || []).some((s: any) => stmtReferencesAny(s, names));
+    case 'emit': return (stmt.args || []).some(exprRefs);
+    default: return false;
+  }
+}
+
+/**
+ * Deduplicate overloaded functions by appending type-based suffixes.
+ * Move doesn't support function overloading, so rename duplicates.
+ * E.g., two `mint` functions become `mint` and `mint_address_u256`.
+ */
+function deduplicateOverloadedFunctions(functions: IRFunction[]): IRFunction[] {
+  const nameCounts = new Map<string, number>();
+  for (const fn of functions) {
+    nameCounts.set(fn.name, (nameCounts.get(fn.name) || 0) + 1);
+  }
+
+  // Only process names that appear more than once
+  const duplicateNames = new Set<string>();
+  for (const [name, count] of nameCounts) {
+    if (count > 1) duplicateNames.add(name);
+  }
+
+  if (duplicateNames.size === 0) return functions;
+
+  const result: IRFunction[] = [];
+  const usedNames = new Set<string>();
+
+  for (const fn of functions) {
+    if (!duplicateNames.has(fn.name)) {
+      result.push(fn);
+      usedNames.add(fn.name);
+      continue;
+    }
+
+    // First occurrence keeps the original name
+    if (!usedNames.has(fn.name)) {
+      usedNames.add(fn.name);
+      result.push(fn);
+      continue;
+    }
+
+    // Subsequent occurrences get a suffix based on parameter types
+    const suffix = fn.params
+      .map(p => {
+        const solType = p.type.solidity || 'unknown';
+        // Simplify type names for suffix
+        return solType
+          .replace(/uint\d*/g, 'u')
+          .replace(/int\d*/g, 'i')
+          .replace(/bytes\d*/g, 'b')
+          .replace(/address/g, 'addr')
+          .replace(/bool/g, 'bool')
+          .replace(/string/g, 'str')
+          .replace(/\[\]/g, '_arr');
+      })
+      .join('_');
+
+    let newName = `${fn.name}_${suffix || 'v2'}`;
+    // Ensure uniqueness
+    let counter = 2;
+    while (usedNames.has(newName)) {
+      newName = `${fn.name}_${suffix || 'v'}_${counter++}`;
+    }
+    usedNames.add(newName);
+
+    result.push({ ...fn, name: newName });
+  }
+
+  return result;
+}
+
+/**
  * Transform IR contract to Move module
  */
 export function irToMoveModule(ir: IRContract, moduleAddress: string, allContracts?: Map<string, IRContract>): TranspileResult {
   // Flatten inheritance if parent contracts are provided
   const flattenedIR = allContracts ? flattenInheritance(ir, allContracts) : ir;
+
+  // Build function registry for detecting internal state-accessing functions
+  // This enables the double-mutable-borrow prevention strategy
+  const stateVarNames = new Set(flattenedIR.stateVariables.map(v => v.name));
+  const functionRegistry = new Map<string, { visibility: string; accessesState: boolean }>();
+  for (const fn of flattenedIR.functions) {
+    const accessesStateVars = fn.body.some(stmt => stmtReferencesAny(stmt, stateVarNames));
+    functionRegistry.set(fn.name, {
+      visibility: fn.visibility,
+      accessesState: accessesStateVars,
+    });
+  }
 
   const context: TranspileContext = {
     contractName: flattenedIR.name,
@@ -270,6 +379,9 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     acquiredResources: new Set(),
     inheritedContracts: allContracts,
   };
+
+  // Attach function registry for borrow checker prevention
+  (context as any).functionRegistry = functionRegistry;
 
   // Build the Move module
   const module: MoveModule = {
@@ -324,9 +436,13 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
   }
 
+  // Deduplicate overloaded functions before transformation
+  // Move doesn't support function overloading, so rename duplicates
+  const deduplicatedFunctions = deduplicateOverloadedFunctions(flattenedIR.functions);
+
   // Transform functions BEFORE generating error constants
   // This allows error codes from require/assert messages to be discovered first
-  for (const fn of flattenedIR.functions) {
+  for (const fn of deduplicatedFunctions) {
     const moveFn = transformFunction(fn, context);
     module.functions.push(moveFn);
   }

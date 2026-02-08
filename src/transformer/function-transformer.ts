@@ -50,8 +50,26 @@ export function transformFunction(
   const needsState = !isPureFunction && (modifiersNeedState || bodyNeedsMutState || bodyNeedsReadState);
   const needsMutableState = modifiersNeedState || bodyNeedsMutState;
 
-  // Add state borrow FIRST (before modifiers)
-  if (needsState) {
+  // For private/internal functions that access state, accept state as parameter
+  // instead of calling borrow_global_mut (prevents double mutable borrow)
+  const isInternalFunction = fn.visibility === 'private' || fn.visibility === 'internal';
+  const receiveStateAsParam = isInternalFunction && needsState;
+
+  if (receiveStateAsParam) {
+    // Add state parameter instead of borrowing globally
+    const stateType: MoveType = {
+      kind: 'reference',
+      mutable: needsMutableState,
+      innerType: { kind: 'struct', name: `${context.contractName}State` },
+    };
+    params.push({
+      name: 'state',
+      type: stateType,
+    });
+  }
+
+  // Add state borrow FIRST (before modifiers) - only for public/external functions
+  if (needsState && !receiveStateAsParam) {
     fullBody.push({
       kind: 'let',
       pattern: 'state',
@@ -664,6 +682,7 @@ function mapVisibility(
 
 /**
  * Determine if a function should be an entry function
+ * Move entry functions cannot have return values
  */
 function shouldBeEntry(fn: IRFunction): boolean {
   // Entry functions can be called directly from transactions
@@ -673,6 +692,11 @@ function shouldBeEntry(fn: IRFunction): boolean {
   }
 
   if (fn.stateMutability === 'view' || fn.stateMutability === 'pure') {
+    return false;
+  }
+
+  // Move entry functions cannot have return values
+  if (fn.returnParams && fn.returnParams.length > 0) {
     return false;
   }
 
@@ -1259,6 +1283,12 @@ function determineAcquires(
 
   // Pure functions don't acquire any resources
   if (fn.stateMutability === 'pure') {
+    return acquires;
+  }
+
+  // Private/internal functions receive state as a parameter, so they don't acquire
+  const isInternalFunction = fn.visibility === 'private' || fn.visibility === 'internal';
+  if (isInternalFunction) {
     return acquires;
   }
 
