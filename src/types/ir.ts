@@ -373,6 +373,7 @@ export interface TranspileContext {
   constants?: Map<string, { type: any; value: any }>;  // Constant definitions (not in state)
   errorCodes?: Map<string, { message: string; code: number }>;  // Error code mappings
   enums?: Map<string, IREnum>;  // Enum definitions for variant lookup
+  structs?: Map<string, IRStruct>;  // Struct definitions for constructor detection
   errors: TranspileError[];
   warnings: TranspileWarning[];
   usedModules: Set<string>;

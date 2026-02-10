@@ -1415,6 +1415,25 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
   const funcExpr = expr.function ? transformExpression(expr.function, context) : null;
   const funcName = funcExpr?.kind === 'identifier' ? funcExpr.name : undefined;
 
+  // Check if this is a struct constructor call: StructName(arg1, arg2, ...)
+  // In Solidity, structs can be constructed with positional args
+  if (expr.function?.kind === 'identifier') {
+    const structName = expr.function.name;
+    const structDef = context.structs?.get(structName);
+    if (structDef) {
+      // Map positional args to struct fields
+      const fields = structDef.fields.map((field: any, i: number) => ({
+        name: toSnakeCase(field.name),
+        value: args[i] || { kind: 'literal', type: 'number', value: 0, suffix: 'u256' },
+      }));
+      return {
+        kind: 'struct',
+        name: structName,
+        fields,
+      };
+    }
+  }
+
   // If calling an internal/private function that takes state, append state arg
   // This prevents double mutable borrow - internal functions receive state as param
   if (funcName && funcName !== 'unknown') {
@@ -1446,6 +1465,16 @@ function transformMemberAccess(expr: any, context: TranspileContext): MoveExpres
   }
 
   const obj = transformExpression(expr.object, context);
+
+  // Handle .length on arrays/vectors → vector::length(&v)
+  if (expr.member === 'length') {
+    context.usedModules.add('std::vector');
+    return {
+      kind: 'call',
+      function: 'vector::length',
+      args: [{ kind: 'borrow', mutable: false, value: obj }],
+    };
+  }
 
   return {
     kind: 'field_access',
@@ -1505,7 +1534,7 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
     };
   }
 
-  // Vector index access
+  // Vector index access - cast index to u64 (Move vectors require u64 index)
   context.usedModules.add('std::vector');
   return {
     kind: 'dereference',
@@ -1514,9 +1543,30 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
       function: 'vector::borrow',
       args: [
         { kind: 'borrow', mutable: false, value: base },
-        index,
+        castToU64IfNeeded(index),
       ],
     },
+  };
+}
+
+/**
+ * Cast an expression to u64 if it's not already a u64 literal.
+ * Move vectors require u64 indices, but Solidity uses uint256 by default.
+ */
+function castToU64IfNeeded(expr: MoveExpression): MoveExpression {
+  // If it's already a u64 literal, no cast needed
+  if (expr.kind === 'literal' && expr.type === 'number' && (expr as any).suffix === 'u64') {
+    return expr;
+  }
+  // If it's a number literal with u256 suffix, just change the suffix
+  if (expr.kind === 'literal' && expr.type === 'number') {
+    return { ...expr, suffix: 'u64' } as any;
+  }
+  // For identifiers and complex expressions, add a cast
+  return {
+    kind: 'cast',
+    value: expr,
+    targetType: { kind: 'primitive', name: 'u64' },
   };
 }
 
@@ -1530,12 +1580,68 @@ function getDefaultForMappingValue(stateVar: any, context: TranspileContext): Mo
     return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
   }
 
-  switch (valueType.kind) {
+  return getDefaultForMoveType(valueType, stateVar.mappingValueType, context);
+}
+
+/**
+ * Get a default value expression for a given Move type.
+ * Handles primitives, vectors, and structs (with zero-initialized fields).
+ */
+function getDefaultForMoveType(moveType: any, irType: any, context: TranspileContext): MoveExpression {
+  if (!moveType) {
+    return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+  }
+
+  switch (moveType.kind) {
     case 'primitive':
-      if (valueType.name === 'bool') return { kind: 'literal', type: 'bool', value: false };
-      if (valueType.name === 'address') return { kind: 'literal', type: 'address', value: '@0x0' };
-      return { kind: 'literal', type: 'number', value: 0, suffix: valueType.name };
+      if (moveType.name === 'bool') return { kind: 'literal', type: 'bool', value: false };
+      if (moveType.name === 'address') return { kind: 'literal', type: 'address', value: '@0x0' };
+      return { kind: 'literal', type: 'number', value: 0, suffix: moveType.name };
+
+    case 'vector':
+      return { kind: 'call', function: 'vector::empty', args: [] };
+
+    case 'struct': {
+      // Try to find the struct definition to generate a zero-initialized struct literal
+      const structName = moveType.name || irType?.structName;
+      const structDef = structName ? context.structs?.get(structName) : undefined;
+      if (structDef && structDef.fields.length > 0) {
+        return {
+          kind: 'struct',
+          name: structName,
+          fields: structDef.fields.map((field: any) => ({
+            name: toSnakeCase(field.name),
+            value: getDefaultForMoveType(
+              field.type?.move || { kind: 'primitive', name: 'u256' },
+              field.type,
+              context,
+            ),
+          })),
+        };
+      }
+      // Fallback if struct def not found
+      return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+    }
+
     default:
+      // Check if the IR type has a struct name (e.g., mapping value is a custom struct)
+      if (irType?.structName) {
+        const structDef = context.structs?.get(irType.structName);
+        if (structDef && structDef.fields.length > 0) {
+          return {
+            kind: 'struct',
+            name: irType.structName,
+            fields: structDef.fields.map((field: any) => ({
+              name: toSnakeCase(field.name),
+              value: getDefaultForMoveType(
+                field.type?.move || { kind: 'primitive', name: 'u256' },
+                field.type,
+                context,
+              ),
+            })),
+          };
+        }
+      }
       return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
   }
 }
@@ -1587,7 +1693,7 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
     };
   }
 
-  // Vector index access (mutable)
+  // Vector index access (mutable) - cast index to u64
   context.usedModules.add('std::vector');
   return {
     kind: 'dereference',
@@ -1596,7 +1702,7 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
       function: 'vector::borrow_mut',
       args: [
         { kind: 'borrow', mutable: true, value: base },
-        index,
+        castToU64IfNeeded(index),
       ],
     },
   };
@@ -1737,18 +1843,29 @@ function transformBlockAccess(expr: any, context: TranspileContext): MoveExpress
   switch (expr.property) {
     case 'timestamp':
       context.usedModules.add('aptos_framework::timestamp');
+      // timestamp::now_seconds() returns u64, but Solidity block.timestamp is uint256
+      // Cast to u256 for compatibility with u256 arithmetic
       return {
-        kind: 'call',
-        function: 'timestamp::now_seconds',
-        args: [],
+        kind: 'cast',
+        value: {
+          kind: 'call',
+          function: 'timestamp::now_seconds',
+          args: [],
+        },
+        targetType: { kind: 'primitive', name: 'u256' },
       };
 
     case 'number':
       context.usedModules.add('aptos_framework::block');
+      // block::get_current_block_height() returns u64, but Solidity block.number is uint256
       return {
-        kind: 'call',
-        function: 'block::get_current_block_height',
-        args: [],
+        kind: 'cast',
+        value: {
+          kind: 'call',
+          function: 'block::get_current_block_height',
+          args: [],
+        },
+        targetType: { kind: 'primitive', name: 'u256' },
       };
 
     default:

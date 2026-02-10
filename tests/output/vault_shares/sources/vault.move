@@ -127,7 +127,8 @@ module 0x1::vault {
     }
 
     public entry fun initialize(deployer: &signer, asset: address, name: vector<u8>, symbol: vector<u8>) {
-        move_to(deployer, VaultState { name: name, symbol: symbol, asset: asset, total_supply: 0, balance_of: table::new(), allowance: table::new(), deposit_limit: /* unsupported expression */, total_debt: 0, last_report: /* unsupported expression */, locked_profit: 0, locked_profit_degradation: (46000000000000000000u256 / /* unsupported expression */), performance_fee: 0, management_fee: 0, governance: signer::address_of(deployer), management: signer::address_of(deployer), guardian: signer::address_of(deployer), strategies: table::new(), withdrawal_queue: vector::empty(), debt_ratio: 0, emergency_shutdown: false });
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"vault");
+        move_to(&resource_signer, VaultState { name: name, symbol: symbol, asset: asset, total_supply: 0, balance_of: table::new(), allowance: table::new(), deposit_limit: /* unsupported expression */, total_debt: 0, last_report: /* unsupported expression */, locked_profit: 0, locked_profit_degradation: (46000000000000000000u256 / /* unsupported expression */), performance_fee: 0, management_fee: 0, governance: signer::address_of(deployer), management: signer::address_of(deployer), guardian: signer::address_of(deployer), strategies: table::new(), withdrawal_queue: vector::empty(), debt_ratio: 0, emergency_shutdown: false, signer_cap: signer_cap });
     }
 
     public fun transfer(account: &signer, to: address, amount: u256): bool {
@@ -155,7 +156,8 @@ module 0x1::vault {
     }
 
     #[view]
-    public fun convert_to_shares(assets: u256): u256 {
+    public fun convert_to_shares(assets: u256): u256 acquires VaultState {
+        let state = borrow_global<VaultState>(@0x1);
         let total_supply: u256 = state.total_supply;
         if ((total_supply == 0u256)) {
             assets
@@ -164,7 +166,8 @@ module 0x1::vault {
     }
 
     #[view]
-    public fun convert_to_assets(shares: u256): u256 {
+    public fun convert_to_assets(shares: u256): u256 acquires VaultState {
+        let state = borrow_global<VaultState>(@0x1);
         let total_supply: u256 = state.total_supply;
         if ((total_supply == 0u256)) {
             shares
@@ -191,7 +194,8 @@ module 0x1::vault {
     }
 
     #[view]
-    public fun preview_withdraw(assets: u256): u256 {
+    public fun preview_withdraw(assets: u256): u256 acquires VaultState {
+        let state = borrow_global<VaultState>(@0x1);
         let total_supply: u256 = state.total_supply;
         if ((total_supply == 0u256)) {
             assets
@@ -261,9 +265,9 @@ module 0x1::vault {
     public entry fun add_strategy(account: &signer, strategy: address, debt_ratio: u256, min_debt_per_harvest: u256, max_debt_per_harvest: u256) acquires VaultState {
         let state = borrow_global_mut<VaultState>(@0x1);
         assert!((signer::address_of(account) == state.governance), E_UNAUTHORIZED);
-        assert!((*table::borrow_with_default(&state.strategies, strategy, &0u256).activation == 0u256), E_STRATEGY_ALREADY_ACTIVE);
+        assert!((*table::borrow_with_default(&state.strategies, strategy, &StrategyParams { activation: 0u256, debt_ratio: 0u256, min_debt_per_harvest: 0u256, max_debt_per_harvest: 0u256, last_report: 0u256, total_debt: 0u256, total_gain: 0u256, total_loss: 0u256 }).activation == 0u256), E_STRATEGY_ALREADY_ACTIVE);
         assert!(((state.debt_ratio + debt_ratio) <= MAX_BPS), E_INVALID_DEBT_RATIO);
-        *table::borrow_mut_with_default(&mut state.strategies, strategy, 0u256) = strategy_params(timestamp::now_seconds(), debt_ratio, min_debt_per_harvest, max_debt_per_harvest, timestamp::now_seconds(), 0u256, 0u256, 0u256);
+        *table::borrow_mut_with_default(&mut state.strategies, strategy, StrategyParams { activation: 0u256, debt_ratio: 0u256, min_debt_per_harvest: 0u256, max_debt_per_harvest: 0u256, last_report: 0u256, total_debt: 0u256, total_gain: 0u256, total_loss: 0u256 }) = StrategyParams { activation: (timestamp::now_seconds() as u256), debt_ratio: debt_ratio, min_debt_per_harvest: min_debt_per_harvest, max_debt_per_harvest: max_debt_per_harvest, last_report: (timestamp::now_seconds() as u256), total_debt: 0u256, total_gain: 0u256, total_loss: 0u256 };
         state.debt_ratio += debt_ratio;
         vector::push_back(&mut state.withdrawal_queue, strategy);
         event::emit(StrategyAdded { strategy: strategy, debt_ratio: debt_ratio });
@@ -272,7 +276,7 @@ module 0x1::vault {
     public fun report(account: &signer, gain: u256, loss: u256): u256 acquires VaultState {
         let state = borrow_global_mut<VaultState>(@0x1);
         let debt = 0u256;
-        let params: StrategyParams = *table::borrow_with_default(&state.strategies, signer::address_of(account), &0u256);
+        let params: StrategyParams = *table::borrow_with_default(&state.strategies, signer::address_of(account), &StrategyParams { activation: 0u256, debt_ratio: 0u256, min_debt_per_harvest: 0u256, max_debt_per_harvest: 0u256, last_report: 0u256, total_debt: 0u256, total_gain: 0u256, total_loss: 0u256 });
         assert!((params.activation > 0u256), E_PAUSED);
         let total_available: u256 = total_assets(state);
         let credit: u256 = (((total_available * params.debt_ratio)) / MAX_BPS);
@@ -290,8 +294,8 @@ module 0x1::vault {
                 state.total_debt -= loss;
             };
         };
-        params.last_report = timestamp::now_seconds();
-        state.last_report = timestamp::now_seconds();
+        params.last_report = (timestamp::now_seconds() as u256);
+        state.last_report = (timestamp::now_seconds() as u256);
         event::emit(StrategyReported { strategy: signer::address_of(account), gain: gain, loss: loss, total_gain: params.total_gain, total_loss: params.total_loss });
         debt
     }
@@ -316,7 +320,7 @@ module 0x1::vault {
 
     #[view]
     public(package) fun calculate_locked_profit(state: &VaultState): u256 {
-        let locked_funds_ratio: u256 = (((timestamp::now_seconds() - state.last_report)) * state.locked_profit_degradation);
+        let locked_funds_ratio: u256 = ((((timestamp::now_seconds() as u256) - state.last_report)) * state.locked_profit_degradation);
         if ((locked_funds_ratio >= 1000000000000000000u256)) {
             0u256
         };

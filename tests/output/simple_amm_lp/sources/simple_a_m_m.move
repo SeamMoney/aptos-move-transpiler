@@ -81,7 +81,8 @@ module 0x1::simple_a_m_m {
     }
 
     public entry fun initialize(deployer: &signer, token0: address, token1: address) {
-        move_to(deployer, SimpleAMMState { token0: token0, token1: token1, reserve0: 0, reserve1: 0, total_supply: 0, balance_of: table::new(), unlocked: 0 });
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"simple_a_m_m");
+        move_to(&resource_signer, SimpleAMMState { token0: token0, token1: token1, reserve0: 0, reserve1: 0, total_supply: 0, balance_of: table::new(), unlocked: 0, signer_cap: signer_cap });
     }
 
     public fun mint(account: &signer, to: address): u256 acquires SimpleAMMState {

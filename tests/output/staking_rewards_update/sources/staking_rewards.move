@@ -78,13 +78,14 @@ module 0x1::staking_rewards {
     }
 
     public entry fun initialize(deployer: &signer, staking_token: address, rewards_token: address) {
-        move_to(deployer, StakingRewardsState { rewards_token: rewards_token, staking_token: staking_token, total_staked: 0, staked_balance: table::new(), reward_rate: 0, rewards_duration: 0, period_finish: 0, last_update_time: 0, reward_per_token_stored: 0, user_reward_per_token_paid: table::new(), rewards: table::new(), owner: signer::address_of(deployer), rewards_distributor: signer::address_of(deployer) });
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"staking_rewards");
+        move_to(&resource_signer, StakingRewardsState { rewards_token: rewards_token, staking_token: staking_token, total_staked: 0, staked_balance: table::new(), reward_rate: 0, rewards_duration: 0, period_finish: 0, last_update_time: 0, reward_per_token_stored: 0, user_reward_per_token_paid: table::new(), rewards: table::new(), owner: signer::address_of(deployer), rewards_distributor: signer::address_of(deployer), signer_cap: signer_cap });
     }
 
     #[view]
     public fun last_time_reward_applicable(): u256 acquires StakingRewardsState {
         let state = borrow_global<StakingRewardsState>(@0x1);
-        if ((timestamp::now_seconds() < state.period_finish)) timestamp::now_seconds() else state.period_finish
+        if (((timestamp::now_seconds() as u256) < state.period_finish)) (timestamp::now_seconds() as u256) else state.period_finish
     }
 
     #[view]
@@ -180,22 +181,22 @@ module 0x1::staking_rewards {
             *table::borrow_mut_with_default(&mut state.rewards, account, 0u256) = earned(account);
             *table::borrow_mut_with_default(&mut state.user_reward_per_token_paid, account, 0u256) = state.reward_per_token_stored;
         };
-        if ((timestamp::now_seconds() >= state.period_finish)) {
+        if (((timestamp::now_seconds() as u256) >= state.period_finish)) {
             state.reward_rate = (reward / state.rewards_duration);
         } else {
-            let remaining: u256 = (state.period_finish - timestamp::now_seconds());
+            let remaining: u256 = (state.period_finish - (timestamp::now_seconds() as u256));
             let leftover: u256 = (remaining * state.reward_rate);
             state.reward_rate = (((reward + leftover)) / state.rewards_duration);
         };
-        state.last_update_time = timestamp::now_seconds();
-        state.period_finish = (timestamp::now_seconds() + state.rewards_duration);
+        state.last_update_time = (timestamp::now_seconds() as u256);
+        state.period_finish = ((timestamp::now_seconds() as u256) + state.rewards_duration);
         event::emit(RewardAdded { reward: reward });
     }
 
     public entry fun set_rewards_duration(account: &signer, rewards_duration: u256) acquires StakingRewardsState {
         let state = borrow_global_mut<StakingRewardsState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
-        assert!((timestamp::now_seconds() > state.period_finish), E_REWARD_PERIOD_NOT_FINISHED);
+        assert!(((timestamp::now_seconds() as u256) > state.period_finish), E_REWARD_PERIOD_NOT_FINISHED);
         state.rewards_duration = rewards_duration;
         event::emit(RewardsDurationUpdated { new_duration: rewards_duration });
     }

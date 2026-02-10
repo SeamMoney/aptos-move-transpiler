@@ -414,6 +414,7 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     events: new Map(flattenedIR.events.map(e => [e.name, e])),
     modifiers: new Map(flattenedIR.modifiers.map(m => [m.name, m])),
     enums: new Map(flattenedIR.enums.map(e => [e.name, e])),
+    structs: new Map(flattenedIR.structs.map(s => [s.name, s])),
     errors: [],
     warnings: [],
     usedModules: new Set(),

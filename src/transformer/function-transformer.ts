@@ -593,7 +593,28 @@ export function transformConstructor(
       };
     });
 
+  // Add signer_cap field to the struct (resource account pattern)
+  stateFields.push({
+    name: 'signer_cap',
+    value: { kind: 'identifier', name: 'signer_cap' },
+  });
+
   const body: MoveStatement[] = [];
+
+  // Create resource account: let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"seed");
+  context.usedModules.add('aptos_framework::account');
+  body.push({
+    kind: 'let',
+    pattern: ['resource_signer', 'signer_cap'],
+    value: {
+      kind: 'call',
+      function: 'account::create_resource_account',
+      args: [
+        { kind: 'identifier', name: 'deployer' },
+        { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+      ],
+    },
+  });
 
   // Separate constructor body into:
   // 1. Regular statements (before move_to)
@@ -607,14 +628,14 @@ export function transformConstructor(
   // Add regular statements (if any)
   body.push(...regularStatements);
 
-  // Add move_to to create the resource
+  // Add move_to to create the resource (use &resource_signer instead of deployer)
   body.push({
     kind: 'expression',
     expression: {
       kind: 'call',
       function: 'move_to',
       args: [
-        { kind: 'identifier', name: 'deployer' },
+        { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
         {
           kind: 'struct',
           name: stateName,
@@ -1240,7 +1261,7 @@ function accessesState(
 
     switch (stmt.kind) {
       case 'variable_declaration':
-        return checkExpression(stmt.value);
+        return checkExpression(stmt.initialValue);
 
       case 'assignment':
         return checkExpression(stmt.target) || checkExpression(stmt.value);
@@ -1250,19 +1271,34 @@ function accessesState(
 
       case 'if':
         return checkExpression(stmt.condition) ||
-               stmt.thenStatements?.some(checkStatement) ||
-               stmt.elseStatements?.some(checkStatement);
+               (stmt.thenBlock || []).some(checkStatement) ||
+               (stmt.elseBlock || []).some(checkStatement);
 
       case 'while':
-      case 'for':
+      case 'do_while':
         return checkExpression(stmt.condition) ||
-               stmt.body?.some(checkStatement);
+               (stmt.body || []).some(checkStatement);
+
+      case 'for':
+        return (stmt.init ? checkStatement(stmt.init) : false) ||
+               checkExpression(stmt.condition) ||
+               checkExpression(stmt.update) ||
+               (stmt.body || []).some(checkStatement);
 
       case 'return':
         return checkExpression(stmt.value);
 
+      case 'emit':
+        return (stmt.args || []).some(checkExpression);
+
+      case 'require':
+        return checkExpression(stmt.condition);
+
       case 'block':
-        return stmt.statements?.some(checkStatement);
+        return (stmt.statements || []).some(checkStatement);
+
+      case 'unchecked':
+        return (stmt.statements || []).some(checkStatement);
 
       default:
         return false;

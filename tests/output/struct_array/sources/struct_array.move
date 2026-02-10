@@ -43,6 +43,6 @@ module 0x1::struct_array {
     }
 
     public entry fun add_item(account: &signer, id: u256, name: vector<u8>) {
-        vector::push_back(&mut state.items, item(id, name));
+        vector::push_back(&mut state.items, Item { id: id, name: name });
     }
 }
