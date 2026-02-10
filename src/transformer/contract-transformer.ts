@@ -29,6 +29,7 @@ export function contractToIR(contract: ContractDefinition): IRContract {
     inheritedContracts: contract.baseContracts.map(bc => bc.baseName.namePath),
     isAbstract: contract.kind === 'abstract',
     isInterface: contract.kind === 'interface',
+    usingFor: [],
   };
 
   // Process all sub-nodes
@@ -56,6 +57,38 @@ export function contractToIR(contract: ContractDefinition): IRContract {
       case 'FunctionDefinition':
         if (nodeAny.isConstructor) {
           ir.constructor = extractConstructor(nodeAny as FunctionDefinition);
+        } else if (nodeAny.isReceiveEther) {
+          // Fail-fast: receive() has no Move equivalent
+          ir.functions.push({
+            name: '_receive',
+            visibility: 'external',
+            stateMutability: 'payable',
+            params: [],
+            returnParams: [],
+            modifiers: [],
+            body: [{
+              kind: 'expression',
+              expression: { kind: 'literal', type: 'string', value: 'UNSUPPORTED: receive() has no Move equivalent' },
+            }],
+            isVirtual: false,
+            isOverride: false,
+          });
+        } else if (nodeAny.isFallback) {
+          // Fail-fast: fallback() has no Move equivalent
+          ir.functions.push({
+            name: '_fallback',
+            visibility: 'external',
+            stateMutability: nodeAny.stateMutability || 'nonpayable',
+            params: [],
+            returnParams: [],
+            modifiers: [],
+            body: [{
+              kind: 'expression',
+              expression: { kind: 'literal', type: 'string', value: 'UNSUPPORTED: fallback() has no Move equivalent' },
+            }],
+            isVirtual: false,
+            isOverride: false,
+          });
         } else if (nodeAny.name) {
           ir.functions.push(extractFunction(nodeAny as FunctionDefinition));
         }
@@ -75,6 +108,14 @@ export function contractToIR(contract: ContractDefinition): IRContract {
 
       case 'EnumDefinition':
         ir.enums.push(extractEnum(nodeAny));
+        break;
+
+      case 'UsingForDeclaration':
+        // using SafeMath for uint256;
+        ir.usingFor!.push({
+          libraryName: nodeAny.libraryName || nodeAny.typeName?.namePath || '',
+          typeName: nodeAny.typeName?.name || nodeAny.typeName?.namePath || '*',
+        });
         break;
 
       default:
@@ -383,6 +424,9 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   // Attach function registry for borrow checker prevention
   (context as any).functionRegistry = functionRegistry;
 
+  // Pass using-for declarations for library method inlining
+  context.usingFor = flattenedIR.usingFor;
+
   // Build the Move module
   const module: MoveModule = {
     address: moduleAddress,
@@ -401,6 +445,13 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   // Transform state variables to resource struct
   if (flattenedIR.stateVariables.length > 0) {
     const resourceStruct = transformStateVariablesToResource(flattenedIR.stateVariables, flattenedIR.name, context);
+    // Add SignerCapability for resource account pattern
+    // This allows the contract to sign transactions on behalf of the resource account
+    resourceStruct.fields.push({
+      name: 'signer_cap',
+      type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
+    });
+    context.usedModules.add('aptos_framework::account');
     module.structs.push(resourceStruct);
   }
 
@@ -526,29 +577,54 @@ function generateDefaultInit(
 ): MoveFunction {
   const stateName = `${contractName}State`;
 
+  context.usedModules.add('aptos_framework::account');
+  context.usedModules.add('std::string');
+
+  const stateFields = stateVariables
+    .filter(v => v.mutability !== 'constant')
+    .map(v => ({
+      name: v.name,
+      value: v.initialValue ?
+        transformIRExpressionToMove(v.initialValue) :
+        getDefaultValue(v.type),
+    }));
+
+  // Add signer_cap field
+  stateFields.push({
+    name: 'signer_cap',
+    value: { kind: 'identifier', name: 'signer_cap' },
+  });
+
   return {
     name: 'init_module',
     visibility: 'private',
     params: [{ name: 'deployer', type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
     body: [
+      // Create resource account: let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"seed");
+      {
+        kind: 'let',
+        pattern: ['resource_signer', 'signer_cap'],
+        value: {
+          kind: 'call',
+          function: 'account::create_resource_account',
+          args: [
+            { kind: 'identifier', name: 'deployer' },
+            { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+          ],
+        },
+      },
+      // move_to(&resource_signer, State { ... })
       {
         kind: 'expression',
         expression: {
           kind: 'call',
           function: 'move_to',
           args: [
-            { kind: 'identifier', name: 'deployer' },
+            { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
             {
               kind: 'struct',
               name: stateName,
-              fields: stateVariables
-                .filter(v => v.mutability !== 'constant')
-                .map(v => ({
-                  name: v.name,
-                  value: v.initialValue ?
-                    transformIRExpressionToMove(v.initialValue) :
-                    getDefaultValue(v.type),
-                })),
+              fields: stateFields,
             },
           ],
         },

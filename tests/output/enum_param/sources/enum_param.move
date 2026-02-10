@@ -2,6 +2,8 @@ module 0x1::enum_param {
 
     use std::signer;
     use aptos_std::table;
+    use aptos_framework::account;
+    use std::string;
 
     // Error codes
     const E_REVERT: u64 = 0u64;
@@ -26,7 +28,8 @@ module 0x1::enum_param {
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
     struct EnumParamState has key {
-        item_status: aptos_std::table::Table<u256, Status>
+        item_status: aptos_std::table::Table<u256, Status>,
+        signer_cap: account::SignerCapability
     }
 
     enum Status has copy, drop, store {
@@ -36,7 +39,8 @@ module 0x1::enum_param {
     }
 
     fun init_module(deployer: &signer) {
-        move_to(deployer, EnumParamState { itemStatus: 0 });
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"enum_param");
+        move_to(&resource_signer, EnumParamState { itemStatus: 0, signer_cap: signer_cap });
     }
 
     public entry fun set_status(account: &signer, id: u256, status: Status) acquires EnumParamState {

@@ -2,6 +2,7 @@ module 0x1::simple_a_m_m {
 
     use std::signer;
     use aptos_std::table;
+    use aptos_framework::account;
     use aptos_framework::event;
     use transpiler::evm_compat;
 
@@ -44,7 +45,8 @@ module 0x1::simple_a_m_m {
         reserve1: u256,
         total_supply: u256,
         balance_of: aptos_std::table::Table<address, u256>,
-        unlocked: u256
+        unlocked: u256,
+        signer_cap: account::SignerCapability
     }
 
     #[event]
@@ -88,8 +90,8 @@ module 0x1::simple_a_m_m {
         assert!((state.unlocked == 1u256), E_LOCKED);
         state.unlocked = 0u256;
         let (reserve0, reserve1) = get_reserves();
-        let balance0: u256 = get_balance0();
-        let balance1: u256 = get_balance1();
+        let balance0: u256 = get_balance0(state);
+        let balance1: u256 = get_balance1(state);
         let amount0: u256 = (balance0 - reserve0);
         let amount1: u256 = (balance1 - reserve1);
         let total_supply: u256 = state.total_supply;
@@ -103,7 +105,7 @@ module 0x1::simple_a_m_m {
         assert!((liquidity > 0u256), E_INSUFFICIENT_LIQUIDITY_MINTED);
         *table::borrow_mut_with_default(&mut state.balance_of, to, 0u256) += liquidity;
         state.total_supply += liquidity;
-        update(balance0, balance1);
+        update(balance0, balance1, state);
         event::emit(Mint { sender: signer::address_of(account), amount0: amount0, amount1: amount1 });
         liquidity
     }
@@ -114,8 +116,8 @@ module 0x1::simple_a_m_m {
         let amount1 = 0u256;
         assert!((state.unlocked == 1u256), E_LOCKED);
         state.unlocked = 0u256;
-        let balance0: u256 = get_balance0();
-        let balance1: u256 = get_balance1();
+        let balance0: u256 = get_balance0(state);
+        let balance1: u256 = get_balance1(state);
         let liquidity: u256 = *table::borrow_with_default(&state.balance_of, @0x1, &0u256);
         let total_supply: u256 = state.total_supply;
         amount0 = (((liquidity * balance0)) / total_supply);
@@ -123,7 +125,7 @@ module 0x1::simple_a_m_m {
         assert!(((amount0 > 0u256) && (amount1 > 0u256)), E_INSUFFICIENT_LIQUIDITY_BURNED);
         *table::borrow_mut_with_default(&mut state.balance_of, @0x1, 0u256) -= liquidity;
         state.total_supply -= liquidity;
-        update((balance0 - amount0), (balance1 - amount1));
+        update((balance0 - amount0), (balance1 - amount1), state);
         event::emit(Burn { sender: signer::address_of(account), amount0: amount0, amount1: amount1, to: to });
         (amount0, amount1)
     }
@@ -136,15 +138,15 @@ module 0x1::simple_a_m_m {
         let (reserve0, reserve1) = get_reserves();
         assert!(((amount0_out < reserve0) && (amount1_out < reserve1)), E_INSUFFICIENT_LIQUIDITY);
         assert!(((to != state.token0) && (to != state.token1)), E_INVALID_TO);
-        let balance0: u256 = (get_balance0() - amount0_out);
-        let balance1: u256 = (get_balance1() - amount1_out);
+        let balance0: u256 = (get_balance0(state) - amount0_out);
+        let balance1: u256 = (get_balance1(state) - amount1_out);
         let amount0_in: u256 = if ((balance0 > (reserve0 - amount0_out))) (balance0 - ((reserve0 - amount0_out))) else 0u256;
         let amount1_in: u256 = if ((balance1 > (reserve1 - amount1_out))) (balance1 - ((reserve1 - amount1_out))) else 0u256;
         assert!(((amount0_in > 0u256) || (amount1_in > 0u256)), E_INVALID_AMOUNT);
         let balance0_adjusted: u256 = (((balance0 * FEE_DENOMINATOR)) - ((amount0_in * FEE_NUMERATOR)));
         let balance1_adjusted: u256 = (((balance1 * FEE_DENOMINATOR)) - ((amount1_in * FEE_NUMERATOR)));
         assert!(((balance0_adjusted * balance1_adjusted) >= ((reserve0 * reserve1) * (evm_compat::exp_u256(FEE_DENOMINATOR, 2u256)))), E_K_INVARIANT);
-        update(balance0, balance1);
+        update(balance0, balance1, state);
         event::emit(Swap { sender: signer::address_of(account), amount0_in: amount0_in, amount1_in: amount1_in, amount0_out: amount0_out, amount1_out: amount1_out, to: to });
         state.unlocked = 1u256;
     }

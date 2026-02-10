@@ -2,6 +2,7 @@ module 0x1::staking_rewards {
 
     use std::signer;
     use aptos_std::table;
+    use aptos_framework::account;
     use aptos_framework::event;
     use aptos_framework::timestamp;
 
@@ -44,7 +45,8 @@ module 0x1::staking_rewards {
         user_reward_per_token_paid: aptos_std::table::Table<address, u256>,
         rewards: aptos_std::table::Table<address, u256>,
         owner: address,
-        rewards_distributor: address
+        rewards_distributor: address,
+        signer_cap: account::SignerCapability
     }
 
     #[event]

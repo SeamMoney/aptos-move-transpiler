@@ -1,6 +1,8 @@
 module 0x1::struct_array {
 
     use std::signer;
+    use aptos_framework::account;
+    use std::string;
     use std::vector;
 
     // Error codes
@@ -26,7 +28,8 @@ module 0x1::struct_array {
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
     struct StructArrayState has key {
-        items: vector<Item>
+        items: vector<Item>,
+        signer_cap: account::SignerCapability
     }
 
     struct Item has copy, drop, store {
@@ -35,7 +38,8 @@ module 0x1::struct_array {
     }
 
     fun init_module(deployer: &signer) {
-        move_to(deployer, StructArrayState { items: vector::empty() });
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"struct_array");
+        move_to(&resource_signer, StructArrayState { items: vector::empty(), signer_cap: signer_cap });
     }
 
     public entry fun add_item(account: &signer, id: u256, name: vector<u8>) {

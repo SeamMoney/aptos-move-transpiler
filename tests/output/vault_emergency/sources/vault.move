@@ -2,6 +2,7 @@ module 0x1::vault {
 
     use std::signer;
     use aptos_std::table;
+    use aptos_framework::account;
     use aptos_framework::event;
     use aptos_framework::timestamp;
     use std::vector;
@@ -59,7 +60,8 @@ module 0x1::vault {
         strategies: aptos_std::table::Table<address, StrategyParams>,
         withdrawal_queue: vector<address>,
         debt_ratio: u256,
-        emergency_shutdown: bool
+        emergency_shutdown: bool,
+        signer_cap: account::SignerCapability
     }
 
     struct StrategyParams has copy, drop, store {
@@ -129,7 +131,7 @@ module 0x1::vault {
     }
 
     public fun transfer(account: &signer, to: address, amount: u256): bool {
-        transfer(signer::address_of(account), to, amount)
+        transfer(signer::address_of(account), to, amount, state)
     }
 
     public fun approve(account: &signer, spender: address, amount: u256): bool acquires VaultState {
@@ -144,12 +146,12 @@ module 0x1::vault {
         if ((*table::borrow(&*table::borrow_with_default(&state.allowance, from, &0u256), signer::address_of(account)) != 115792089237316195423570985008687907853269984665640564039457584007913129639935u256)) {
             *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.allowance, from, 0u256), signer::address_of(account)) -= amount;
         };
-        transfer(from, to, amount)
+        transfer(from, to, amount, state)
     }
 
     #[view]
     public fun total_assets(): u256 {
-        total_assets()
+        total_assets(state)
     }
 
     #[view]
@@ -158,7 +160,7 @@ module 0x1::vault {
         if ((total_supply == 0u256)) {
             assets
         };
-        (((assets * total_supply)) / total_assets())
+        (((assets * total_supply)) / total_assets(state))
     }
 
     #[view]
@@ -167,7 +169,7 @@ module 0x1::vault {
         if ((total_supply == 0u256)) {
             shares
         };
-        (((shares * total_assets())) / total_supply)
+        (((shares * total_assets(state))) / total_supply)
     }
 
     #[view]
@@ -176,7 +178,7 @@ module 0x1::vault {
         if (state.emergency_shutdown) {
             0u256
         };
-        let total: u256 = total_assets();
+        let total: u256 = total_assets(state);
         if ((total >= state.deposit_limit)) {
             0u256
         };
@@ -194,7 +196,7 @@ module 0x1::vault {
         if ((total_supply == 0u256)) {
             assets
         };
-        let shares: u256 = (((((assets * total_supply) + total_assets()) - 1u256)) / total_assets());
+        let shares: u256 = (((((assets * total_supply) + total_assets(state)) - 1u256)) / total_assets(state));
         shares
     }
 
@@ -206,7 +208,7 @@ module 0x1::vault {
         assert!((assets <= max_deposit(receiver)), E_DEPOSIT_LIMIT_EXCEEDED);
         shares = preview_deposit(assets);
         assert!((shares > 0u256), E_ZERO_SHARES);
-        mint(receiver, shares);
+        mint(receiver, shares, state);
         event::emit(Deposit { sender: signer::address_of(account), owner: receiver, assets: assets, shares: shares });
         shares
     }
@@ -218,7 +220,7 @@ module 0x1::vault {
         assert!((shares > 0u256), E_INVALID_AMOUNT);
         assets = convert_to_assets(shares);
         assert!((assets <= max_deposit(receiver)), E_DEPOSIT_LIMIT_EXCEEDED);
-        mint(receiver, shares);
+        mint(receiver, shares, state);
         event::emit(Deposit { sender: signer::address_of(account), owner: receiver, assets: assets, shares: shares });
         assets
     }
@@ -233,7 +235,7 @@ module 0x1::vault {
                 *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.allowance, owner, 0u256), signer::address_of(account)) = (allowed - shares);
             };
         };
-        burn(owner, shares);
+        burn(owner, shares, state);
         withdraw_from_strategies(assets);
         event::emit(Withdraw { sender: signer::address_of(account), receiver: receiver, owner: owner, assets: assets, shares: shares });
         shares
@@ -250,7 +252,7 @@ module 0x1::vault {
         };
         assets = convert_to_assets(shares);
         assert!((assets > 0u256), E_ZERO_ASSETS);
-        burn(owner, shares);
+        burn(owner, shares, state);
         withdraw_from_strategies(assets);
         event::emit(Withdraw { sender: signer::address_of(account), receiver: receiver, owner: owner, assets: assets, shares: shares });
         assets
@@ -272,7 +274,7 @@ module 0x1::vault {
         let debt = 0u256;
         let params: StrategyParams = *table::borrow_with_default(&state.strategies, signer::address_of(account), &0u256);
         assert!((params.activation > 0u256), E_PAUSED);
-        let total_available: u256 = total_assets();
+        let total_available: u256 = total_assets(state);
         let credit: u256 = (((total_available * params.debt_ratio)) / MAX_BPS);
         if ((credit > params.total_debt)) {
             debt = (credit - params.total_debt);
@@ -303,7 +305,7 @@ module 0x1::vault {
 
     #[view]
     public(package) fun total_assets(state: &VaultState): u256 {
-        let locked_profit: u256 = calculate_locked_profit();
+        let locked_profit: u256 = calculate_locked_profit(state);
         ((state.total_debt + free_assets()) - locked_profit)
     }
 

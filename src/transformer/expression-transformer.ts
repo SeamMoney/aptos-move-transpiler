@@ -117,6 +117,33 @@ export function solidityStatementToIR(stmt: any): IRStatement {
       // The _ placeholder in modifiers - indicates where function body is inserted
       return { kind: 'placeholder' };
 
+    case 'InlineAssemblyStatement':
+      // Fail-fast: inline assembly cannot be transpiled to Move
+      return {
+        kind: 'expression',
+        expression: {
+          kind: 'literal',
+          type: 'string',
+          value: 'UNSUPPORTED: inline assembly (Yul) cannot be transpiled to Move',
+        },
+      };
+
+    case 'TryStatement':
+      // Basic try/catch support - extract the expression and body
+      return {
+        kind: 'try',
+        expression: stmt.expression ? solidityExpressionToIR(stmt.expression) : { kind: 'literal', type: 'number', value: 0 },
+        body: (stmt.body?.statements || []).map(solidityStatementToIR),
+        catchClauses: (stmt.catchClauses || []).map((c: any) => ({
+          errorName: c.kind,
+          params: (c.parameters || []).map((p: any) => ({
+            name: p.name || '',
+            type: p.typeName ? createIRType(p.typeName) : { solidity: 'bytes', move: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } }, isArray: false, isMapping: false },
+          })),
+          body: (c.body?.statements || []).map(solidityStatementToIR),
+        })),
+      };
+
     default:
       // Fallback for unsupported statements
       return {
@@ -1225,6 +1252,24 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     const obj = transformExpression(expr.function.object, context);
     const method = expr.function.member;
 
+    // Handle super.method() - with inheritance flattening, the parent's function
+    // is already in the current module, so just call it directly
+    if (expr.function.object?.kind === 'identifier' && expr.function.object.name === 'super') {
+      return {
+        kind: 'call',
+        function: toSnakeCase(method),
+        args,
+      };
+    }
+
+    // Handle using X for Y library calls
+    // e.g., amount.add(other) with `using SafeMath for uint256` → (amount + other)
+    // Common SafeMath patterns: add, sub, mul, div, mod
+    if (context.usingFor && context.usingFor.length > 0) {
+      const libraryMethod = transformUsingForCall(obj, method, args, context);
+      if (libraryMethod) return libraryMethod;
+    }
+
     // Array methods
     if (method === 'push') {
       context.usedModules.add('std::vector');
@@ -1326,9 +1371,9 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     }
 
     if (method === 'delegatecall') {
-      context.warnings.push({
-        message: 'delegatecall not supported in Move - consider capability pattern',
-        severity: 'warning',
+      context.errors.push({
+        message: 'UNSUPPORTED: delegatecall cannot be transpiled to Move - Move has no execution context switching. Consider using the capability pattern instead.',
+        severity: 'error',
       });
       return {
         kind: 'tuple',
@@ -2060,6 +2105,88 @@ function transformERC721Call(
         args: tokenAddress ? [tokenAddress, ...args] : args,
       };
   }
+}
+
+/**
+ * Transform a `using X for Y` library method call.
+ * E.g., with `using SafeMath for uint256`, `amount.add(other)` becomes `(amount + other)`.
+ * Common library patterns (SafeMath, Address, Strings, etc.) are inlined.
+ */
+function transformUsingForCall(
+  obj: MoveExpression,
+  method: string,
+  args: MoveExpression[],
+  context: TranspileContext
+): MoveExpression | undefined {
+  // SafeMath-style math operations: amount.add(x) → amount + x
+  const mathOps: Record<string, string> = {
+    'add': '+',
+    'sub': '-',
+    'mul': '*',
+    'div': '/',
+    'mod': '%',
+  };
+
+  if (mathOps[method] && args.length >= 1) {
+    return {
+      kind: 'binary',
+      operator: mathOps[method] as any,
+      left: obj,
+      right: args[0],
+    };
+  }
+
+  // SafeMath tryAdd/trySub etc. - return (bool, value) tuple
+  const tryMathOps: Record<string, string> = {
+    'tryAdd': '+',
+    'trySub': '-',
+    'tryMul': '*',
+    'tryDiv': '/',
+    'tryMod': '%',
+  };
+
+  if (tryMathOps[method] && args.length >= 1) {
+    // Return (true, result) — Move arithmetic will abort on overflow anyway
+    return {
+      kind: 'tuple',
+      elements: [
+        { kind: 'literal', type: 'bool', value: true },
+        {
+          kind: 'binary',
+          operator: tryMathOps[method] as any,
+          left: obj,
+          right: args[0],
+        },
+      ],
+    };
+  }
+
+  // Address library: addr.isContract() → (not supported, return false)
+  if (method === 'isContract') {
+    context.warnings.push({
+      message: 'address.isContract() not available in Move, using false',
+      severity: 'warning',
+    });
+    return { kind: 'literal', type: 'bool', value: false };
+  }
+
+  // Strings library: uint.toString() → string_utils::to_string
+  if (method === 'toString' || method === 'toHexString') {
+    context.usedModules.add('aptos_std::string_utils');
+    return {
+      kind: 'call',
+      function: 'string_utils::to_string',
+      args: [{ kind: 'borrow', mutable: false, value: obj }],
+    };
+  }
+
+  // If we can't inline it, treat as a direct function call with obj as first arg
+  // This handles custom library functions: obj.customMethod(args) → customMethod(obj, args)
+  return {
+    kind: 'call',
+    function: toSnakeCase(method),
+    args: [obj, ...args],
+  };
 }
 
 /**

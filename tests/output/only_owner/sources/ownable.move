@@ -1,6 +1,7 @@
 module 0x1::ownable {
 
     use std::signer;
+    use aptos_framework::account;
 
     // Error codes
     const E_REVERT: u64 = 0u64;
@@ -25,7 +26,8 @@ module 0x1::ownable {
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
     struct OwnableState has key {
-        owner: address
+        owner: address,
+        signer_cap: account::SignerCapability
     }
 
     fun init_module(deployer: &signer) {

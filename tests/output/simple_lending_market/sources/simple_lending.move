@@ -2,6 +2,7 @@ module 0x1::simple_lending {
 
     use std::signer;
     use aptos_std::table;
+    use aptos_framework::account;
     use aptos_framework::event;
     use aptos_framework::block;
     use std::vector;
@@ -46,7 +47,8 @@ module 0x1::simple_lending {
         markets: aptos_std::table::Table<address, Market>,
         user_positions: aptos_std::table::Table<address, aptos_std::table::Table<address, UserPosition>>,
         user_assets: aptos_std::table::Table<address, vector<address>>,
-        asset_prices: aptos_std::table::Table<address, u256>
+        asset_prices: aptos_std::table::Table<address, u256>,
+        signer_cap: account::SignerCapability
     }
 
     struct Market has copy, drop, store {
@@ -141,7 +143,7 @@ module 0x1::simple_lending {
         let market: Market = *table::borrow_with_default(&state.markets, asset, &0u256);
         assert!(market.is_listed, E_MARKET_NOT_LISTED);
         assert!((amount > 0u256), E_INVALID_AMOUNT);
-        accrue_interest(asset);
+        accrue_interest(asset, state);
         let position: UserPosition = *table::borrow(&*table::borrow_with_default(&state.user_positions, signer::address_of(account), &0u256), asset);
         if ((position.deposit_balance == 0u256)) {
             vector::push_back(&mut *table::borrow_with_default(&state.user_assets, signer::address_of(account), &0u256), asset);
@@ -155,7 +157,7 @@ module 0x1::simple_lending {
         let state = borrow_global_mut<SimpleLendingState>(@0x1);
         let market: Market = *table::borrow_with_default(&state.markets, asset, &0u256);
         assert!(market.is_listed, E_MARKET_NOT_LISTED);
-        accrue_interest(asset);
+        accrue_interest(asset, state);
         let position: UserPosition = *table::borrow(&*table::borrow_with_default(&state.user_positions, signer::address_of(account), &0u256), asset);
         assert!((position.deposit_balance >= amount), E_INSUFFICIENT_BALANCE);
         position.deposit_balance -= amount;
@@ -170,7 +172,7 @@ module 0x1::simple_lending {
         let market: Market = *table::borrow_with_default(&state.markets, asset, &0u256);
         assert!(market.is_listed, E_MARKET_NOT_LISTED);
         assert!((amount > 0u256), E_INVALID_AMOUNT);
-        accrue_interest(asset);
+        accrue_interest(asset, state);
         let (0, 1, available_borrow, 3) = get_account_liquidity(signer::address_of(account));
         let borrow_value: u256 = (((amount * *table::borrow_with_default(&state.asset_prices, asset, &0u256))) / 1000000000000000000u256);
         assert!((borrow_value <= available_borrow), E_INSUFFICIENT_COLLATERAL);
@@ -185,9 +187,9 @@ module 0x1::simple_lending {
         let state = borrow_global_mut<SimpleLendingState>(@0x1);
         let market: Market = *table::borrow_with_default(&state.markets, asset, &0u256);
         assert!(market.is_listed, E_MARKET_NOT_LISTED);
-        accrue_interest(asset);
+        accrue_interest(asset, state);
         let position: UserPosition = *table::borrow(&*table::borrow_with_default(&state.user_positions, signer::address_of(account), &0u256), asset);
-        let borrowed_with_interest: u256 = borrow_balance_with_interest(signer::address_of(account), asset);
+        let borrowed_with_interest: u256 = borrow_balance_with_interest(signer::address_of(account), asset, state);
         let repay_amount: u256 = if ((amount > borrowed_with_interest)) borrowed_with_interest else amount;
         position.borrow_balance = (borrowed_with_interest - repay_amount);
         position.borrow_index = market.borrow_index;
@@ -198,8 +200,8 @@ module 0x1::simple_lending {
     public entry fun liquidate(account: &signer, borrower: address, debt_asset: address, collateral_asset: address, debt_to_repay: u256) acquires SimpleLendingState {
         let state = borrow_global_mut<SimpleLendingState>(@0x1);
         assert!((borrower != signer::address_of(account)), E_CANNOT_SELFLIQUIDATE);
-        accrue_interest(debt_asset);
-        accrue_interest(collateral_asset);
+        accrue_interest(debt_asset, state);
+        accrue_interest(collateral_asset, state);
         let (0, 1, 2, shortfall) = get_account_liquidity(borrower);
         assert!((shortfall > 0u256), E_NOT_LIQUIDATABLE);
         let collateral_market: Market = *table::borrow_with_default(&state.markets, collateral_asset, &0u256);
@@ -234,7 +236,7 @@ module 0x1::simple_lending {
                 total_collateral_value += adjusted_collateral;
             };
             if ((position.borrow_balance > 0u256)) {
-                let borrow_balance: u256 = borrow_balance_with_interest(user, asset);
+                let borrow_balance: u256 = borrow_balance_with_interest(user, asset, state);
                 let borrow_value: u256 = (((borrow_balance * *table::borrow_with_default(&state.asset_prices, asset, &0u256))) / 1000000000000000000u256);
                 total_borrow_value += borrow_value;
             };

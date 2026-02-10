@@ -2,6 +2,7 @@ module 0x1::multi_sig {
 
     use std::signer;
     use aptos_std::table;
+    use aptos_framework::account;
     use aptos_framework::event;
     use std::vector;
     use std::string;
@@ -45,7 +46,8 @@ module 0x1::multi_sig {
         num_confirmations_required: u256,
         transactions: vector<Transaction>,
         is_confirmed: aptos_std::table::Table<u256, aptos_std::table::Table<address, bool>>,
-        nonce: u256
+        nonce: u256,
+        signer_cap: account::SignerCapability
     }
 
     struct Transaction has copy, drop, store {
@@ -118,6 +120,10 @@ module 0x1::multi_sig {
             i = (i + 1);
         }
         move_to(deployer, MultiSigState { owners: vector::empty(), is_owner: table::new(), num_confirmations_required: num_confirmations_required, transactions: vector::empty(), is_confirmed: table::new(), nonce: 0 });
+    }
+
+    public entry fun receive(account: &signer) {
+        string::utf8(b"UNSUPPORTED: receive() has no Move equivalent");
     }
 
     public fun submit_transaction(account: &signer, to: address, value: u256, data: vector<u8>): u256 acquires MultiSigState {

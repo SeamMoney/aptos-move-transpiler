@@ -19,6 +19,13 @@ export interface IRContract {
   inheritedContracts: string[];
   isAbstract: boolean;
   isInterface: boolean;
+  usingFor?: IRUsingFor[];  // using Library for Type declarations
+}
+
+// Using X for Y declaration
+export interface IRUsingFor {
+  libraryName: string;
+  typeName: string;  // '*' means all types
 }
 
 // Struct definition
@@ -372,6 +379,7 @@ export interface TranspileContext {
   acquiredResources: Set<string>;
   inheritedContracts?: Map<string, IRContract>;  // For inheritance flattening
   paramNameMap?: Map<string, string>;  // Maps Solidity param names to Move snake_case names
+  usingFor?: IRUsingFor[];  // using Library for Type declarations
 }
 
 export interface TranspileError {

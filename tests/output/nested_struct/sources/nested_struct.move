@@ -2,6 +2,8 @@ module 0x1::nested_struct {
 
     use std::signer;
     use aptos_std::table;
+    use aptos_framework::account;
+    use std::string;
 
     // Error codes
     const E_REVERT: u64 = 0u64;
@@ -26,7 +28,8 @@ module 0x1::nested_struct {
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
     struct NestedStructState has key {
-        items: aptos_std::table::Table<u256, Outer>
+        items: aptos_std::table::Table<u256, Outer>,
+        signer_cap: account::SignerCapability
     }
 
     struct Inner has copy, drop, store {
@@ -40,6 +43,7 @@ module 0x1::nested_struct {
     }
 
     fun init_module(deployer: &signer) {
-        move_to(deployer, NestedStructState { items: 0 });
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"nested_struct");
+        move_to(&resource_signer, NestedStructState { items: 0, signer_cap: signer_cap });
     }
 }
