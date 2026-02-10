@@ -130,11 +130,10 @@ describe('Type Mapper', () => {
       expect(result.elementType.name).toBe('u8');
     });
 
-    it('should map bytes32 to vector<u8>', () => {
+    it('should map bytes32 to u256 (used for bit packing in DeFi)', () => {
       const result = mapSolidityType('bytes32');
-      expect(result.kind).toBe('vector');
-      expect(result.elementType.kind).toBe('primitive');
-      expect(result.elementType.name).toBe('u8');
+      expect(result.kind).toBe('primitive');
+      expect(result.name).toBe('u256');
     });
   });
 

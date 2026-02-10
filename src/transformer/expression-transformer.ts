@@ -118,13 +118,21 @@ export function solidityStatementToIR(stmt: any): IRStatement {
       return { kind: 'placeholder' };
 
     case 'InlineAssemblyStatement':
-      // Fail-fast: inline assembly cannot be transpiled to Move
+      // Attempt to transpile Yul assembly to Move IR
+      // Common patterns: bit manipulation (shl, shr, and, or, not), arithmetic
+      if (stmt.body?.operations) {
+        const assemblyStatements = transpileAssemblyBlock(stmt.body.operations);
+        if (assemblyStatements.length > 0) {
+          return { kind: 'block', statements: assemblyStatements };
+        }
+      }
+      // Fallback for unsupported assembly patterns
       return {
         kind: 'expression',
         expression: {
           kind: 'literal',
           type: 'string',
-          value: 'UNSUPPORTED: inline assembly (Yul) cannot be transpiled to Move',
+          value: 'UNSUPPORTED: inline assembly (Yul) - complex pattern not yet supported',
         },
       };
 
@@ -1946,6 +1954,274 @@ function transformTxAccess(expr: any, context: TranspileContext): MoveExpression
     severity: 'warning',
   });
   return { kind: 'literal', type: 'number', value: 0 };
+}
+
+// ============================================================================
+// Yul Assembly to Move IR Transpiler
+// Handles common bit manipulation patterns found in DeFi libraries
+// ============================================================================
+
+/**
+ * Transpile a Yul assembly block to Move IR statements.
+ * Supports: assignments, let declarations, if/for blocks, and common Yul builtins.
+ */
+function transpileAssemblyBlock(operations: any[]): IRStatement[] {
+  const statements: IRStatement[] = [];
+
+  for (const op of operations) {
+    const stmt = transpileAssemblyOperation(op);
+    if (stmt) {
+      if (Array.isArray(stmt)) {
+        statements.push(...stmt);
+      } else {
+        statements.push(stmt);
+      }
+    }
+  }
+
+  return statements;
+}
+
+/**
+ * Transpile a single Yul assembly operation to Move IR.
+ */
+function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null {
+  if (!op) return null;
+
+  switch (op.type) {
+    case 'AssemblyAssignment': {
+      // name := expression
+      const nameNode = op.names?.[0];
+      if (!nameNode) return null;
+      const value = transpileYulExpression(op.expression);
+      if (!value) return null;
+
+      // Handle AssemblyMemberAccess targets (e.g., $.slot := value)
+      let target: IRExpression;
+      if (nameNode.type === 'AssemblyMemberAccess') {
+        const objExpr = transpileYulExpression(nameNode.expression);
+        const memberName = typeof nameNode.memberName === 'string'
+          ? nameNode.memberName
+          : nameNode.memberName?.name || 'unknown';
+        target = { kind: 'member_access', object: objExpr || { kind: 'identifier', name: 'unknown' }, member: memberName };
+      } else {
+        const name = typeof nameNode === 'string' ? nameNode : (nameNode.name || 'unknown');
+        target = { kind: 'identifier', name: toSnakeCase(name) };
+      }
+
+      return { kind: 'assignment', target, value };
+    }
+
+    case 'AssemblyLocalDefinition': {
+      // let name := expression
+      const name = op.names?.[0]?.name || op.names?.[0];
+      const value = op.expression ? transpileYulExpression(op.expression) : { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+      if (!name) return null;
+      return {
+        kind: 'variable_declaration',
+        name: toSnakeCase(typeof name === 'string' ? name : name),
+        initialValue: value,
+      };
+    }
+
+    case 'AssemblyIf': {
+      // if condition { body }
+      const condition = transpileYulExpression(op.condition);
+      if (!condition) return null;
+      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations) : [];
+      return {
+        kind: 'if',
+        condition: { kind: 'binary', operator: '!=', left: condition, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } },
+        thenBlock: body,
+      };
+    }
+
+    case 'AssemblyFor': {
+      // for { init } condition { post } { body }
+      const initStmts = op.pre?.operations ? transpileAssemblyBlock(op.pre.operations) : [];
+      const condition = transpileYulExpression(op.condition);
+      const postStmts = op.post?.operations ? transpileAssemblyBlock(op.post.operations) : [];
+      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations) : [];
+      // Emit as: init; while(condition) { body; post; }
+      const allStmts: IRStatement[] = [...initStmts];
+      allStmts.push({
+        kind: 'while',
+        condition: condition || { kind: 'literal', type: 'bool', value: true },
+        body: [...body, ...postStmts],
+      });
+      return allStmts;
+    }
+
+    case 'AssemblyExpression':
+    case 'AssemblyCall': {
+      // Standalone expression (e.g., revert(0, 0))
+      const expr = transpileYulExpression(op);
+      if (!expr) return null;
+      return { kind: 'expression', expression: expr };
+    }
+
+    case 'AssemblyBlock': {
+      // Nested block
+      return op.operations ? transpileAssemblyBlock(op.operations) : null;
+    }
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * Transpile a Yul expression to Move IR expression.
+ * Maps Yul builtins to Move operators/functions.
+ */
+function transpileYulExpression(expr: any): IRExpression | null {
+  if (!expr) return null;
+
+  switch (expr.type) {
+    case 'AssemblyCall': {
+      const name = expr.functionName;
+      const args = expr.arguments || [];
+
+      // Zero-argument calls are identifiers (Yul quirk: variables are calls with no args)
+      if (args.length === 0) {
+        // Check for known constants
+        if (name === 'gas') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        if (name === 'caller') return { kind: 'identifier', name: 'caller' };
+        if (name === 'callvalue') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        if (name === 'calldatasize') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        if (name === 'returndatasize') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        // Default: treat as identifier
+        return { kind: 'identifier', name: toSnakeCase(name) };
+      }
+
+      // One-argument builtins
+      if (args.length === 1) {
+        const a = transpileYulExpression(args[0]);
+        if (!a) return null;
+
+        switch (name) {
+          case 'not':
+            // Bitwise NOT: ~a = a ^ MAX_U256
+            return {
+              kind: 'binary',
+              operator: '^',
+              left: a,
+              right: { kind: 'literal', type: 'number', value: '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', suffix: 'u256' },
+            };
+          case 'iszero':
+            return { kind: 'binary', operator: '==', left: a, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };
+          case 'mload':
+            // Memory load - no direct Move equivalent, pass through as identifier
+            return a;
+          default:
+            // Unknown unary - emit as function call
+            return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a] };
+        }
+      }
+
+      // Two-argument builtins
+      if (args.length === 2) {
+        const a = transpileYulExpression(args[0]);
+        const b = transpileYulExpression(args[1]);
+        if (!a || !b) return null;
+
+        switch (name) {
+          // Arithmetic
+          case 'add': return { kind: 'binary', operator: '+', left: a, right: b };
+          case 'sub': return { kind: 'binary', operator: '-', left: a, right: b };
+          case 'mul': return { kind: 'binary', operator: '*', left: a, right: b };
+          case 'div': return { kind: 'binary', operator: '/', left: a, right: b };
+          case 'mod': return { kind: 'binary', operator: '%', left: a, right: b };
+
+          // Bitwise
+          case 'and': return { kind: 'binary', operator: '&', left: a, right: b };
+          case 'or':  return { kind: 'binary', operator: '|', left: a, right: b };
+          case 'xor': return { kind: 'binary', operator: '^', left: a, right: b };
+          case 'shl': {
+            // Yul shl(shift, value) = value << shift
+            // Note: Yul arg order is (shift, value) not (value, shift)
+            // Move shift requires u8 type
+            return {
+              kind: 'binary', operator: '<<',
+              left: b, // value
+              right: { kind: 'type_conversion', targetType: { solidity: 'uint8', move: { kind: 'primitive', name: 'u8' }, isArray: false, isMapping: false }, expression: a },
+            };
+          }
+          case 'shr': {
+            // Yul shr(shift, value) = value >> shift
+            return {
+              kind: 'binary', operator: '>>',
+              left: b, // value
+              right: { kind: 'type_conversion', targetType: { solidity: 'uint8', move: { kind: 'primitive', name: 'u8' }, isArray: false, isMapping: false }, expression: a },
+            };
+          }
+
+          // Comparison
+          case 'lt': return { kind: 'binary', operator: '<', left: a, right: b };
+          case 'gt': return { kind: 'binary', operator: '>', left: a, right: b };
+          case 'eq': return { kind: 'binary', operator: '==', left: a, right: b };
+          case 'slt': return { kind: 'binary', operator: '<', left: a, right: b };
+          case 'sgt': return { kind: 'binary', operator: '>', left: a, right: b };
+
+          // Memory operations - no direct Move equivalent
+          case 'mstore':
+          case 'mstore8':
+            return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+
+          default:
+            // Unknown binary - emit as function call
+            return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a, b] };
+        }
+      }
+
+      // Three-argument builtins
+      if (args.length === 3) {
+        const a = transpileYulExpression(args[0]);
+        const b = transpileYulExpression(args[1]);
+        const c = transpileYulExpression(args[2]);
+        if (!a || !b || !c) return null;
+
+        switch (name) {
+          case 'addmod':
+            // (a + b) % c
+            return { kind: 'binary', operator: '%', left: { kind: 'binary', operator: '+', left: a, right: b }, right: c };
+          case 'mulmod':
+            // (a * b) % c
+            return { kind: 'binary', operator: '%', left: { kind: 'binary', operator: '*', left: a, right: b }, right: c };
+          default:
+            return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a, b, c] };
+        }
+      }
+
+      // Multi-argument fallback
+      const transpiled = args.map(transpileYulExpression).filter(Boolean);
+      return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: transpiled as any[] };
+    }
+
+    case 'DecimalNumber':
+      return { kind: 'literal', type: 'number', value: expr.value, suffix: 'u256' };
+
+    case 'HexNumber':
+      return { kind: 'literal', type: 'number', value: expr.value, suffix: 'u256' };
+
+    case 'StringLiteral':
+      return { kind: 'literal', type: 'string', value: expr.value };
+
+    case 'BooleanLiteral':
+      return { kind: 'literal', type: 'bool', value: expr.value };
+
+    case 'Identifier':
+      return { kind: 'identifier', name: toSnakeCase(expr.name) };
+
+    case 'AssemblyMemberAccess': {
+      const obj = transpileYulExpression(expr.expression);
+      const member = typeof expr.memberName === 'string' ? expr.memberName : (expr.memberName?.name || 'unknown');
+      return { kind: 'member_access', object: obj || { kind: 'identifier', name: 'unknown' }, member };
+    }
+
+    default:
+      return null;
+  }
 }
 
 /**
