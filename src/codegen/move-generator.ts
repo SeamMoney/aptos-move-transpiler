@@ -532,6 +532,10 @@ function generateExpression(expr: MoveExpression): string {
       return `(${generateExpression(expr.left)} ${expr.operator} ${generateExpression(expr.right)})`;
 
     case 'unary':
+      // Move doesn't have bitwise NOT (~), convert to XOR with max value
+      if (expr.operator === '~') {
+        return `(${generateExpression(expr.operand)} ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256)`;
+      }
       return `${expr.operator}${generateExpression(expr.operand)}`;
 
     case 'call':
@@ -563,6 +567,10 @@ function generateExpression(expr: MoveExpression): string {
       return `*${generateExpression(expr.value)}`;
 
     case 'cast':
+      // Move doesn't support casting to bool - use != 0 instead
+      if (expr.targetType?.kind === 'primitive' && expr.targetType.name === 'bool') {
+        return `(${generateExpression(expr.value)} != 0)`;
+      }
       return `(${generateExpression(expr.value)} as ${generateType(expr.targetType)})`;
 
     case 'if_expr':

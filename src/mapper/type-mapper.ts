@@ -86,7 +86,10 @@ function mapElementaryType(name: string): MoveType {
     return MoveTypes.u256();
   }
 
-  // Signed integers (Move 2.3)
+  // Signed integers (Move 2.3+ supports i8 through i256)
+  // NOTE: Move signed integers do NOT support bitwise operations (&, |, ^, <<, >>)
+  // For DeFi bit-packing patterns that use signed types with bitwise ops,
+  // the unsigned equivalent should be used instead
   if (name === 'int' || name === 'int256') return MoveTypes.i256();
   if (name === 'int8') return MoveTypes.i8();
   if (name === 'int16') return MoveTypes.i16();

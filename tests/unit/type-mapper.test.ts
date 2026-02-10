@@ -88,7 +88,7 @@ describe('Type Mapper', () => {
     });
   });
 
-  describe('Signed Integers (Move 2.0)', () => {
+  describe('Signed Integers (Move 2.3)', () => {
     it('should map int256 to i256', () => {
       const result = mapSolidityType('int256');
       expect(result.kind).toBe('primitive');

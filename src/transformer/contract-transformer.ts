@@ -731,9 +731,10 @@ function generateStateConstants(
     const moveType = variable.type.move || { kind: 'primitive', name: 'u256' };
 
     // Transform the initial value to a Move expression
+    // Pass context.constants so references to previously-defined constants can be inlined
     let value: any;
     if (variable.initialValue) {
-      value = transformConstantValue(variable.initialValue, moveType);
+      value = transformConstantValue(variable.initialValue, moveType, context.constants);
     } else {
       value = getDefaultConstantValue(moveType);
     }
@@ -755,9 +756,11 @@ function generateStateConstants(
 }
 
 /**
- * Transform a constant initial value to Move expression
+ * Transform a constant initial value to Move expression.
+ * Move constants CANNOT reference other constants, so we try to evaluate
+ * constant expressions at transpile time and inline literal values.
  */
-function transformConstantValue(expr: any, targetType: any): any {
+function transformConstantValue(expr: any, targetType: any, constants?: Map<string, any>): any {
   if (!expr) return getDefaultConstantValue(targetType);
 
   // Handle literals
@@ -772,22 +775,110 @@ function transformConstantValue(expr: any, targetType: any): any {
   }
 
   // Handle identifiers (references to other constants)
+  // Move constants CANNOT reference other constants — try to inline the value
   if (expr.kind === 'identifier') {
+    if (constants) {
+      const constDef = constants.get(expr.name) || constants.get(toScreamingSnakeCase(expr.name));
+      if (constDef?.value) {
+        return constDef.value;
+      }
+    }
+    // Fallback: keep as identifier (will produce a compiler error, but better than losing info)
     return { kind: 'identifier', name: toScreamingSnakeCase(expr.name) };
   }
 
   // Handle binary operations (for compile-time constant expressions)
+  // Try to evaluate to a literal if both sides are literals
   if (expr.kind === 'binary') {
+    const left = transformConstantValue(expr.left, targetType, constants);
+    const right = transformConstantValue(expr.right, targetType, constants);
+
+    // Try to evaluate if both sides are number literals
+    const leftVal = extractBigInt(left);
+    const rightVal = extractBigInt(right);
+    if (leftVal !== null && rightVal !== null) {
+      const result = evaluateConstOp(expr.operator, leftVal, rightVal);
+      if (result !== null) {
+        const suffix = getMoveTypeSuffix(targetType);
+        return {
+          kind: 'literal',
+          type: 'number',
+          value: result.toString(),
+          suffix,
+        };
+      }
+    }
+
+    // Can't evaluate — emit as expression (may not compile if it refs other constants)
     return {
       kind: 'binary',
       operator: expr.operator,
-      left: transformConstantValue(expr.left, targetType),
-      right: transformConstantValue(expr.right, targetType),
+      left,
+      right,
     };
+  }
+
+  // Handle type conversions (e.g., uint8(128))
+  if (expr.kind === 'type_conversion') {
+    const inner = transformConstantValue(expr.expression, targetType, constants);
+    const val = extractBigInt(inner);
+    if (val !== null) {
+      const suffix = getMoveTypeSuffix(targetType);
+      return { kind: 'literal', type: 'number', value: val.toString(), suffix };
+    }
+    return inner;
   }
 
   // Default: return as-is with suffix
   return expr;
+}
+
+/**
+ * Extract a BigInt value from a literal expression, or null if not a number literal.
+ */
+function extractBigInt(expr: any): bigint | null {
+  if (!expr || expr.kind !== 'literal' || expr.type !== 'number') return null;
+  try {
+    const value = String(expr.value);
+    // Handle scientific notation (e.g., 1e18, 1E18) — BigInt doesn't support it
+    const sciMatch = value.match(/^(\d+(?:\.\d+)?)[eE]\+?(\d+)$/);
+    if (sciMatch) {
+      const mantissa = sciMatch[1];
+      const exponent = parseInt(sciMatch[2], 10);
+      if (mantissa.includes('.')) {
+        const [intPart, decPart] = mantissa.split('.');
+        const decLen = decPart.length;
+        if (exponent >= decLen) {
+          return BigInt(intPart + decPart + '0'.repeat(exponent - decLen));
+        }
+        return BigInt(intPart + decPart.slice(0, exponent));
+      }
+      return BigInt(mantissa + '0'.repeat(exponent));
+    }
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Evaluate a constant binary operation at transpile time.
+ */
+function evaluateConstOp(op: string, left: bigint, right: bigint): bigint | null {
+  switch (op) {
+    case '+': return left + right;
+    case '-': return left - right;
+    case '*': return left * right;
+    case '/': return right !== 0n ? left / right : null;
+    case '%': return right !== 0n ? left % right : null;
+    case '&': return left & right;
+    case '|': return left | right;
+    case '^': return left ^ right;
+    case '<<': return left << right;
+    case '>>': return left >> right;
+    case '**': return left ** right;
+    default: return null;
+  }
 }
 
 /**
