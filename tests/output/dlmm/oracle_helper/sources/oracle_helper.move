@@ -36,7 +36,7 @@ module 0x1::oracle_helper {
     public(package) fun get_sample(oracle: Oracle, oracle_id: u16): u256 {
         let sample = 0u256;
         check_oracle_id(oracle_id);
-        sample = *vector::borrow(&oracle.samples, ((oracle_id - 1u256) as u64));
+        sample = *vector::borrow(&oracle.samples, ((oracle_id - 1) as u64));
         sample
     }
 
@@ -75,8 +75,8 @@ module 0x1::oracle_helper {
     }
 
     public(package) fun binary_search(oracle: Oracle, oracle_id: u16, look_up_timestamp: u64, length: u16): (u256, u256) {
-        let low: u256 = 0u256;
-        let high: u256 = (length - 1u256);
+        let low: u256 = 0;
+        let high: u256 = (length - 1);
         let sample: u256;
         let sample_last_update: u64;
         let start_id: u256 = oracle_id;
@@ -86,34 +86,34 @@ module 0x1::oracle_helper {
             sample = *vector::borrow(&oracle.samples, (oracle_id as u64));
             sample_last_update = get_sample_last_update(sample);
             if ((sample_last_update > look_up_timestamp)) {
-                high = (mid - 1u256);
+                high = (mid - 1);
             } else {
                 if ((sample_last_update < look_up_timestamp)) {
-                    low = (mid + 1u256);
+                    low = (mid + 1);
                 } else {
                     (sample, sample)
                 };
             };
         }
         if ((look_up_timestamp < sample_last_update)) {
-            if ((oracle_id == 0u256)) {
+            if ((oracle_id == 0)) {
                 oracle_id = length;
             };
-            (*vector::borrow(&oracle.samples, ((oracle_id - 1u256) as u64)), sample)
+            (*vector::borrow(&oracle.samples, ((oracle_id - 1) as u64)), sample)
         } else {
-            oracle_id = ((oracle_id + 1u256) % length);
+            oracle_id = ((oracle_id + 1) % length);
             (sample, *vector::borrow(&oracle.samples, (oracle_id as u64)))
         };
     }
 
     public(package) fun set_sample(oracle: Oracle, oracle_id: u16, sample: u256) {
         check_oracle_id(oracle_id);
-        *vector::borrow_mut(&mut oracle.samples, ((oracle_id - 1u256) as u64)) = sample;
+        *vector::borrow_mut(&mut oracle.samples, ((oracle_id - 1) as u64)) = sample;
     }
 
     public(package) fun update(oracle: Oracle, parameters: u256, active_id: u32, state: &OracleHelperState): u256 {
         let oracle_id: u16 = get_oracle_id(parameters);
-        if ((oracle_id == 0u256)) {
+        if ((oracle_id == 0)) {
             parameters
         };
         let sample: u256 = get_sample(oracle, oracle_id);
@@ -124,8 +124,8 @@ module 0x1::oracle_helper {
             let length: u16 = get_oracle_length(sample);
             let lifetime: u256 = ((timestamp::now_seconds() as u256) - created_at);
             if ((lifetime > _M_A_X_S_A_M_P_L_E_L_I_F_E_T_I_M_E)) {
-                oracle_id = ((oracle_id % length) + 1u256);
-                lifetime = 0u256;
+                oracle_id = ((oracle_id % length) + 1);
+                lifetime = 0;
                 created_at = ((timestamp::now_seconds() as u256) & 1099511627775u64);
                 parameters = set_oracle_id(parameters, oracle_id);
             };
@@ -141,7 +141,7 @@ module 0x1::oracle_helper {
         if ((length >= new_length)) {
             abort E_ORACLE_HELPER_NEW_LENGTH_TOO_SMALL
         };
-        let last_sample: u256 = if ((length == oracle_id)) sample else if ((length == 0u256)) 0u256 else get_sample(oracle, length);
+        let last_sample: u256 = if ((length == oracle_id)) sample else if ((length == 0)) (0 as u256) else get_sample(oracle, length);
         let active_size: u256 = get_oracle_length(last_sample);
         active_size = if ((oracle_id > active_size)) oracle_id else active_size;
         let i: u256 = length;
@@ -153,7 +153,7 @@ module 0x1::oracle_helper {
     }
 
     fun check_oracle_id(oracle_id: u16) {
-        if ((oracle_id == 0u256)) {
+        if ((oracle_id == 0)) {
             abort E_ORACLE_HELPER_INVALID_ORACLE_ID
         };
     }

@@ -33,8 +33,8 @@ module 0x1::uint256x256_math {
     public(package) fun mul_div_round_up(x: u256, y: u256, denominator: u256): u256 {
         let result = 0u256;
         result = mul_div_round_down(x, y, denominator);
-        if ((((x * y) % denominator) != 0u256)) {
-            result += 1u256;
+        if ((((x * y) % denominator) != 0)) {
+            result += 1;
         };
         result
     }
@@ -42,14 +42,14 @@ module 0x1::uint256x256_math {
     public(package) fun mul_shift_round_down(x: u256, y: u256, offset: u8): u256 {
         let result = 0u256;
         let (prod0, prod1) = get_mul_prods(x, y);
-        if ((prod0 != 0u256)) {
+        if ((prod0 != 0)) {
             result = (prod0 >> (offset as u8));
         };
-        if ((prod1 != 0u256)) {
-            if ((prod1 >= (1u256 << (offset as u8)))) {
+        if ((prod1 != 0)) {
+            if ((prod1 >= (1 << (offset as u8)))) {
                 abort E_UINT256X256_MATH_MUL_SHIFT_OVERFLOW
             };
-            result += (prod1 << (((256u256 - offset)) as u8));
+            result += (prod1 << (((256 - offset)) as u8));
         };
         result
     }
@@ -57,8 +57,8 @@ module 0x1::uint256x256_math {
     public(package) fun mul_shift_round_up(x: u256, y: u256, offset: u8): u256 {
         let result = 0u256;
         result = mul_shift_round_down(x, y, offset);
-        if ((((x * y) % (1u256 << (offset as u8))) != 0u256)) {
-            result += 1u256;
+        if ((((x * y) % (1 << (offset as u8))) != 0)) {
+            result += 1;
         };
         result
     }
@@ -68,15 +68,15 @@ module 0x1::uint256x256_math {
         let prod0: u256;
         let prod1: u256;
         prod0 = (x << (offset as u8));
-        prod1 = (x >> (((256u256 - offset)) as u8));
-        get_end_of_div_round_down(x, (1u256 << (offset as u8)), denominator, prod0, prod1)
+        prod1 = (x >> (((256 - offset)) as u8));
+        get_end_of_div_round_down(x, (1 << (offset as u8)), denominator, prod0, prod1)
     }
 
     public(package) fun shift_div_round_up(x: u256, offset: u8, denominator: u256): u256 {
         let result = 0u256;
         result = shift_div_round_down(x, offset, denominator);
-        if ((((x * (1u256 << (offset as u8))) % denominator) != 0u256)) {
-            result += 1u256;
+        if ((((x * (1 << (offset as u8))) % denominator) != 0)) {
+            result += 1;
         };
         result
     }
@@ -84,15 +84,15 @@ module 0x1::uint256x256_math {
     fun get_mul_prods(x: u256, y: u256): (u256, u256) {
         let prod0 = 0u256;
         let prod1 = 0u256;
-        let mm = ((x * y) % (0u256 ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256));
+        let mm = ((x * y) % (0 ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256));
         prod0 = (x * y);
-        prod1 = ((mm - prod0) - if ((mm < prod0)) 1u256 else 0u256);
+        prod1 = ((mm - prod0) - if ((mm < prod0)) 1 else 0);
         (prod0, prod1)
     }
 
     fun get_end_of_div_round_down(x: u256, y: u256, denominator: u256, prod0: u256, prod1: u256): u256 {
         let result = 0u256;
-        if ((prod1 == 0u256)) {
+        if ((prod1 == 0)) {
             result = (prod0 / denominator);
         } else {
             if ((prod1 >= denominator)) {
@@ -100,20 +100,20 @@ module 0x1::uint256x256_math {
             };
             let remainder: u256;
             remainder = ((x * y) % denominator);
-            prod1 = (prod1 - if ((remainder > prod0)) 1u256 else 0u256);
+            prod1 = (prod1 - if ((remainder > prod0)) 1 else 0);
             prod0 = (prod0 - remainder);
-            let lpotdod: u256 = (denominator & (((denominator ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256) + 1u256)));
+            let lpotdod: u256 = (denominator & (((denominator ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256) + 1)));
             denominator = (denominator / lpotdod);
             prod0 = (prod0 / lpotdod);
-            lpotdod = (((0u256 - lpotdod) / lpotdod) + 1u256);
+            lpotdod = (((0 - lpotdod) / lpotdod) + 1);
             prod0 |= (prod1 * lpotdod);
-            let inverse: u256 = (((3u256 * denominator)) ^ 2u256);
-            inverse *= (2u256 - (denominator * inverse));
-            inverse *= (2u256 - (denominator * inverse));
-            inverse *= (2u256 - (denominator * inverse));
-            inverse *= (2u256 - (denominator * inverse));
-            inverse *= (2u256 - (denominator * inverse));
-            inverse *= (2u256 - (denominator * inverse));
+            let inverse: u256 = (((3 * denominator)) ^ 2);
+            inverse *= (2 - (denominator * inverse));
+            inverse *= (2 - (denominator * inverse));
+            inverse *= (2 - (denominator * inverse));
+            inverse *= (2 - (denominator * inverse));
+            inverse *= (2 - (denominator * inverse));
+            inverse *= (2 - (denominator * inverse));
             result = (prod0 * inverse);
         };
         result
@@ -121,18 +121,18 @@ module 0x1::uint256x256_math {
 
     public(package) fun sqrt(x: u256): u256 {
         let sqrt_x = 0u256;
-        if ((x == 0u256)) {
-            0u256
+        if ((x == 0)) {
+            0
         };
         let msb: u256 = bit_math::most_significant_bit(x);
-        sqrt_x = (1u256 << ((msb >> (1u256 as u8)) as u8));
-        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1u256 as u8));
-        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1u256 as u8));
-        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1u256 as u8));
-        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1u256 as u8));
-        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1u256 as u8));
-        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1u256 as u8));
-        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1u256 as u8));
+        sqrt_x = (1 << ((msb >> (1 as u8)) as u8));
+        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
+        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
+        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
+        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
+        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
+        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
+        sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
         x = (x / sqrt_x);
         if ((sqrt_x < x)) sqrt_x else x
     }

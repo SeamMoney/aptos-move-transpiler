@@ -52,7 +52,7 @@ module 0x1::l_b_factory {
             abort E_L_B_FACTORY_FLASH_LOAN_FEE_ABOVE_MAX
         };
         set_fee_recipient(fee_recipient, state);
-        event::emit(FlashLoanFeeSet { arg0: 0u256, arg1: flash_loan_fee });
+        event::emit(FlashLoanFeeSet { arg0: 0, arg1: flash_loan_fee });
         move_to(&resource_signer, LBFactoryState { fee_recipient: @0x0, flash_loan_fee: flash_loan_fee, lb_pair_implementation: @0x0, all_l_b_pairs: vector::empty(), lb_pairs_info: table::new(), presets: 0, quote_asset_whitelist: 0, available_l_b_pair_bin_steps: table::new(), signer_cap: signer_cap });
     }
 
@@ -151,7 +151,7 @@ module 0x1::l_b_factory {
     public fun get_open_bin_steps(): vector<u256> {
         let open_bin_step = vector::empty();
         let length: u256 = length(state.presets);
-        if ((length > 0u256)) {
+        if ((length > 0)) {
             open_bin_step = unknown(length);
             let index: u256;
             let i: u256;
@@ -164,7 +164,7 @@ module 0x1::l_b_factory {
                 i = (i + 1);
             }
             if ((index < length)) {
-                0u256;
+                0;
             };
         };
         open_bin_step
@@ -175,10 +175,10 @@ module 0x1::l_b_factory {
         let (token_a, token_b) = sort_tokens(token_x, token_y);
         let address_set: UintSet = *table::borrow(&*table::borrow_with_default(&state.available_l_b_pair_bin_steps, token_a, &0u256), token_b);
         let length: u256 = length(address_set);
-        if ((length > 0u256)) {
+        if ((length > 0)) {
             lb_pairs_available = unknown(length);
             let lb_pairs_info: aptos_std::table::Table<u256, LBPairInformation> = *table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b);
-            let i: u256 = 0u256;
+            let i: u256 = 0;
             while ((i < length)) {
                 let bin_step: u16 = safe16(at(address_set, i));
                 *vector::borrow_mut(&mut lb_pairs_available, (i as u64)) = l_b_pair_information(bin_step, *vector::borrow(&lb_pairs_info, (bin_step as u64)).l_b_pair, *vector::borrow(&lb_pairs_info, (bin_step as u64)).created_by_owner, *vector::borrow(&lb_pairs_info, (bin_step as u64)).ignored_for_routing);
@@ -235,7 +235,7 @@ module 0x1::l_b_factory {
         *table::borrow_mut(&mut *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.lb_pairs_info, token_a, 0u256), token_b), bin_step) = l_b_pair_information(bin_step, pair, is_owner, false);
         push(state.all_l_b_pairs, pair);
         (*table::borrow(&*table::borrow_with_default(&state.available_l_b_pair_bin_steps, token_a, &0u256), token_b) + bin_step);
-        event::emit(LBPairCreated { arg0: token_x, arg1: token_y, arg2: bin_step, arg3: pair, arg4: (vector::length(&state.all_l_b_pairs) - 1u256) });
+        event::emit(LBPairCreated { arg0: token_x, arg1: token_y, arg2: bin_step, arg3: pair, arg4: (vector::length(&state.all_l_b_pairs) - 1) });
         initialize(pair, get_base_factor(preset), get_filter_period(preset), get_decay_period(preset), get_reduction_factor(preset), get_variable_fee_control(preset), get_protocol_share(preset), get_max_volatility_accumulator(preset), active_id);
         pair
     }
@@ -261,7 +261,7 @@ module 0x1::l_b_factory {
         if ((bin_step < _M_I_N_B_I_N_S_T_E_P)) {
             abort E_L_B_FACTORY_BIN_STEP_TOO_LOW
         };
-        let preset: u256 = set_static_fee_parameters(0u256, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
+        let preset: u256 = set_static_fee_parameters((0 as u256), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
         if (is_open) {
             preset = set_bool(preset, true, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N);
         };
@@ -306,7 +306,7 @@ module 0x1::l_b_factory {
     public entry fun set_l_b_hooks_parameters_on_pair(account: &signer, token_x: address, token_y: address, bin_step: u16, hooks_parameters: u256, on_hooks_set_data: vector<u8>) {
         let state = borrow_global_mut<LBFactoryState>(@0x1);
         assert!(table::contains(&state.roles, signer::address_of(account)), E_UNAUTHORIZED);
-        if (((hooks::get_hooks(hooks_parameters) == @0x0) || (hooks::get_flags(hooks_parameters) == 0u256))) {
+        if (((hooks::get_hooks(hooks_parameters) == @0x0) || (hooks::get_flags(hooks_parameters) == 0))) {
             abort E_L_B_FACTORY_INVALID_HOOKS_PARAMETERS
         };
         set_l_b_hooks_parameters_on_pair(token_x, token_y, bin_step, hooks_parameters, on_hooks_set_data);
@@ -315,7 +315,7 @@ module 0x1::l_b_factory {
     public entry fun remove_l_b_hooks_on_pair(account: &signer, token_x: address, token_y: address, bin_step: u16) {
         let state = borrow_global_mut<LBFactoryState>(@0x1);
         assert!(table::contains(&state.roles, signer::address_of(account)), E_UNAUTHORIZED);
-        set_l_b_hooks_parameters_on_pair(token_x, token_y, bin_step, 0u256, unknown(0u256));
+        set_l_b_hooks_parameters_on_pair(token_x, token_y, bin_step, 0, unknown(0));
     }
 
     public entry fun set_fee_recipient(account: &signer, fee_recipient: address) acquires LBFactoryState {

@@ -116,8 +116,8 @@ module 0x1::packed_uint128_math {
 
     public(package) fun scalar_mul_div_basis_point_round_down(x: u256, multiplier: u128): u256 {
         let z = 0u256;
-        if ((multiplier == 0u256)) {
-            0u256
+        if ((multiplier == 0)) {
+            0
         };
         let BASIS_POINT_MAX: u256 = BASIS_POINT_MAX;
         if ((multiplier > BASIS_POINT_MAX)) {

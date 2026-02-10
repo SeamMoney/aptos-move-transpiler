@@ -1,5 +1,7 @@
 module 0x1::uint128x128_math {
 
+    use std::u256;
+
     // Error codes
     const LOG_SCALE_OFFSET: u256 = 127u256;
     const LOG_SCALE: u256 = 170141183460469231731687303715884105728u256;
@@ -29,28 +31,28 @@ module 0x1::uint128x128_math {
 
     public(package) fun log2(x: u256): i256 {
         let result = 0i256;
-        if ((x == 1u256)) {
-            -128u256
+        if ((x == 1)) {
+            -128
         };
-        if ((x == 0u256)) {
+        if ((x == 0)) {
             abort E_UINT128X128_MATH_LOG_UNDERFLOW
         };
         x >>= 1u8;
         let sign: i256;
         if ((x >= LOG_SCALE)) {
-            sign = 1u256;
+            sign = 1;
         } else {
-            sign = -1u256;
+            sign = -1;
             x = (LOG_SCALE_SQUARED / x);
         };
         let n: u256 = most_significant_bit(((x >> (LOG_SCALE_OFFSET as u8))));
         result = (((n as i256) << (LOG_SCALE_OFFSET as u8)) as i256);
         let y: u256 = (x >> (n as u8));
         if ((y != LOG_SCALE)) {
-            let delta: i256 = ((1u256 << (((LOG_SCALE_OFFSET - 1u256)) as u8)) as i256);
-            while ((delta > 0u256)) {
+            let delta: i256 = ((1 << (((LOG_SCALE_OFFSET - 1)) as u8)) as i256);
+            while ((delta > 0)) {
                 y = (((y * y)) >> (LOG_SCALE_OFFSET as u8));
-                if ((y >= (1u256 << (((LOG_SCALE_OFFSET + 1u256)) as u8)))) {
+                if ((y >= (1 << (((LOG_SCALE_OFFSET + 1)) as u8)))) {
                     result += delta;
                     y >>= 1u8;
                 };
@@ -65,104 +67,104 @@ module 0x1::uint128x128_math {
         let result = 0u256;
         let invert: bool;
         let abs_y: u256;
-        if ((y == 0u256)) {
+        if ((y == 0)) {
             SCALE
         };
         abs_y = y;
-        if ((abs_y < 0u256)) {
-            abs_y = (0u256 - abs_y);
-            invert = (invert == 0u256);
+        if ((abs_y < 0)) {
+            abs_y = (0 - abs_y);
+            invert = (invert == 0);
         };
         if ((abs_y < 0x100000u256)) {
             result = SCALE;
             let squared = x;
             if ((x > 0xffffffffffffffffffffffffffffffffu256)) {
-                squared = ((0u256 ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256) / squared);
-                invert = (invert == 0u256);
+                squared = ((0 ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256) / squared);
+                invert = (invert == 0);
             };
-            if (((abs_y & 0x1u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            if (((abs_y & 0x1u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x2u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x2u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x4u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x4u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x8u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x8u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x10u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x10u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x20u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x20u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x40u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x40u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x80u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x80u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x100u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x100u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x200u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x200u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x400u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x400u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x800u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x800u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x1000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x1000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x2000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x2000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x4000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x4000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x8000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x8000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x10000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x10000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x20000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x20000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x40000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x40000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
-            squared = ((squared * squared) >> (128u256 as u8));
-            if (((abs_y & 0x80000u256) != 0u256)) {
-                result = ((result * squared) >> (128u256 as u8));
+            squared = ((squared * squared) >> (128 as u8));
+            if (((abs_y & 0x80000u256) != 0)) {
+                result = ((result * squared) >> (128 as u8));
             };
         };
-        if ((result == 0u256)) {
+        if ((result == 0)) {
             abort E_UINT128X128_MATH_POW_UNDERFLOW
         };
-        if (invert) (115792089237316195423570985008687907853269984665640564039457584007913129639935u256 / result) else result
+        if (invert) (u256::MAX / result) else result
     }
 }

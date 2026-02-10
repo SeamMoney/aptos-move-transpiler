@@ -6,6 +6,7 @@ module 0x1::l_b_router {
     use transpiler::evm_compat;
     use aptos_framework::timestamp;
     use std::vector;
+    use std::u256;
 
     // Error codes
     const E_REVERT: u64 = 0u64;
@@ -206,7 +207,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         let pairs: vector<address> = get_pairs(path.pair_bin_steps, path.versions, path.token_path);
@@ -224,7 +225,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         if ((*vector::borrow(&path.token_path, (vector::length(&path.pair_bin_steps) as u64)) != IERC20(state.wnative))) {
@@ -246,7 +247,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         if ((*vector::borrow(&path.token_path, 0u64) != IERC20(state.wnative))) {
@@ -266,7 +267,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         let pairs: vector<address> = get_pairs(path.pair_bin_steps, path.versions, path.token_path);
@@ -288,7 +289,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         if ((*vector::borrow(&path.token_path, (vector::length(&path.pair_bin_steps) as u64)) != IERC20(state.wnative))) {
@@ -314,7 +315,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         if ((*vector::borrow(&path.token_path, 0u64) != IERC20(state.wnative))) {
@@ -341,7 +342,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         let pairs: vector<address> = get_pairs(path.pair_bin_steps, path.versions, path.token_path);
@@ -362,7 +363,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         if ((*vector::borrow(&path.token_path, (vector::length(&path.pair_bin_steps) as u64)) != IERC20(state.wnative))) {
@@ -386,7 +387,7 @@ module 0x1::l_b_router {
         if (((timestamp::now_seconds() as u256) > deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
-        if ((((vector::length(&path.pair_bin_steps) == 0u256) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1u256) != vector::length(&path.token_path)))) {
+        if ((((vector::length(&path.pair_bin_steps) == 0) || (vector::length(&path.versions) != vector::length(&path.pair_bin_steps))) || ((vector::length(&path.pair_bin_steps) + 1) != vector::length(&path.token_path)))) {
             abort E_L_B_ROUTER_LENGTHS_MISMATCH
         };
         if ((*vector::borrow(&path.token_path, 0u64) != IERC20(state.wnative))) {
@@ -410,10 +411,10 @@ module 0x1::l_b_router {
             abort E_L_B_ROUTER_NOT_FACTORY_OWNER
         };
         if ((evm_compat::to_address(token) == @0x0)) {
-            amount = if ((amount == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256)) @0x1.balance else amount;
+            amount = if ((amount == u256::MAX)) @0x1.balance else amount;
             safe_transfer_native(to, amount);
         } else {
-            amount = if ((amount == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256)) balance_of(token, @0x1) else amount;
+            amount = if ((amount == u256::MAX)) balance_of(token, @0x1) else amount;
             safe_transfer(token, to, amount);
         };
     }
@@ -451,7 +452,7 @@ module 0x1::l_b_router {
         let i: u256;
         while ((i < vector::length(&liquidity_configs))) {
             let id: i256 = ((active_id as i256) + *vector::borrow(&liq.delta_ids, (i as u64)));
-            if (((id < 0u256) || ((id as u256) > 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
+            if (((id < 0) || ((id as u256) > 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
                 abort E_L_B_ROUTER_ID_OVERFLOWS
             };
             *vector::borrow_mut(&mut deposit_ids, (i as u64)) = (id as u256);
@@ -477,22 +478,22 @@ module 0x1::l_b_router {
         amounts_in = unknown(vector::length(&token_path));
         *vector::borrow_mut(&mut amounts_in, (vector::length(&pairs) as u64)) = amount_out;
         let i: u256 = vector::length(&pairs);
-        while ((i != 0u256)) {
-            let token: address = *vector::borrow(&token_path, ((i - 1u256) as u64));
-            let version: Version = *vector::borrow(&versions, ((i - 1u256) as u64));
-            let pair: address = *vector::borrow(&pairs, ((i - 1u256) as u64));
+        while ((i != 0)) {
+            let token: address = *vector::borrow(&token_path, ((i - 1) as u64));
+            let version: Version = *vector::borrow(&versions, ((i - 1) as u64));
+            let pair: address = *vector::borrow(&pairs, ((i - 1) as u64));
             if ((version == V1)) {
                 let (reserve_in, reserve_out, 2) = get_reserves(i_joe_pair(pair));
                 if ((token > *vector::borrow(&token_path, (i as u64)))) {
                     (reserve_in, reserve_out) = (reserve_out, reserve_in);
                 };
                 let amount_out_: u256 = *vector::borrow(&amounts_in, (i as u64));
-                *vector::borrow_mut(&mut amounts_in, ((i - 1u256) as u64)) = (get_amount_in(amount_out_, reserve_in, reserve_out) as u128);
+                *vector::borrow_mut(&mut amounts_in, ((i - 1) as u64)) = (get_amount_in(amount_out_, reserve_in, reserve_out) as u128);
             } else {
                 if ((version == V2)) {
-                    (*vector::borrow(&amounts_in, ((i - 1u256) as u64)), _1) = get_swap_in(state.legacy_router, i_l_b_legacy_pair(pair), (*vector::borrow(&amounts_in, (i as u64)) as u128), (token_x(i_l_b_legacy_pair(pair)) == token));
+                    (*vector::borrow(&amounts_in, ((i - 1) as u64)), _1) = get_swap_in(state.legacy_router, i_l_b_legacy_pair(pair), (*vector::borrow(&amounts_in, (i as u64)) as u128), (token_x(i_l_b_legacy_pair(pair)) == token));
                 } else {
-                    (*vector::borrow(&amounts_in, ((i - 1u256) as u64)), _1, _2) = get_swap_in(i_l_b_pair(pair), (*vector::borrow(&amounts_in, (i as u64)) as u128), (get_token_x(i_l_b_pair(pair)) == token));
+                    (*vector::borrow(&amounts_in, ((i - 1) as u64)), _1, _2) = get_swap_in(i_l_b_pair(pair), (*vector::borrow(&amounts_in, (i as u64)) as u128), (get_token_x(i_l_b_pair(pair)) == token));
                 };
             };
             i = (i - 1);
@@ -529,16 +530,16 @@ module 0x1::l_b_router {
             pair = *vector::borrow(&pairs, (i as u64));
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
-            token_next = *vector::borrow(&token_path, ((i + 1u256) as u64));
-            recipient = if (((i + 1u256) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1u256) as u64));
+            token_next = *vector::borrow(&token_path, ((i + 1) as u64));
+            recipient = if (((i + 1) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1) as u64));
             if ((version == V1)) {
                 let (reserve0, reserve1, 2) = get_reserves(i_joe_pair(pair));
                 if ((token < token_next)) {
                     amount_out = get_amount_out(amount_out, reserve0, reserve1);
-                    swap(i_joe_pair(pair), 0u256, amount_out, recipient, string::utf8(b""));
+                    swap(i_joe_pair(pair), 0, amount_out, recipient, string::utf8(b""));
                 } else {
                     amount_out = get_amount_out(amount_out, reserve1, reserve0);
-                    swap(i_joe_pair(pair), amount_out, 0u256, recipient, string::utf8(b""));
+                    swap(i_joe_pair(pair), amount_out, 0, recipient, string::utf8(b""));
                 };
             } else {
                 if ((version == V2)) {
@@ -576,14 +577,14 @@ module 0x1::l_b_router {
             pair = *vector::borrow(&pairs, (i as u64));
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
-            token_next = *vector::borrow(&token_path, ((i + 1u256) as u64));
-            recipient = if (((i + 1u256) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1u256) as u64));
+            token_next = *vector::borrow(&token_path, ((i + 1) as u64));
+            recipient = if (((i + 1) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1) as u64));
             if ((version == V1)) {
-                amount_out = *vector::borrow(&amounts_in, ((i + 1u256) as u64));
+                amount_out = *vector::borrow(&amounts_in, ((i + 1) as u64));
                 if ((token < token_next)) {
-                    swap(i_joe_pair(pair), 0u256, amount_out, recipient, string::utf8(b""));
+                    swap(i_joe_pair(pair), 0, amount_out, recipient, string::utf8(b""));
                 } else {
-                    swap(i_joe_pair(pair), amount_out, 0u256, recipient, string::utf8(b""));
+                    swap(i_joe_pair(pair), amount_out, 0, recipient, string::utf8(b""));
                 };
             } else {
                 if ((version == V2)) {
@@ -620,18 +621,18 @@ module 0x1::l_b_router {
             pair = *vector::borrow(&pairs, (i as u64));
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
-            token_next = *vector::borrow(&token_path, ((i + 1u256) as u64));
-            recipient = if (((i + 1u256) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1u256) as u64));
+            token_next = *vector::borrow(&token_path, ((i + 1) as u64));
+            recipient = if (((i + 1) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1) as u64));
             if ((version == V1)) {
                 let (reserve0, reserve1, 2) = get_reserves(i_joe_pair(pair));
                 if ((token < token_next)) {
                     let amount_in: u256 = (balance_of(token, pair) - reserve0);
                     let amount_out: u256 = get_amount_out(amount_in, reserve0, reserve1);
-                    swap(i_joe_pair(pair), 0u256, amount_out, recipient, string::utf8(b""));
+                    swap(i_joe_pair(pair), 0, amount_out, recipient, string::utf8(b""));
                 } else {
                     let amount_in: u256 = (balance_of(token, pair) - reserve1);
                     let amount_out: u256 = get_amount_out(amount_in, reserve1, reserve0);
-                    swap(i_joe_pair(pair), amount_out, 0u256, recipient, string::utf8(b""));
+                    swap(i_joe_pair(pair), amount_out, 0, recipient, string::utf8(b""));
                 };
             } else {
                 if ((version == V2)) {
@@ -682,7 +683,7 @@ module 0x1::l_b_router {
         let i: u256;
         while ((i < vector::length(&pairs))) {
             token = token_next;
-            token_next = *vector::borrow(&token_path, ((i + 1u256) as u64));
+            token_next = *vector::borrow(&token_path, ((i + 1) as u64));
             *vector::borrow_mut(&mut pairs, (i as u64)) = get_pair(token, token_next, *vector::borrow(&pair_bin_steps, (i as u64)), *vector::borrow(&versions, (i as u64)));
             i = (i + 1);
         }
@@ -690,21 +691,21 @@ module 0x1::l_b_router {
     }
 
     fun safe_transfer(token: address, to: address, amount: u256) {
-        if ((amount == 0u256)) {
+        if ((amount == 0)) {
             return
         };
         safe_transfer(token, to, amount);
     }
 
     fun safe_transfer_from(token: address, from: address, to: address, amount: u256) {
-        if ((amount == 0u256)) {
+        if ((amount == 0)) {
             return
         };
         safe_transfer_from(token, from, to, amount);
     }
 
     fun safe_transfer_native(to: address, amount: u256) {
-        if ((amount == 0u256)) {
+        if ((amount == 0)) {
             return
         };
         let (success, 1) = unknown(string::utf8(b""));
@@ -714,7 +715,7 @@ module 0x1::l_b_router {
     }
 
     fun w_native_deposit_and_transfer(to: address, amount: u256) {
-        if ((amount == 0u256)) {
+        if ((amount == 0)) {
             return
         };
         unknown();
@@ -722,7 +723,7 @@ module 0x1::l_b_router {
     }
 
     fun w_native_withdraw_and_transfer(to: address, amount: u256) {
-        if ((amount == 0u256)) {
+        if ((amount == 0)) {
             return
         };
         withdraw(state.wnative, amount);

@@ -35,8 +35,8 @@ module 0x1::token_helper {
 
     public(package) fun call_and_catch(token: address, data: vector<u8>) {
         let success: bool;
-        0u256;
-        success = call(0u256, token, 0u256, (data + 0x20u256), data, 0x00u256, 0x20u256);
+        0;
+        success = call(0, token, 0, (data + 0x20u256), data, 0x00u256, 0x20u256);
         if (!success) {
             abort E_TOKEN_HELPER_TRANSFER_FAILED
         };
