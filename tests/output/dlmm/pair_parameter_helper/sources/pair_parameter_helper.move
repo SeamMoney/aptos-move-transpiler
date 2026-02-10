@@ -121,15 +121,15 @@ module 0x1::pair_parameter_helper {
     }
 
     public(package) fun get_base_fee(params: u256, bin_step: u16): u256 {
-        (((get_base_factor(params) as u256) * bin_step) * 10000000000u256)
+        (((get_base_factor(params) as u256) * bin_step) * 10000000000)
     }
 
     public(package) fun get_variable_fee(params: u256, bin_step: u16): u256 {
         let variable_fee = 0u256;
         let variable_fee_control: u256 = get_variable_fee_control(params);
-        if ((variable_fee_control != 0u256)) {
+        if ((variable_fee_control != 0)) {
             let prod: u256 = ((get_volatility_accumulator(params) as u256) * bin_step);
-            variable_fee = (((((prod * prod) * variable_fee_control) + 99u256)) / 100u256);
+            variable_fee = (((((prod * prod) * variable_fee_control) + 99)) / 100);
         };
         variable_fee
     }
@@ -173,7 +173,7 @@ module 0x1::pair_parameter_helper {
         new_params = set(new_params, variable_fee_control, MASK_UINT24, OFFSET_VAR_FEE_CONTROL);
         new_params = set(new_params, protocol_share, MASK_UINT14, OFFSET_PROTOCOL_SHARE);
         new_params = set(new_params, max_volatility_accumulator, MASK_UINT20, OFFSET_MAX_VOL_ACC);
-        set(params, (new_params as u256), MASK_STATIC_PARAMETER, 0u256)
+        set(params, (new_params as u256), MASK_STATIC_PARAMETER, 0)
     }
 
     public(package) fun update_id_reference(params: u256): u256 {
@@ -211,7 +211,7 @@ module 0x1::pair_parameter_helper {
         let dt: u256 = (timestamp - get_time_of_last_update(params));
         if ((dt >= get_filter_period(params))) {
             params = update_id_reference(params);
-            params = if ((dt < get_decay_period(params))) update_volatility_reference(params) else set_volatility_reference(params, 0u256);
+            params = if ((dt < get_decay_period(params))) update_volatility_reference(params) else set_volatility_reference(params, 0);
         };
         update_time_of_last_update(params, timestamp)
     }

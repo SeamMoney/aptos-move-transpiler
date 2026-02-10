@@ -41,7 +41,7 @@ module 0x1::sample_math {
 
     public(package) fun get_oracle_length(sample: u256): u16 {
         let length = 0u16;
-        decode_uint16(sample, 0u256)
+        decode_uint16(sample, 0)
     }
 
     public(package) fun get_cumulative_id(sample: u256): u64 {
@@ -82,13 +82,13 @@ module 0x1::sample_math {
         let c_id1: u256 = get_cumulative_id(sample1);
         let c_volatility1: u256 = get_cumulative_volatility(sample1);
         let c_bin_crossed1: u256 = get_cumulative_bin_crossed(sample1);
-        if ((weight2 == 0u256)) {
+        if ((weight2 == 0)) {
             ((c_id1 as u64), (c_volatility1 as u64), (c_bin_crossed1 as u64))
         };
         let c_id2: u256 = get_cumulative_id(sample2);
         let c_volatility2: u256 = get_cumulative_volatility(sample2);
         let c_bin_crossed2: u256 = get_cumulative_bin_crossed(sample2);
-        if ((weight1 == 0u256)) {
+        if ((weight1 == 0)) {
             ((c_id2 as u64), (c_volatility2 as u64), (c_bin_crossed2 as u64))
         };
         let total_weight: u256 = ((weight1 as u256) + weight2);

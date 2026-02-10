@@ -1,5 +1,7 @@
 module 0x1::bin_helper {
 
+    use std::u128;
+
     // Error codes
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
@@ -30,10 +32,10 @@ module 0x1::bin_helper {
         let (bin_reserve_x, bin_reserve_y) = decode(bin_reserves);
         let amount_x_out_from_bin: u128;
         let amount_y_out_from_bin: u128;
-        if ((bin_reserve_x > 0u256)) {
+        if ((bin_reserve_x > 0)) {
             amount_x_out_from_bin = safe128((mul_div_round_down(amount_to_burn, bin_reserve_x, total_supply)));
         };
-        if ((bin_reserve_y > 0u256)) {
+        if ((bin_reserve_y > 0)) {
             amount_y_out_from_bin = safe128((mul_div_round_down(amount_to_burn, bin_reserve_y, total_supply)));
         };
         amounts_out = encode(amount_x_out_from_bin, amount_y_out_from_bin);
@@ -45,11 +47,11 @@ module 0x1::bin_helper {
         let effective_amounts_in = 0u256;
         let (x, y) = decode(amounts_in);
         let user_liquidity: u256 = get_liquidity(x, y, price);
-        if ((user_liquidity == 0u256)) {
-            (0u256, 0u256)
+        if ((user_liquidity == 0)) {
+            (0, 0)
         };
         let bin_liquidity: u256 = get_liquidity(bin_reserves, price);
-        if (((bin_liquidity == 0u256) || (total_supply == 0u256))) {
+        if (((bin_liquidity == 0) || (total_supply == 0))) {
             (sqrt(user_liquidity), amounts_in)
         };
         shares = mul_div_round_down(user_liquidity, total_supply, bin_liquidity);
@@ -83,13 +85,13 @@ module 0x1::bin_helper {
 
     public(package) fun get_liquidity_u_u_u(x: u256, y: u256, price: u256): u256 {
         let liquidity = 0u256;
-        if ((x > 0u256)) {
+        if ((x > 0)) {
             liquidity = (price * x);
             if (((liquidity / x) != price)) {
                 abort E_BIN_HELPER_LIQUIDITY_OVERFLOW
             };
         };
-        if ((y > 0u256)) {
+        if ((y > 0)) {
             y <<= (SCALE_OFFSET as u8);
             liquidity += y;
             if ((liquidity < y)) {
@@ -100,15 +102,15 @@ module 0x1::bin_helper {
     }
 
     public(package) fun verify_amounts(amounts: u256, active_id: u32, id: u32) {
-        if ((((id < active_id) && (((amounts << 128u8)) > 0u256)) || ((id > active_id) && ((amounts as u256) > 340282366920938463463374607431768211455u128)))) {
+        if ((((id < active_id) && (((amounts << 128u8)) > 0)) || ((id > active_id) && ((amounts as u256) > u128::MAX)))) {
             abort E_BIN_HELPER_COMPOSITION_FACTOR_FLAWED
         };
     }
 
     public(package) fun get_composition_fees(bin_reserves: u256, parameters: u256, bin_step: u16, amounts_in: u256, total_supply: u256, shares: u256): u256 {
         let fees = 0u256;
-        if ((shares == 0u256)) {
-            0u256
+        if ((shares == 0)) {
+            0
         };
         let (amount_x, amount_y) = decode(amounts_in);
         let (received_amount_x, received_amount_y) = decode(get_amount_out_of_bin((bin_reserves + amounts_in), shares, (total_supply + shares)));
@@ -125,7 +127,7 @@ module 0x1::bin_helper {
     }
 
     public(package) fun is_empty(bin_reserves: u256, is_x: bool): bool {
-        if (is_x) (decode_x(bin_reserves) == 0u256) else (decode_y(bin_reserves) == 0u256)
+        if (is_x) (decode_x(bin_reserves) == 0) else (decode_y(bin_reserves) == 0)
     }
 
     public(package) fun get_amounts(bin_reserves: u256, parameters: u256, bin_step: u16, swap_for_y: bool, active_id: u32, amounts_in_left: u256): (u256, u256, u256) {
@@ -178,24 +180,24 @@ module 0x1::bin_helper {
 
     public(package) fun transfer(amounts: u256, token_x: address, token_y: address, recipient: address) {
         let (amount_x, amount_y) = decode(amounts);
-        if ((amount_x > 0u256)) {
+        if ((amount_x > 0)) {
             safe_transfer(token_x, recipient, amount_x);
         };
-        if ((amount_y > 0u256)) {
+        if ((amount_y > 0)) {
             safe_transfer(token_y, recipient, amount_y);
         };
     }
 
     public(package) fun transfer_x(amounts: u256, token_x: address, recipient: address) {
         let amount_x: u128 = decode_x(amounts);
-        if ((amount_x > 0u256)) {
+        if ((amount_x > 0)) {
             safe_transfer(token_x, recipient, amount_x);
         };
     }
 
     public(package) fun transfer_y(amounts: u256, token_y: address, recipient: address) {
         let amount_y: u128 = decode_y(amounts);
-        if ((amount_y > 0u256)) {
+        if ((amount_y > 0)) {
             safe_transfer(token_y, recipient, amount_y);
         };
     }

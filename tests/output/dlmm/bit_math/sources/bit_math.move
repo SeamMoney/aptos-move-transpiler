@@ -1,5 +1,7 @@
 module 0x1::bit_math {
 
+    use std::u256;
+
     // Error codes
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
@@ -24,96 +26,96 @@ module 0x1::bit_math {
 
     public(package) fun closest_bit_right(x: u256, bit: u8): u256 {
         let id = 0u256;
-        let shift: u256 = (255u256 - bit);
+        let shift: u256 = (255 - bit);
         x <<= (shift as u8);
-        if (((x == 0u256))) 115792089237316195423570985008687907853269984665640564039457584007913129639935u256 else (most_significant_bit(x) - shift)
+        if (((x == 0))) u256::MAX else (most_significant_bit(x) - shift)
         id
     }
 
     public(package) fun closest_bit_left(x: u256, bit: u8): u256 {
         let id = 0u256;
         x >>= (bit as u8);
-        if (((x == 0u256))) 115792089237316195423570985008687907853269984665640564039457584007913129639935u256 else (least_significant_bit(x) + bit)
+        if (((x == 0))) u256::MAX else (least_significant_bit(x) + bit)
         id
     }
 
     public(package) fun most_significant_bit(x: u256): u8 {
         let msb = 0u8;
         if ((x > 0xffffffffffffffffffffffffffffffffu256)) {
-            x = (x >> (128u256 as u8));
-            msb = (128u256 as u8);
+            x = (x >> (128 as u8));
+            msb = (128 as u8);
         };
         if ((x > 0xffffffffffffffffu256)) {
-            x = (x >> (64u256 as u8));
-            msb = ((msb + 64u256) as u8);
+            x = (x >> (64 as u8));
+            msb = ((msb + 64) as u8);
         };
         if ((x > 0xffffffffu256)) {
-            x = (x >> (32u256 as u8));
-            msb = ((msb + 32u256) as u8);
+            x = (x >> (32 as u8));
+            msb = ((msb + 32) as u8);
         };
         if ((x > 0xffffu256)) {
-            x = (x >> (16u256 as u8));
-            msb = ((msb + 16u256) as u8);
+            x = (x >> (16 as u8));
+            msb = ((msb + 16) as u8);
         };
         if ((x > 0xffu256)) {
-            x = (x >> (8u256 as u8));
-            msb = ((msb + 8u256) as u8);
+            x = (x >> (8 as u8));
+            msb = ((msb + 8) as u8);
         };
         if ((x > 0xfu256)) {
-            x = (x >> (4u256 as u8));
-            msb = ((msb + 4u256) as u8);
+            x = (x >> (4 as u8));
+            msb = ((msb + 4) as u8);
         };
         if ((x > 0x3u256)) {
-            x = (x >> (2u256 as u8));
-            msb = ((msb + 2u256) as u8);
+            x = (x >> (2 as u8));
+            msb = ((msb + 2) as u8);
         };
         if ((x > 0x1u256)) {
-            msb = ((msb + 1u256) as u8);
+            msb = ((msb + 1) as u8);
         };
         msb
     }
 
     public(package) fun least_significant_bit(x: u256): u8 {
         let lsb = 0u8;
-        let sx = (x << (128u256 as u8));
-        if (!(sx == 0u256)) {
-            lsb = (128u256 as u8);
+        let sx = (x << (128 as u8));
+        if (!(sx == 0)) {
+            lsb = (128 as u8);
             x = sx;
         };
-        sx = (x << (64u256 as u8));
-        if (!(sx == 0u256)) {
+        sx = (x << (64 as u8));
+        if (!(sx == 0)) {
             x = sx;
-            lsb = ((lsb + 64u256) as u8);
+            lsb = ((lsb + 64) as u8);
         };
-        sx = (x << (32u256 as u8));
-        if (!(sx == 0u256)) {
+        sx = (x << (32 as u8));
+        if (!(sx == 0)) {
             x = sx;
-            lsb = ((lsb + 32u256) as u8);
+            lsb = ((lsb + 32) as u8);
         };
-        sx = (x << (16u256 as u8));
-        if (!(sx == 0u256)) {
+        sx = (x << (16 as u8));
+        if (!(sx == 0)) {
             x = sx;
-            lsb = ((lsb + 16u256) as u8);
+            lsb = ((lsb + 16) as u8);
         };
-        sx = (x << (8u256 as u8));
-        if (!(sx == 0u256)) {
+        sx = (x << (8 as u8));
+        if (!(sx == 0)) {
             x = sx;
-            lsb = ((lsb + 8u256) as u8);
+            lsb = ((lsb + 8) as u8);
         };
-        sx = (x << (4u256 as u8));
-        if (!(sx == 0u256)) {
+        sx = (x << (4 as u8));
+        if (!(sx == 0)) {
             x = sx;
-            lsb = ((lsb + 4u256) as u8);
+            lsb = ((lsb + 4) as u8);
         };
-        sx = (x << (2u256 as u8));
-        if (!(sx == 0u256)) {
+        sx = (x << (2 as u8));
+        if (!(sx == 0)) {
             x = sx;
-            lsb = ((lsb + 2u256) as u8);
+            lsb = ((lsb + 2) as u8);
         };
-        if (!((x << (1u256 as u8)) == 0u256)) {
-            lsb = ((lsb + 1u256) as u8);
+        if (!((x << (1 as u8)) == 0)) {
+            lsb = ((lsb + 1) as u8);
         };
-        lsb = ((255u256 - lsb) as u8);
+        lsb = ((255 - lsb) as u8);
         lsb
     }
 }

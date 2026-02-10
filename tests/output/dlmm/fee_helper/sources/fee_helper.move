@@ -26,13 +26,13 @@ module 0x1::fee_helper {
 
     public(package) fun get_fee_amount_from(amount_with_fees: u128, total_fee: u128): u128 {
         verify_fee(fee);
-        (((((((amount_with_fees as u256) * total_fee) + PRECISION) - 1u256)) / PRECISION) as u128)
+        (((((((amount_with_fees as u256) * total_fee) + PRECISION) - 1)) / PRECISION) as u128)
     }
 
     public(package) fun get_fee_amount(amount: u128, total_fee: u128): u128 {
         verify_fee(fee);
         let denominator: u256 = (PRECISION - total_fee);
-        (((((((amount as u256) * total_fee) + denominator) - 1u256)) / denominator) as u128)
+        (((((((amount as u256) * total_fee) + denominator) - 1)) / denominator) as u128)
     }
 
     public(package) fun get_composition_fee(amount_with_fees: u128, total_fee: u128): u128 {

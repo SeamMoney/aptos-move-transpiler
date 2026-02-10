@@ -165,16 +165,16 @@ module 0x1::l_b_pair {
         let parameters: u256 = state.parameters;
         sample_lifetime = (oracle_helper._m_a_x__s_a_m_p_l_e__l_i_f_e_t_i_m_e as u8);
         let oracle_id: u16 = get_oracle_id(parameters);
-        if ((oracle_id > 0u256)) {
+        if ((oracle_id > 0)) {
             let sample: u256;
             (sample, active_size) = get_active_sample_and_size(state.oracle, oracle_id);
             size = (get_oracle_length(sample) as u16);
             last_updated = (get_sample_last_update(sample) as u64);
-            if ((last_updated == 0u256)) {
-                active_size = (0u256 as u16);
+            if ((last_updated == 0)) {
+                active_size = (0 as u16);
             };
-            if ((active_size > 0u256)) {
-                sample = get_sample(state.oracle, (1u256 + ((oracle_id % active_size))));
+            if ((active_size > 0)) {
+                sample = get_sample(state.oracle, (1 + ((oracle_id % active_size))));
                 first_timestamp = (get_sample_last_update(sample) as u64);
             };
         };
@@ -189,8 +189,8 @@ module 0x1::l_b_pair {
         let cumulative_bin_crossed = 0u64;
         let parameters: u256 = state.parameters;
         let oracle_id: u16 = get_oracle_id(parameters);
-        if (((oracle_id == 0u256) || (lookup_timestamp > (timestamp::now_seconds() as u256)))) {
-            (0u256, 0u256, 0u256)
+        if (((oracle_id == 0) || (lookup_timestamp > (timestamp::now_seconds() as u256)))) {
+            (0, 0, 0)
         };
         let time_of_last_update: u64;
         (time_of_last_update, cumulative_id, cumulative_volatility, cumulative_bin_crossed) = get_sample_at(state.oracle, oracle_id, lookup_timestamp);
@@ -228,7 +228,7 @@ module 0x1::l_b_pair {
         parameters = update_references(parameters, (timestamp::now_seconds() as u256));
         while (true) {
             let bin_reserves: u128 = decode(*table::borrow_with_default(&state.bins, id, &0u256), !swap_for_y);
-            if ((bin_reserves > 0u256)) {
+            if ((bin_reserves > 0)) {
                 let price: u256 = get_price_from_id(id, bin_step);
                 let amount_out_of_bin: u128 = if ((bin_reserves > amount_out_left)) amount_out_left else bin_reserves;
                 parameters = update_volatility_accumulator(parameters, id);
@@ -239,11 +239,11 @@ module 0x1::l_b_pair {
                 amount_out_left -= amount_out_of_bin;
                 fee += fee_amount;
             };
-            if ((amount_out_left == 0u256)) {
+            if ((amount_out_left == 0)) {
                 break;
             } else {
                 let next_id: u32 = get_next_non_empty_bin(swap_for_y, id);
-                if (((next_id == 0u256) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
+                if (((next_id == 0) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
                     break;
                 };
                 id = next_id;
@@ -268,17 +268,17 @@ module 0x1::l_b_pair {
             if (!is_empty(bin_reserves, !swap_for_y)) {
                 parameters = update_volatility_accumulator(parameters, id);
                 let (amounts_in_with_fees, amounts_out_of_bin, total_fees) = get_amounts(bin_reserves, parameters, bin_step, swap_for_y, id, amounts_in_left);
-                if ((amounts_in_with_fees > 0u256)) {
+                if ((amounts_in_with_fees > 0)) {
                     amounts_in_left = (amounts_in_left - amounts_in_with_fees);
                     amount_out += decode(amounts_out_of_bin, !swap_for_y);
                     fee += decode(total_fees, swap_for_y);
                 };
             };
-            if ((amounts_in_left == 0u256)) {
+            if ((amounts_in_left == 0)) {
                 break;
             } else {
                 let next_id: u32 = get_next_non_empty_bin(swap_for_y, id);
-                if (((next_id == 0u256) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
+                if (((next_id == 0) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
                     break;
                 };
                 id = next_id;
@@ -296,7 +296,7 @@ module 0x1::l_b_pair {
         let reserves: u256 = state.reserves;
         let protocol_fees: u256 = state.protocol_fees;
         let amounts_left: u256 = if (swap_for_y) received_x(reserves, token_x()) else received_y(reserves, token_y());
-        if ((amounts_left == 0u256)) {
+        if ((amounts_left == 0)) {
             abort E_L_B_PAIR_INSUFFICIENT_AMOUNT_IN
         };
         let swap_for_y_: bool = swap_for_y;
@@ -311,11 +311,11 @@ module 0x1::l_b_pair {
             if (!is_empty(bin_reserves, !swap_for_y_)) {
                 parameters = update_volatility_accumulator(parameters, active_id);
                 let (amounts_in_with_fees, amounts_out_of_bin, total_fees) = get_amounts(bin_reserves, parameters, bin_step, swap_for_y_, active_id, amounts_left);
-                if ((amounts_in_with_fees > 0u256)) {
+                if ((amounts_in_with_fees > 0)) {
                     amounts_left = (amounts_left - amounts_in_with_fees);
                     amounts_out = (amounts_out + amounts_out_of_bin);
                     let p_fees: u256 = scalar_mul_div_basis_point_round_down(total_fees, get_protocol_share(parameters));
-                    if ((p_fees > 0u256)) {
+                    if ((p_fees > 0)) {
                         protocol_fees = (protocol_fees + p_fees);
                         amounts_in_with_fees = (amounts_in_with_fees - p_fees);
                     };
@@ -323,17 +323,17 @@ module 0x1::l_b_pair {
                     event::emit(Swap { arg0: signer::address_of(account), arg1: to, arg2: active_id, arg3: amounts_in_with_fees, arg4: amounts_out_of_bin, arg5: get_volatility_accumulator(parameters), arg6: total_fees, arg7: p_fees });
                 };
             };
-            if ((amounts_left == 0u256)) {
+            if ((amounts_left == 0)) {
                 break;
             } else {
                 let next_id: u32 = get_next_non_empty_bin(swap_for_y_, active_id);
-                if (((next_id == 0u256) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
+                if (((next_id == 0) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
                     abort E_L_B_PAIR_OUT_OF_LIQUIDITY
                 };
                 active_id = next_id;
             };
         }
-        if ((amounts_out == 0u256)) {
+        if ((amounts_out == 0)) {
             abort E_L_B_PAIR_INSUFFICIENT_AMOUNT_OUT
         };
         state.reserves = (reserves - amounts_out);
@@ -353,7 +353,7 @@ module 0x1::l_b_pair {
     public entry fun flash_loan(account: &signer, receiver: address, amounts: u256, data: vector<u8>) acquires LBPairState {
         let state = borrow_global_mut<LBPairState>(@0x1);
         non_reentrant_before();
-        if ((amounts == 0u256)) {
+        if ((amounts == 0)) {
             abort E_L_B_PAIR_ZERO_BORROW_AMOUNT
         };
         let hooks_parameters: u256 = state.hooks_parameters;
@@ -362,10 +362,10 @@ module 0x1::l_b_pair {
         hooks::before_flash_loan(hooks_parameters, signer::address_of(account), evm_compat::to_address(receiver), amounts);
         transfer(amounts, token_x(), token_y(), evm_compat::to_address(receiver));
         let (success, r_data) = call(evm_compat::to_address(receiver), encode_with_selector(abi, i_l_b_flash_loan_callback.l_b_flash_loan_callback.selector, signer::address_of(account), token_x(), token_y(), amounts, total_fees, data));
-        if (((!success || (vector::length(&r_data) != 32u256)) || (decode(abi, r_data, (0u256)) != CALLBACK_SUCCESS))) {
+        if (((!success || (vector::length(&r_data) != 32)) || (decode(abi, r_data, (0)) != CALLBACK_SUCCESS))) {
             abort E_L_B_PAIR_FLASH_LOAN_CALLBACK_FAILED
         };
-        let balances_after: u256 = received(0u256, token_x(), token_y());
+        let balances_after: u256 = received((0 as u256), token_x(), token_y());
         if (lt(balances_after, (reserves_before + total_fees))) {
             abort E_L_B_PAIR_FLASH_LOAN_INSUFFICIENT_AMOUNT
         };
@@ -384,7 +384,7 @@ module 0x1::l_b_pair {
         let liquidity_minted = vector::empty();
         assert!(true, E_MODIFIER_NOT_ADDRESS_ZERO_OR_THIS);
         non_reentrant_before();
-        if ((vector::length(&liquidity_configs) == 0u256)) {
+        if ((vector::length(&liquidity_configs) == 0)) {
             abort E_L_B_PAIR_EMPTY_MARKET_CONFIGS
         };
         let hooks_parameters: u256 = state.hooks_parameters;
@@ -397,7 +397,7 @@ module 0x1::l_b_pair {
         liquidity_minted = arrays.liquidity_minted;
         event::emit(TransferBatch { arg0: signer::address_of(account), arg1: @0x0, arg2: to, arg3: arrays.ids, arg4: liquidity_minted });
         event::emit(DepositedToBins { arg0: signer::address_of(account), arg1: to, arg2: arrays.ids, arg3: arrays.amounts });
-        if ((amounts_left > 0u256)) {
+        if ((amounts_left > 0)) {
             transfer(amounts_left, token_x(), token_y(), refund_to);
         };
         non_reentrant_after();
@@ -410,7 +410,7 @@ module 0x1::l_b_pair {
         let amounts = vector::empty();
         assert!(true, E_MODIFIER_CHECK_APPROVAL);
         non_reentrant_before();
-        if (((vector::length(&ids) == 0u256) || (vector::length(&ids) != vector::length(&amounts_to_burn)))) {
+        if (((vector::length(&ids) == 0) || (vector::length(&ids) != vector::length(&amounts_to_burn)))) {
             abort E_L_B_PAIR_INVALID_INPUT
         };
         let hooks_parameters: u256 = state.hooks_parameters;
@@ -422,14 +422,14 @@ module 0x1::l_b_pair {
         while ((i < vector::length(&ids))) {
             let id: u32 = safe24(*vector::borrow(&ids, (i as u64)));
             let amount_to_burn: u256 = *vector::borrow(&amounts_to_burn, (i as u64));
-            if ((amount_to_burn == 0u256)) {
+            if ((amount_to_burn == 0)) {
                 abort E_L_B_PAIR_ZERO_AMOUNT
             };
             let bin_reserves: u256 = *table::borrow_with_default(&state.bins, id, &0u256);
             let supply: u256 = total_supply(id);
             burn(from_, id, amount_to_burn);
             let amounts_out_from_bin: u256 = get_amount_out_of_bin(bin_reserves, amount_to_burn, supply);
-            if ((amounts_out_from_bin == 0u256)) {
+            if ((amounts_out_from_bin == 0)) {
                 abort E_L_B_PAIR_ZERO_AMOUNTS_OUT
             };
             bin_reserves = (bin_reserves - amounts_out_from_bin);
@@ -460,9 +460,9 @@ module 0x1::l_b_pair {
         };
         let protocol_fees: u256 = state.protocol_fees;
         let (x, y) = decode(protocol_fees);
-        let ones: u256 = encode((if ((x > 0u256)) 1u256 else 0u256 as u128), (if ((y > 0u256)) 1u256 else 0u256 as u128));
+        let ones: u256 = encode((if ((x > 0)) 1 else 0 as u128), (if ((y > 0)) 1 else 0 as u128));
         collected_protocol_fees = (protocol_fees - ones);
-        if ((collected_protocol_fees != 0u256)) {
+        if ((collected_protocol_fees != 0)) {
             state.protocol_fees = ones;
             state.reserves = (state.reserves - collected_protocol_fees);
             event::emit(CollectedProtocolFees { arg0: signer::address_of(account), arg1: collected_protocol_fees });
@@ -477,8 +477,8 @@ module 0x1::l_b_pair {
         state.reentrancy_status = 2u8;
         let parameters: u256 = state.parameters;
         let oracle_id: u16 = get_oracle_id(parameters);
-        if ((oracle_id == 0u256)) {
-            oracle_id = 1u256;
+        if ((oracle_id == 0)) {
+            oracle_id = 1;
             state.parameters = set_oracle_id(parameters, oracle_id);
         };
         increase_length(state.oracle, oracle_id, new_length);
@@ -532,15 +532,15 @@ module 0x1::l_b_pair {
     }
 
     public(package) fun token_x(): address {
-        IERC20(get_arg_address(0u256))
+        IERC20(get_arg_address(0))
     }
 
     public(package) fun token_y(): address {
-        IERC20(get_arg_address(20u256))
+        IERC20(get_arg_address(20))
     }
 
     public(package) fun bin_step(): u16 {
-        get_arg_uint16(40u256)
+        get_arg_uint16(40)
     }
 
     public(package) fun get_next_non_empty_bin(swap_for_y: bool, id: u32): u32 {
@@ -556,14 +556,14 @@ module 0x1::l_b_pair {
     fun get_flash_loan_fees(amounts: u256): u256 {
         let fee: u128 = (get_flash_loan_fee(state.factory) as u128);
         let (x, y) = decode(amounts);
-        let precision_sub_one: u256 = (PRECISION - 1u256);
+        let precision_sub_one: u256 = (PRECISION - 1);
         x = safe128(((((((x as u256) * fee) + precision_sub_one)) / PRECISION)));
         y = safe128(((((((y as u256) * fee) + precision_sub_one)) / PRECISION)));
         encode(x, y)
     }
 
     public(package) fun set_static_fee_parameters(account: &signer, parameters: u256, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, state: &mut LBPairState) {
-        if ((((((((base_factor == 0u256) && (filter_period == 0u256)) && (decay_period == 0u256)) && (reduction_factor == 0u256)) && (variable_fee_control == 0u256)) && (protocol_share == 0u256)) && (max_volatility_accumulator == 0u256))) {
+        if ((((((((base_factor == 0) && (filter_period == 0)) && (decay_period == 0)) && (reduction_factor == 0)) && (variable_fee_control == 0)) && (protocol_share == 0)) && (max_volatility_accumulator == 0))) {
             abort E_L_B_PAIR_INVALID_STATIC_FEE_PARAMETERS
         };
         parameters = set_static_fee_parameters(parameters, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
@@ -609,10 +609,10 @@ module 0x1::l_b_pair {
         if ((id == active_id)) {
             parameters = update_volatility_parameters(parameters, id, (timestamp::now_seconds() as u256));
             let fees: u256 = get_composition_fees(bin_reserves, parameters, bin_step, amounts_in, supply, shares);
-            if ((fees != 0u256)) {
+            if ((fees != 0)) {
                 let user_liquidity: u256 = get_liquidity((amounts_in - fees), price);
                 let protocol_c_fees: u256 = scalar_mul_div_basis_point_round_down(fees, get_protocol_share(parameters));
-                if ((protocol_c_fees != 0u256)) {
+                if ((protocol_c_fees != 0)) {
                     amounts_in_to_bin = (amounts_in_to_bin - protocol_c_fees);
                     state.protocol_fees = (state.protocol_fees + protocol_c_fees);
                 };
@@ -625,10 +625,10 @@ module 0x1::l_b_pair {
         } else {
             verify_amounts(amounts_in, active_id, id);
         };
-        if (((shares == 0u256) || (amounts_in_to_bin == 0u256))) {
+        if (((shares == 0) || (amounts_in_to_bin == 0))) {
             abort E_L_B_PAIR_ZERO_SHARES
         };
-        if ((supply == 0u256)) {
+        if ((supply == 0)) {
             (state.tree + id);
         };
         *table::borrow_mut_with_default(&mut state.bins, id, 0u256) = (bin_reserves + amounts_in_to_bin);

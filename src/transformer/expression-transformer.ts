@@ -1087,11 +1087,15 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
         const mult = multipliers[expr.subdenomination] || 1n;
         value = (BigInt(value) * mult).toString();
       }
+      // Move infers literal types from context (variable type annotation, comparison operand, etc.)
+      // Only add explicit suffix for values that exceed u64 range (need disambiguation)
+      // or hex literals (which are common in bitwise contexts and need u256)
+      const suffix = needsExplicitSuffix(String(value)) ? 'u256' : undefined;
       return {
         kind: 'literal',
         type: 'number',
         value,
-        suffix: 'u256',
+        suffix,
       };
 
     case 'bool':
@@ -1129,6 +1133,43 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
 
     default:
       return { kind: 'literal', type: 'number', value: 0 };
+  }
+}
+
+/**
+ * Check if a numeric literal value needs an explicit type suffix.
+ * Move infers literal types from context, but values > u64::MAX need u256 suffix
+ * to avoid defaulting to u64 (which would overflow).
+ * Hex literals also get suffix since they're common in bitwise contexts.
+ */
+function needsExplicitSuffix(value: string): boolean {
+  // Hex literals always need suffix (commonly used in bit masks)
+  if (value.startsWith('0x') || value.startsWith('0X')) {
+    return true;
+  }
+  // Scientific notation — will be expanded later, check the expanded value
+  if (/[eE]/.test(value)) {
+    try {
+      const sciMatch = value.match(/^(\d+(?:\.\d+)?)[eE]\+?(\d+)$/);
+      if (sciMatch) {
+        const mantissa = sciMatch[1];
+        const exponent = parseInt(sciMatch[2], 10);
+        let expanded: string;
+        if (mantissa.includes('.')) {
+          const [intPart, decPart] = mantissa.split('.');
+          expanded = intPart + decPart + '0'.repeat(Math.max(0, exponent - decPart.length));
+        } else {
+          expanded = mantissa + '0'.repeat(exponent);
+        }
+        return BigInt(expanded.replace(/^0+/, '') || '0') > 18446744073709551615n;
+      }
+    } catch { return true; }
+  }
+  // Decimal literals — check if they exceed u64 max
+  try {
+    return BigInt(value) > 18446744073709551615n;
+  } catch {
+    return true; // Can't parse, play it safe
   }
 }
 
@@ -2081,7 +2122,26 @@ function transformTypeMember(expr: any, context: TranspileContext): MoveExpressi
   const typeName = String(expr.typeName).toLowerCase();
   const member = expr.member;
 
-  // Map Solidity types to Move max values
+  // Move 2.3 builtin constants: u8::MAX, u64::MAX, u256::MAX, i64::MIN, etc.
+  // These are cleaner and more idiomatic than hardcoded numeric values
+  const moveTypeMap: Record<string, string> = {
+    'uint8': 'u8', 'uint16': 'u16', 'uint32': 'u32', 'uint64': 'u64',
+    'uint128': 'u128', 'uint256': 'u256', 'uint': 'u256',
+    'int8': 'i8', 'int16': 'i16', 'int32': 'i32', 'int64': 'i64',
+    'int128': 'i128', 'int256': 'i256', 'int': 'i256',
+  };
+
+  const moveType = moveTypeMap[typeName];
+  if (moveType && (member === 'max' || member === 'min')) {
+    const constName = member === 'max' ? 'MAX' : 'MIN';
+    context.usedModules.add(`std::${moveType}`);
+    return {
+      kind: 'identifier',
+      name: `${moveType}::${constName}`,
+    };
+  }
+
+  // Fallback: Map Solidity types to Move max values (for non-standard uint widths)
   const maxValues: Record<string, { value: string; suffix: string }> = {
     'uint8': { value: '255', suffix: 'u8' },
     'uint16': { value: '65535', suffix: 'u16' },

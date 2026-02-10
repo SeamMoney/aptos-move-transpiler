@@ -88,16 +88,16 @@ module 0x1::hooks {
     public(package) fun decode(hooks_parameters: u256): Parameters {
         let parameters = 0u256;
         parameters.hooks = get_hooks(hooks_parameters);
-        parameters.before_swap = (((hooks_parameters & BEFORE_SWAP_FLAG)) != 0u256);
-        parameters.after_swap = (((hooks_parameters & AFTER_SWAP_FLAG)) != 0u256);
-        parameters.before_flash_loan = (((hooks_parameters & BEFORE_FLASH_LOAN_FLAG)) != 0u256);
-        parameters.after_flash_loan = (((hooks_parameters & AFTER_FLASH_LOAN_FLAG)) != 0u256);
-        parameters.before_mint = (((hooks_parameters & BEFORE_MINT_FLAG)) != 0u256);
-        parameters.after_mint = (((hooks_parameters & AFTER_MINT_FLAG)) != 0u256);
-        parameters.before_burn = (((hooks_parameters & BEFORE_BURN_FLAG)) != 0u256);
-        parameters.after_burn = (((hooks_parameters & AFTER_BURN_FLAG)) != 0u256);
-        parameters.before_batch_transfer_from = (((hooks_parameters & BEFORE_TRANSFER_FLAG)) != 0u256);
-        parameters.after_batch_transfer_from = (((hooks_parameters & AFTER_TRANSFER_FLAG)) != 0u256);
+        parameters.before_swap = (((hooks_parameters & BEFORE_SWAP_FLAG)) != 0);
+        parameters.after_swap = (((hooks_parameters & AFTER_SWAP_FLAG)) != 0);
+        parameters.before_flash_loan = (((hooks_parameters & BEFORE_FLASH_LOAN_FLAG)) != 0);
+        parameters.after_flash_loan = (((hooks_parameters & AFTER_FLASH_LOAN_FLAG)) != 0);
+        parameters.before_mint = (((hooks_parameters & BEFORE_MINT_FLAG)) != 0);
+        parameters.after_mint = (((hooks_parameters & AFTER_MINT_FLAG)) != 0);
+        parameters.before_burn = (((hooks_parameters & BEFORE_BURN_FLAG)) != 0);
+        parameters.after_burn = (((hooks_parameters & AFTER_BURN_FLAG)) != 0);
+        parameters.before_batch_transfer_from = (((hooks_parameters & BEFORE_TRANSFER_FLAG)) != 0);
+        parameters.after_batch_transfer_from = (((hooks_parameters & AFTER_TRANSFER_FLAG)) != 0);
         parameters
     }
 
@@ -118,67 +118,67 @@ module 0x1::hooks {
     }
 
     public(package) fun on_hooks_set(hooks_parameters: u256, on_hooks_set_data: vector<u8>) {
-        if ((hooks_parameters != 0u256)) {
+        if ((hooks_parameters != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.on_hooks_set.selector, hooks_parameters, on_hooks_set_data));
         };
     }
 
     public(package) fun before_swap(hooks_parameters: u256, sender: address, to: address, swap_for_y: bool, amounts_in: u256, state: &HooksState) {
-        if ((((hooks_parameters & BEFORE_SWAP_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & BEFORE_SWAP_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_swap.selector, sender, to, swap_for_y, amounts_in));
         };
     }
 
     public(package) fun after_swap(hooks_parameters: u256, sender: address, to: address, swap_for_y: bool, amounts_out: u256, state: &HooksState) {
-        if ((((hooks_parameters & AFTER_SWAP_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & AFTER_SWAP_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_swap.selector, sender, to, swap_for_y, amounts_out));
         };
     }
 
     public(package) fun before_flash_loan(hooks_parameters: u256, sender: address, to: address, amounts: u256, state: &HooksState) {
-        if ((((hooks_parameters & BEFORE_FLASH_LOAN_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & BEFORE_FLASH_LOAN_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_flash_loan.selector, sender, to, amounts));
         };
     }
 
     public(package) fun after_flash_loan(hooks_parameters: u256, sender: address, to: address, fees: u256, fees_received: u256, state: &HooksState) {
-        if ((((hooks_parameters & AFTER_FLASH_LOAN_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & AFTER_FLASH_LOAN_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_flash_loan.selector, sender, to, fees, fees_received));
         };
     }
 
     public(package) fun before_mint(hooks_parameters: u256, sender: address, to: address, liquidity_configs: vector<u256>, amounts_received: u256, state: &HooksState) {
-        if ((((hooks_parameters & BEFORE_MINT_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & BEFORE_MINT_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_mint.selector, sender, to, liquidity_configs, amounts_received));
         };
     }
 
     public(package) fun after_mint(hooks_parameters: u256, sender: address, to: address, liquidity_configs: vector<u256>, amounts_in: u256, state: &HooksState) {
-        if ((((hooks_parameters & AFTER_MINT_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & AFTER_MINT_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_mint.selector, sender, to, liquidity_configs, amounts_in));
         };
     }
 
     public(package) fun before_burn(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts_to_burn: vector<u256>, state: &HooksState) {
-        if ((((hooks_parameters & BEFORE_BURN_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & BEFORE_BURN_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_burn.selector, sender, from, to, ids, amounts_to_burn));
         };
     }
 
     public(package) fun after_burn(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts_to_burn: vector<u256>, state: &HooksState) {
-        if ((((hooks_parameters & AFTER_BURN_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & AFTER_BURN_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_burn.selector, sender, from, to, ids, amounts_to_burn));
         };
     }
 
     public(package) fun before_batch_transfer_from(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &HooksState) {
-        if ((((hooks_parameters & BEFORE_TRANSFER_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & BEFORE_TRANSFER_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_batch_transfer_from.selector, sender, from, to, ids, amounts));
         };
     }
 
     public(package) fun after_batch_transfer_from(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &HooksState) {
-        if ((((hooks_parameters & AFTER_TRANSFER_FLAG)) != 0u256)) {
+        if ((((hooks_parameters & AFTER_TRANSFER_FLAG)) != 0)) {
             safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_batch_transfer_from.selector, sender, from, to, ids, amounts));
         };
     }
@@ -186,13 +186,13 @@ module 0x1::hooks {
     fun safe_call(hooks_parameters: u256, data: vector<u8>) {
         let success: bool;
         let hooks: address = get_hooks(hooks_parameters);
-        let expected_selector = ((data + 0x20u256) >> (224u256 as u8));
-        success = call(0u256, hooks, 0u256, (data + 0x20u256), data, 0u256, 0x20u256);
-        if (((if ((success == 0u256)) 1u256 else 0u256 & if (!(0u256 == 0u256)) 1u256 else 0u256) != 0u256)) {
-            returndatacopy(0u256, 0u256, 0u256);
+        let expected_selector = ((data + 0x20u256) >> (224 as u8));
+        success = call(0, hooks, 0, (data + 0x20u256), data, 0, 0x20u256);
+        if (((if ((success == 0)) 1 else 0 & if (!(0 == 0)) 1 else 0) != 0)) {
+            returndatacopy(0, 0, 0);
             abort E_REQUIRE_FAILED
         };
-        success = (success & (if ((0u256 > 0x1fu256)) 1u256 else 0u256 & if (((0u256 >> (224u256 as u8)) == expected_selector)) 1u256 else 0u256));
+        success = (success & (if ((0 > 0x1fu256)) 1 else 0 & if (((0 >> (224 as u8)) == expected_selector)) 1 else 0));
         if (!success) {
             abort E_HOOKS_CALL_FAILED
         };
