@@ -29,7 +29,7 @@ export function solidityStatementToIR(stmt: any): IRStatement {
       const vars = stmt.variables || [];
       return {
         kind: 'variable_declaration',
-        name: vars.map((v: any, i: number) => v?.name ? v.name : `_${i}`),
+        name: vars.map((v: any, i: number) => v?.name ? v.name : `_unused${i}`),
         type: vars[0]?.typeName ? createIRType(vars[0].typeName) : undefined,
         initialValue: stmt.initialValue ? solidityExpressionToIR(stmt.initialValue) : undefined,
       };
@@ -454,7 +454,13 @@ function transformVariableDeclaration(
   context: TranspileContext
 ): MoveStatement {
   const names = Array.isArray(stmt.name) ? stmt.name : [stmt.name];
-  const pattern = names.length === 1 ? toSnakeCase(names[0]) : names.map(toSnakeCase);
+  const pattern = names.length === 1 ? toSnakeCase(names[0]) : names.map((n: any) => {
+    // Replace null/empty/numeric tuple elements with _ (Solidity ignored return values)
+    if (n === null || n === undefined || n === '' || typeof n === 'number' || /^\d+$/.test(String(n))) {
+      return '_';
+    }
+    return toSnakeCase(n);
+  });
 
   // Track local variable types for type-aware transformations (e.g., bool-to-int fixes)
   if (stmt.type && names.length === 1) {
@@ -1724,6 +1730,118 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
       };
     }
 
+    // Collection methods for OpenZeppelin EnumerableSet/EnumerableMap types
+    // Determine if obj is a table (mapping) or vector (set/array) based on type info
+    if (['contains', 'add', 'remove', 'get', 'set', 'at', 'keys', 'values'].includes(method)) {
+      const objIsTable = isTableType(obj, context);
+
+      if (method === 'contains') {
+        if (objIsTable) {
+          context.usedModules.add('aptos_std::table');
+          return {
+            kind: 'call',
+            function: 'table::contains',
+            args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
+          };
+        } else {
+          context.usedModules.add('std::vector');
+          return {
+            kind: 'call',
+            function: 'vector::contains',
+            args: [{ kind: 'borrow', mutable: false, value: obj }, { kind: 'borrow', mutable: false, value: args[0] }],
+          };
+        }
+      }
+
+      if (method === 'add') {
+        if (objIsTable) {
+          context.usedModules.add('aptos_std::table');
+          return {
+            kind: 'call',
+            function: 'table::add',
+            args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+          };
+        } else {
+          context.usedModules.add('std::vector');
+          return {
+            kind: 'call',
+            function: 'vector::push_back',
+            args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+          };
+        }
+      }
+
+      if (method === 'remove') {
+        if (objIsTable) {
+          context.usedModules.add('aptos_std::table');
+          return {
+            kind: 'call',
+            function: 'table::remove',
+            args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+          };
+        } else {
+          context.usedModules.add('std::vector');
+          return {
+            kind: 'call',
+            function: 'vector::remove_value',
+            args: [{ kind: 'borrow', mutable: true, value: obj }, { kind: 'borrow', mutable: false, value: args[0] }],
+          };
+        }
+      }
+
+      if (method === 'get') {
+        context.usedModules.add('aptos_std::table');
+        return {
+          kind: 'dereference',
+          value: {
+            kind: 'call',
+            function: 'table::borrow',
+            args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
+          },
+        };
+      }
+
+      if (method === 'set') {
+        context.usedModules.add('aptos_std::table');
+        return {
+          kind: 'call',
+          function: 'table::upsert',
+          args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+        };
+      }
+
+      if (method === 'at') {
+        if (objIsTable) {
+          context.usedModules.add('aptos_std::table');
+          // EnumerableMap.at(index) returns (key, value) tuple — approximate with table access
+          return {
+            kind: 'dereference',
+            value: {
+              kind: 'call',
+              function: 'table::borrow',
+              args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
+            },
+          };
+        } else {
+          context.usedModules.add('std::vector');
+          return {
+            kind: 'dereference',
+            value: {
+              kind: 'call',
+              function: 'vector::borrow',
+              args: [{ kind: 'borrow', mutable: false, value: obj }, castToU64IfNeeded(args[0])],
+            },
+          };
+        }
+      }
+
+      if (method === 'keys' || method === 'values') {
+        // EnumerableMap.keys()/values() — no direct Move equivalent
+        // Return the collection itself as an approximation
+        return obj;
+      }
+    }
+
     // String methods
     if (method === 'concat') {
       context.usedModules.add('std::string');
@@ -1902,15 +2020,18 @@ function transformMemberAccess(expr: any, context: TranspileContext): MoveExpres
   // Handle cross-module constant references like constants.BASIS_POINT_MAX or encoded.MASK_UINT16
   // In Solidity, libraries can reference constants from other libraries via LibName.CONSTANT
   // In Move, constants are module-private, so we copy them into the current module
-  if (expr.object?.kind === 'identifier' && /^[A-Z][A-Z0-9_]*$/.test(expr.member)) {
+  // Also match _UNDERSCORE_PREFIXED constants (Solidity internal constants)
+  if (expr.object?.kind === 'identifier' && /^_?[A-Z][A-Z0-9_]*$/.test(expr.member)) {
     const libName = expr.object.name;
+    // Strip leading underscores from Solidity internal constant names
+    const constName = expr.member.replace(/^_+/, '');
     // Track this as an imported constant so the contract transformer can copy it
     if (!(context as any).importedConstants) {
       (context as any).importedConstants = new Map<string, { source: string; name: string }>();
     }
-    (context as any).importedConstants.set(expr.member, { source: libName, name: expr.member });
+    (context as any).importedConstants.set(constName, { source: libName, name: expr.member });
     // Emit as just the constant name (will be defined in this module)
-    return { kind: 'identifier', name: expr.member };
+    return { kind: 'identifier', name: constName };
   }
 
   // Handle .selector property (EVM function selector - no Move equivalent)
@@ -1970,6 +2091,27 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
     }
   }
 
+  // Check if base is a local variable with mapping type (e.g., assigned from a nested mapping access)
+  if (expr.base?.kind === 'identifier') {
+    const localType = context.localVariables.get(toSnakeCase(expr.base.name));
+    if (localType?.isMapping) {
+      context.usedModules.add('aptos_std::table');
+      const defaultValue = getDefaultForMappingValue(localType, context);
+      return {
+        kind: 'dereference',
+        value: {
+          kind: 'call',
+          function: 'table::borrow_with_default',
+          args: [
+            { kind: 'borrow', mutable: false, value: base },
+            index,
+            { kind: 'borrow', mutable: false, value: defaultValue },
+          ],
+        },
+      };
+    }
+  }
+
   // Handle nested index access (e.g., nestedMapping[addr1][addr2])
   if (expr.base?.kind === 'index_access') {
     const outerAccess = transformIndexAccess(expr.base, context);
@@ -2002,6 +2144,34 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
       ],
     },
   };
+}
+
+/**
+ * Check if an expression refers to a Table type (mapping) vs a vector (array/set).
+ * Used to distinguish between table:: and vector:: operations for collection methods.
+ */
+function isTableType(expr: MoveExpression, context: TranspileContext): boolean {
+  if (expr.kind === 'identifier') {
+    const name = (expr as any).name;
+    // Check state variables
+    const stateVar = context.stateVariables.get(name);
+    if (stateVar?.isMapping) return true;
+    // Check local variables
+    const localType = context.localVariables.get(name);
+    if (localType?.isMapping) return true;
+  }
+  // Check if it's a field_access on state (e.g., state.presets)
+  if (expr.kind === 'field_access' || expr.kind === 'member_access') {
+    const fieldExpr = expr as any;
+    if (fieldExpr.object?.kind === 'identifier' && fieldExpr.object.name === 'state') {
+      const fieldName = fieldExpr.member || fieldExpr.field;
+      // Look up the state variable by its field name (snake_case)
+      for (const [name, stateVar] of context.stateVariables) {
+        if (toSnakeCase(name) === fieldName && stateVar.isMapping) return true;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -2055,12 +2225,14 @@ function castToU8ForShift(expr: MoveExpression): MoveExpression {
  * Solidity mappings return 0/false/address(0) for missing keys.
  */
 function getDefaultForMappingValue(stateVar: any, context: TranspileContext): MoveExpression {
-  const valueType = stateVar.mappingValueType?.move;
+  // Support both state variables (mappingValueType) and IRType (valueType)
+  const irValueType = stateVar.mappingValueType || stateVar.valueType;
+  const valueType = irValueType?.move;
   if (!valueType) {
     return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
   }
 
-  return getDefaultForMoveType(valueType, stateVar.mappingValueType, context);
+  return getDefaultForMoveType(valueType, irValueType, context);
 }
 
 /**
@@ -2150,6 +2322,26 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
             { kind: 'borrow', mutable: true, value: base },
             index,
             getDefaultForMappingValue(stateVar, context),
+          ],
+        },
+      };
+    }
+  }
+
+  // Check if base is a local variable with mapping type
+  if (expr.base?.kind === 'identifier') {
+    const localType = context.localVariables.get(toSnakeCase(expr.base.name));
+    if (localType?.isMapping) {
+      context.usedModules.add('aptos_std::table');
+      return {
+        kind: 'dereference',
+        value: {
+          kind: 'call',
+          function: 'table::borrow_mut_with_default',
+          args: [
+            { kind: 'borrow', mutable: true, value: base },
+            index,
+            getDefaultForMappingValue(localType, context),
           ],
         },
       };
@@ -2427,49 +2619,41 @@ function transformTypeMember(expr: any, context: TranspileContext): MoveExpressi
     };
   }
 
-  // Fallback: Map Solidity types to Move max values (for non-standard uint widths)
-  const maxValues: Record<string, { value: string; suffix: string }> = {
-    'uint8': { value: '255', suffix: 'u8' },
-    'uint16': { value: '65535', suffix: 'u16' },
-    'uint32': { value: '4294967295', suffix: 'u32' },
-    'uint64': { value: '18446744073709551615', suffix: 'u64' },
-    'uint128': { value: '340282366920938463463374607431768211455', suffix: 'u128' },
-    'uint256': { value: '115792089237316195423570985008687907853269984665640564039457584007913129639935', suffix: 'u256' },
-    'uint': { value: '115792089237316195423570985008687907853269984665640564039457584007913129639935', suffix: 'u256' },
-  };
-
-  if (member === 'max') {
-    const maxInfo = maxValues[typeName];
-    if (maxInfo) {
-      return {
-        kind: 'literal',
-        type: 'number',
-        value: maxInfo.value,
-        suffix: maxInfo.suffix,
-      };
+  // Handle non-standard Solidity integer widths (uint24, uint40, uint152, etc.)
+  // Move only supports u8/u16/u32/u64/u128/u256 — compute the correct max for the
+  // Solidity width. Emit WITHOUT suffix so Move infers type from context (avoids
+  // cross-type comparison issues like u32 literal vs u256 variable).
+  if (member === 'max' || member === 'min') {
+    let bits: number | undefined;
+    let signed = false;
+    if (typeName.startsWith('uint')) {
+      bits = parseInt(typeName.slice(4));
+    } else if (typeName.startsWith('int')) {
+      bits = parseInt(typeName.slice(3));
+      signed = true;
     }
-    // Fallback for unknown types
-    context.warnings.push({
-      message: `type(${expr.typeName}).max not fully supported, using u256 max`,
-      severity: 'warning',
-    });
-    return {
-      kind: 'literal',
-      type: 'number',
-      value: '115792089237316195423570985008687907853269984665640564039457584007913129639935',
-      suffix: 'u256',
-    };
-  }
 
-  if (member === 'min') {
-    // All unsigned types have min of 0
-    const suffix = maxValues[typeName]?.suffix || 'u256';
-    return {
-      kind: 'literal',
-      type: 'number',
-      value: '0',
-      suffix,
-    };
+    if (bits && !isNaN(bits) && bits > 0 && bits <= 256) {
+      if (member === 'max') {
+        let value: string;
+        if (signed) {
+          value = (BigInt(2) ** BigInt(bits - 1) - BigInt(1)).toString();
+        } else {
+          value = (BigInt(2) ** BigInt(bits) - BigInt(1)).toString();
+        }
+        return {
+          kind: 'literal',
+          type: 'number',
+          value,
+        };
+      } else {
+        return {
+          kind: 'literal',
+          type: 'number',
+          value: '0',
+        };
+      }
+    }
   }
 
   context.warnings.push({
@@ -3185,6 +3369,135 @@ function transformUsingForCall(
       function: 'string_utils::to_string',
       args: [{ kind: 'borrow', mutable: false, value: obj }],
     };
+  }
+
+  // OpenZeppelin EnumerableSet/EnumerableMap operations
+  // These library types aren't in allContracts so they need explicit mapping
+  if (['contains', 'add', 'remove', 'get', 'set', 'at', 'keys', 'values', 'length'].includes(method)) {
+    const objIsTable = isTableType(obj, context);
+
+    if (method === 'contains') {
+      if (objIsTable) {
+        context.usedModules.add('aptos_std::table');
+        return {
+          kind: 'call',
+          function: 'table::contains',
+          args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
+        };
+      } else {
+        context.usedModules.add('std::vector');
+        return {
+          kind: 'call',
+          function: 'vector::contains',
+          args: [{ kind: 'borrow', mutable: false, value: obj }, { kind: 'borrow', mutable: false, value: args[0] }],
+        };
+      }
+    }
+
+    if (method === 'add') {
+      if (objIsTable) {
+        context.usedModules.add('aptos_std::table');
+        return {
+          kind: 'call',
+          function: 'table::add',
+          args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+        };
+      } else {
+        context.usedModules.add('std::vector');
+        return {
+          kind: 'call',
+          function: 'vector::push_back',
+          args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+        };
+      }
+    }
+
+    if (method === 'remove') {
+      if (objIsTable) {
+        context.usedModules.add('aptos_std::table');
+        return {
+          kind: 'call',
+          function: 'table::remove',
+          args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+        };
+      } else {
+        context.usedModules.add('std::vector');
+        return {
+          kind: 'call',
+          function: 'vector::remove_value',
+          args: [{ kind: 'borrow', mutable: true, value: obj }, { kind: 'borrow', mutable: false, value: args[0] }],
+        };
+      }
+    }
+
+    if (method === 'get') {
+      context.usedModules.add('aptos_std::table');
+      return {
+        kind: 'dereference',
+        value: {
+          kind: 'call',
+          function: 'table::borrow',
+          args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
+        },
+      };
+    }
+
+    if (method === 'set') {
+      context.usedModules.add('aptos_std::table');
+      return {
+        kind: 'call',
+        function: 'table::upsert',
+        args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
+      };
+    }
+
+    if (method === 'at') {
+      if (objIsTable) {
+        context.usedModules.add('aptos_std::table');
+        return {
+          kind: 'dereference',
+          value: {
+            kind: 'call',
+            function: 'table::borrow',
+            args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
+          },
+        };
+      } else {
+        context.usedModules.add('std::vector');
+        return {
+          kind: 'dereference',
+          value: {
+            kind: 'call',
+            function: 'vector::borrow',
+            args: [{ kind: 'borrow', mutable: false, value: obj }, castToU64IfNeeded(args[0])],
+          },
+        };
+      }
+    }
+
+    if (method === 'length') {
+      if (objIsTable) {
+        context.usedModules.add('aptos_std::table');
+        return {
+          kind: 'call',
+          function: 'table::length',
+          args: [{ kind: 'borrow', mutable: false, value: obj }],
+          inferredType: { kind: 'primitive', name: 'u64' },
+        };
+      } else {
+        context.usedModules.add('std::vector');
+        return {
+          kind: 'call',
+          function: 'vector::length',
+          args: [{ kind: 'borrow', mutable: false, value: obj }],
+          inferredType: { kind: 'primitive', name: 'u64' },
+        };
+      }
+    }
+
+    if (method === 'keys' || method === 'values') {
+      return obj;
+    }
   }
 
   // If we can't inline it, treat as a direct function call with obj as first arg

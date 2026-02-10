@@ -325,11 +325,16 @@ function transformModifier(
         return inlineModifierBody(modifierDef, modifier.args, context);
       }
 
-      // Unknown modifier - add a comment/warning
+      // Unknown modifier - add a comment/warning and register error constant
       context.warnings.push({
         message: `Unknown modifier '${name}' - manual translation may be required`,
         severity: 'warning',
       });
+      const errorName = `E_MODIFIER_${toScreamingSnakeCase(name)}`;
+      if (!context.errorCodes) context.errorCodes = new Map();
+      if (!context.errorCodes.has(errorName)) {
+        context.errorCodes.set(errorName, { message: `Modifier ${name} check` });
+      }
       return [{
         kind: 'expression',
         expression: {
@@ -337,7 +342,7 @@ function transformModifier(
           function: 'assert!',
           args: [
             { kind: 'literal', type: 'bool', value: true },
-            { kind: 'identifier', name: `E_MODIFIER_${toScreamingSnakeCase(name)}` },
+            { kind: 'identifier', name: errorName },
           ],
         },
       }];
@@ -1445,8 +1450,12 @@ function accessesState(
         return stateVarNames.has(expr.name);
 
       case 'field_access':
-        // Check if accessing state.field
+      case 'member_access':
+        // Check if accessing state.field or a state variable's member
         if (expr.object?.kind === 'identifier' && expr.object.name === 'state') {
+          return true;
+        }
+        if (expr.object?.kind === 'identifier' && stateVarNames.has(expr.object.name)) {
           return true;
         }
         return checkExpression(expr.object);
@@ -1458,10 +1467,12 @@ function accessesState(
         return checkExpression(expr.operand);
 
       case 'call':
-        return expr.args?.some((arg: any) => checkExpression(arg)) || false;
+        return checkExpression(expr.function) ||
+               (expr.args?.some((arg: any) => checkExpression(arg)) || false);
 
       case 'index_access':
-        return checkExpression(expr.object) || checkExpression(expr.index);
+        return checkExpression(expr.object) || checkExpression(expr.index) ||
+               checkExpression(expr.base);
 
       case 'conditional':
         return checkExpression(expr.condition) ||
@@ -1472,7 +1483,14 @@ function accessesState(
         return expr.elements?.some((el: any) => checkExpression(el)) || false;
 
       case 'function_call':
-        return expr.args?.some((arg: any) => checkExpression(arg)) || false;
+        // Check both the function expression (which may reference state vars
+        // as method call objects) and the arguments
+        return checkExpression(expr.function) ||
+               checkExpression(expr.expression) ||
+               (expr.args?.some((arg: any) => checkExpression(arg)) || false);
+
+      case 'type_conversion':
+        return checkExpression(expr.expression) || checkExpression(expr.value);
 
       default:
         return false;

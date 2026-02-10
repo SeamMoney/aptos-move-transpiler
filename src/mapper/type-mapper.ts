@@ -41,6 +41,20 @@ export function mapSolidityTypeToMove(typeName: TypeName): MoveType {
         return MoveTypes.address();
       }
 
+      // Map well-known OpenZeppelin collection types to Move equivalents
+      const resolvedName = namePath.includes('.') ? namePath.split('.').pop()! : namePath;
+      const collectionTypeMap: Record<string, MoveType> = {
+        'UintToUintMap': { kind: 'struct', name: 'Table', typeArgs: [MoveTypes.u256(), MoveTypes.u256()] },
+        'UintToAddressMap': { kind: 'struct', name: 'Table', typeArgs: [MoveTypes.u256(), MoveTypes.address()] },
+        'AddressToUintMap': { kind: 'struct', name: 'Table', typeArgs: [MoveTypes.address(), MoveTypes.u256()] },
+        'AddressSet': { kind: 'vector', elementType: MoveTypes.address() },
+        'UintSet': { kind: 'vector', elementType: MoveTypes.u256() },
+        'Bytes32Set': { kind: 'vector', elementType: MoveTypes.u256() },
+      };
+      if (collectionTypeMap[resolvedName]) {
+        return collectionTypeMap[resolvedName];
+      }
+
       // Dotted type access (Library.StructName) → just use StructName
       if (namePath.includes('.')) {
         const parts = namePath.split('.');
@@ -162,6 +176,28 @@ export function createIRType(typeName: TypeName): IRType {
   // Store struct name for user-defined types (needed for struct constructor detection)
   if (typeName.type === 'UserDefinedTypeName') {
     irType.structName = typeName.namePath;
+
+    // Detect OpenZeppelin collection types and set appropriate flags
+    const resolvedName = typeName.namePath.includes('.')
+      ? typeName.namePath.split('.').pop()!
+      : typeName.namePath;
+    if (['UintToUintMap', 'UintToAddressMap', 'AddressToUintMap'].includes(resolvedName)) {
+      irType.isMapping = true;
+      // Set key/value types for proper table::borrow generation
+      if (resolvedName === 'UintToUintMap') {
+        irType.keyType = { solidity: 'uint256', move: MoveTypes.u256(), isArray: false, isMapping: false };
+        irType.valueType = { solidity: 'uint256', move: MoveTypes.u256(), isArray: false, isMapping: false };
+      } else if (resolvedName === 'UintToAddressMap') {
+        irType.keyType = { solidity: 'uint256', move: MoveTypes.u256(), isArray: false, isMapping: false };
+        irType.valueType = { solidity: 'address', move: MoveTypes.address(), isArray: false, isMapping: false };
+      } else if (resolvedName === 'AddressToUintMap') {
+        irType.keyType = { solidity: 'address', move: MoveTypes.address(), isArray: false, isMapping: false };
+        irType.valueType = { solidity: 'uint256', move: MoveTypes.u256(), isArray: false, isMapping: false };
+      }
+    }
+    if (['AddressSet', 'UintSet', 'Bytes32Set'].includes(resolvedName)) {
+      irType.isArray = true;
+    }
   }
 
   if (typeName.type === 'ArrayTypeName') {

@@ -41,16 +41,22 @@ export function contractToIR(contract: ContractDefinition): IRContract {
       case 'StateVariableDeclaration':
         for (const variable of nodeAny.variables || []) {
           if (variable.typeName) {
+            const irType = createIRType(variable.typeName);
+            // Detect mapping-like types: native Mapping or OpenZeppelin map types (UintToUintMap etc.)
+            const isNativeMapping = variable.typeName.type === 'Mapping';
+            const isMapType = irType.isMapping; // Set by createIRType for OZ map types
             ir.stateVariables.push({
               name: variable.name || '',
-              type: createIRType(variable.typeName),
+              type: irType,
               visibility: (variable.visibility as any) || 'internal',
               mutability: variable.isDeclaredConst ? 'constant' :
                          (variable.isImmutable ? 'immutable' : 'mutable'),
               initialValue: nodeAny.initialValue ? transformExpressionToIR(nodeAny.initialValue) : undefined,
-              isMapping: variable.typeName.type === 'Mapping',
-              mappingKeyType: variable.typeName.type === 'Mapping' ? createIRType(variable.typeName.keyType) : undefined,
-              mappingValueType: variable.typeName.type === 'Mapping' ? createIRType(variable.typeName.valueType) : undefined,
+              isMapping: isNativeMapping || isMapType,
+              mappingKeyType: isNativeMapping ? createIRType(variable.typeName.keyType) :
+                            isMapType ? irType.keyType : undefined,
+              mappingValueType: isNativeMapping ? createIRType(variable.typeName.valueType) :
+                              isMapType ? irType.valueType : undefined,
             });
           }
         }
@@ -303,10 +309,12 @@ function stmtReferencesAny(stmt: any, names: Set<string>): boolean {
     if (expr.kind === 'identifier' && names.has(expr.name)) return true;
     if (expr.kind === 'binary') return exprRefs(expr.left) || exprRefs(expr.right);
     if (expr.kind === 'unary') return exprRefs(expr.operand);
-    if (expr.kind === 'function_call') return (expr.args || []).some(exprRefs);
+    if (expr.kind === 'function_call') return exprRefs(expr.function) || exprRefs(expr.expression) || (expr.args || []).some(exprRefs);
     if (expr.kind === 'member_access') return exprRefs(expr.object);
-    if (expr.kind === 'index_access') return exprRefs(expr.base) || exprRefs(expr.index);
+    if (expr.kind === 'index_access') return exprRefs(expr.base) || exprRefs(expr.index) || exprRefs(expr.object);
     if (expr.kind === 'conditional') return exprRefs(expr.condition) || exprRefs(expr.trueExpression) || exprRefs(expr.falseExpression);
+    if (expr.kind === 'type_conversion') return exprRefs(expr.expression) || exprRefs(expr.value);
+    if (expr.kind === 'tuple') return (expr.elements || []).some(exprRefs);
     return false;
   }
 
@@ -614,12 +622,13 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
       sourceConstantsCache.set(source, srcConstants);
     }
 
-    for (const [constName, { source }] of importedConstants) {
+    for (const [constName, { source, name: originalName }] of importedConstants) {
       // Skip if already defined in this module
       if (context.constants?.has(constName) || context.constants?.has(toScreamingSnakeCase(constName))) continue;
       const srcConstants = sourceConstantsCache.get(source);
       if (srcConstants) {
-        const entry = srcConstants.get(constName);
+        // Look up using both stripped name and original name (may have leading underscores)
+        const entry = srcConstants.get(constName) || srcConstants.get(originalName);
         if (entry) {
           const name = toScreamingSnakeCase(constName);
           if (!context.constants) context.constants = new Map();
@@ -874,7 +883,7 @@ function generateDefaultInit(
   const stateFields = stateVariables
     .filter(v => v.mutability !== 'constant')
     .map(v => ({
-      name: v.name,
+      name: toSnakeCase(v.name),
       value: v.initialValue ?
         transformIRExpressionToMove(v.initialValue) :
         getDefaultValue(v.type),
