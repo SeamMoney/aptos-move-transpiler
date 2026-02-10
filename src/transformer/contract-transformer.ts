@@ -29,6 +29,7 @@ export function contractToIR(contract: ContractDefinition): IRContract {
     inheritedContracts: contract.baseContracts.map(bc => bc.baseName.namePath),
     isAbstract: contract.kind === 'abstract',
     isInterface: contract.kind === 'interface',
+    isLibrary: contract.kind === 'library',
     usingFor: [],
   };
 
@@ -440,11 +441,15 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     functions: [],
   };
 
+  // Track if this is a library (no state, no init_module, pure functions)
+  const isLibrary = flattenedIR.isLibrary;
+  (context as any).isLibrary = isLibrary;
+
   // Add standard imports
   addStandardImports(module, context);
 
-  // Transform state variables to resource struct
-  if (flattenedIR.stateVariables.length > 0) {
+  // Transform state variables to resource struct (skip for libraries)
+  if (flattenedIR.stateVariables.length > 0 && !isLibrary) {
     const resourceStruct = transformStateVariablesToResource(flattenedIR.stateVariables, flattenedIR.name, context);
     // Add SignerCapability for resource account pattern
     // This allows the contract to sign transactions on behalf of the resource account
@@ -479,13 +484,15 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   const stateConstants = generateStateConstants(flattenedIR.stateVariables, context);
   module.constants.push(...stateConstants);
 
-  // Transform constructor to init_module
-  if (flattenedIR.constructor) {
-    const initFn = transformConstructor(flattenedIR.constructor, flattenedIR.name, flattenedIR.stateVariables, context);
-    module.functions.push(initFn);
-  } else if (flattenedIR.stateVariables.length > 0) {
-    // Generate default init_module
-    module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
+  // Transform constructor to init_module (skip for libraries)
+  if (!isLibrary) {
+    if (flattenedIR.constructor) {
+      const initFn = transformConstructor(flattenedIR.constructor, flattenedIR.name, flattenedIR.stateVariables, context);
+      module.functions.push(initFn);
+    } else if (flattenedIR.stateVariables.length > 0) {
+      // Generate default init_module
+      module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
+    }
   }
 
   // Deduplicate overloaded functions before transformation
@@ -519,7 +526,10 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
  * Add standard imports that most modules need
  */
 function addStandardImports(module: MoveModule, context: TranspileContext): void {
-  context.usedModules.add('std::signer');
+  // Only add signer import for contracts with state (not for stateless libraries)
+  if (!(context as any).isLibrary) {
+    context.usedModules.add('std::signer');
+  }
 }
 
 /**

@@ -152,7 +152,6 @@ module 0x1::simple_a_m_m {
         state.unlocked = 1u256;
     }
 
-    #[view]
     public fun get_amount_out(amount_in: u256, reserve_in: u256, reserve_out: u256): u256 {
         let amount_out = 0u256;
         assert!((amount_in > 0u256), E_INVALID_AMOUNT);
@@ -164,7 +163,6 @@ module 0x1::simple_a_m_m {
         amount_out
     }
 
-    #[view]
     public fun get_amount_in(amount_out: u256, reserve_in: u256, reserve_out: u256): u256 {
         let amount_in = 0u256;
         assert!((amount_out > 0u256), E_INVALID_AMOUNT);
@@ -197,7 +195,6 @@ module 0x1::simple_a_m_m {
         state.reserve1
     }
 
-    #[view]
     public(package) fun sqrt(y: u256): u256 {
         let z = 0u256;
         if ((y > 3u256)) {
@@ -215,7 +212,6 @@ module 0x1::simple_a_m_m {
         z
     }
 
-    #[view]
     public(package) fun min(a: u256, b: u256): u256 {
         if ((a < b)) a else b
     }

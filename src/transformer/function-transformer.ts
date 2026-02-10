@@ -122,6 +122,21 @@ export function transformFunction(
 
   // Add return statement for functions with named return params
   // In Solidity, named return params are implicitly returned
+  // Post-process: add type casts for named return vars assigned from assembly
+  // Assembly operations produce u256, but the return var may be u8/u16/u32/u64/u128/bool
+  if (namedReturnParams.length > 0) {
+    const returnVarTypes = new Map<string, any>();
+    for (const param of namedReturnParams) {
+      const moveType = param.type.move || { kind: 'primitive', name: 'u256' };
+      if (moveType.kind === 'primitive' && moveType.name !== 'u256') {
+        returnVarTypes.set(toSnakeCase(param.name), moveType);
+      }
+    }
+    if (returnVarTypes.size > 0) {
+      addReturnVarCasts(fullBody, returnVarTypes);
+    }
+  }
+
   // In Move, we need explicit return statements
   if (namedReturnParams.length > 0) {
     // Check if the last statement is already a return
@@ -156,7 +171,9 @@ export function transformFunction(
     name: toSnakeCase(fn.name),
     visibility,
     isEntry: shouldBeEntry(fn),
-    isView: fn.stateMutability === 'view' || fn.stateMutability === 'pure',
+    // Only mark as #[view] if the function actually reads state via borrow_global
+    // Pure library functions should NOT be marked #[view]
+    isView: (fn.stateMutability === 'view') && needsState && !(context as any).isLibrary,
     params,
     body: fullBody,
   };
@@ -680,6 +697,34 @@ export function transformConstructor(
     params,
     body,
   };
+}
+
+/**
+ * Add type casts to assignments targeting named return variables.
+ * Assembly blocks produce u256 expressions, but return vars may be smaller types.
+ */
+function addReturnVarCasts(stmts: any[], returnVarTypes: Map<string, any>): void {
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i];
+    if (!stmt) continue;
+
+    // Handle assign statements: value = expr → value = (expr as type)
+    if (stmt.kind === 'assign' && stmt.target?.kind === 'identifier') {
+      const targetType = returnVarTypes.get(stmt.target.name);
+      if (targetType && stmt.value?.kind !== 'cast') {
+        stmt.value = { kind: 'cast', value: stmt.value, targetType };
+      }
+    }
+
+    // Recurse into blocks
+    if (stmt.kind === 'block' && stmt.statements) {
+      addReturnVarCasts(stmt.statements, returnVarTypes);
+    }
+    if (stmt.kind === 'if') {
+      if (stmt.thenBlock) addReturnVarCasts(stmt.thenBlock, returnVarTypes);
+      if (stmt.elseBlock) addReturnVarCasts(stmt.elseBlock, returnVarTypes);
+    }
+  }
 }
 
 /**

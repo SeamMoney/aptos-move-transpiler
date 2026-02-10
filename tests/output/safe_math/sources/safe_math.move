@@ -24,13 +24,11 @@ module 0x1::safe_math {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
-    #[view]
     public fun mul_div(a: u256, b: u256, denominator: u256): u256 {
         let result: u256 = (((a * b)) / denominator);
         result
     }
 
-    #[view]
     public fun sqrt(y: u256): u256 {
         let z = 0u256;
         if ((y > 3u256)) {

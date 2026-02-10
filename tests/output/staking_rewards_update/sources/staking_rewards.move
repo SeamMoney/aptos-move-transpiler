@@ -97,7 +97,6 @@ module 0x1::staking_rewards {
         (state.reward_per_token_stored + ((((((last_time_reward_applicable() - state.last_update_time)) * state.reward_rate) * 1000000000000000000u256) / state.total_staked)))
     }
 
-    #[view]
     public fun earned(account: address): u256 {
         ((((*table::borrow_with_default(&state.staked_balance, account, &0u256) * ((reward_per_token() - *table::borrow_with_default(&state.user_reward_per_token_paid, account, &0u256)))) / 1000000000000000000u256)) + *table::borrow_with_default(&state.rewards, account, &0u256))
     }

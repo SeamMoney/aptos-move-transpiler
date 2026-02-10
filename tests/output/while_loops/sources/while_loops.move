@@ -24,7 +24,6 @@ module 0x1::while_loops {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
-    #[view]
     public fun countdown(n: u256): u256 {
         let result: u256 = 0u256;
         while ((n > 0u256)) {

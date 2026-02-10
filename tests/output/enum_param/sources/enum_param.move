@@ -48,7 +48,6 @@ module 0x1::enum_param {
         *table::borrow_mut_with_default(&mut state.item_status, id, 0u256) = status;
     }
 
-    #[view]
     public fun is_active(id: u256): bool {
         (*table::borrow_with_default(&state.item_status, id, &0u256) == Status::Active)
     }

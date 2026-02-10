@@ -25,7 +25,6 @@ module 0x1::power_math {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
-    #[view]
     public fun power(base: u256, exponent: u8): u256 {
         evm_compat::exp_u256(base, exponent)
     }

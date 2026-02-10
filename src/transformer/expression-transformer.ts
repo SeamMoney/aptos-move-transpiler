@@ -2029,9 +2029,13 @@ function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null
       const condition = transpileYulExpression(op.condition);
       if (!condition) return null;
       const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations) : [];
+      // In Yul, `if` checks for non-zero. If condition is already a comparison (returns bool),
+      // use it directly; otherwise wrap with != 0
+      const isBoolExpr = condition.kind === 'binary' && ['>', '<', '==', '!=', '>=', '<='].includes(condition.operator);
+      const moveCondition = isBoolExpr ? condition : { kind: 'binary', operator: '!=', left: condition, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };
       return {
         kind: 'if',
-        condition: { kind: 'binary', operator: '!=', left: condition, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } },
+        condition: moveCondition,
         thenBlock: body,
       };
     }
@@ -2108,8 +2112,14 @@ function transpileYulExpression(expr: any): IRExpression | null {
               left: a,
               right: { kind: 'literal', type: 'number', value: '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', suffix: 'u256' },
             };
-          case 'iszero':
+          case 'iszero': {
+            // If the inner expression is a comparison (gt/lt/eq/slt/sgt), negate it
+            // because comparisons return bool in Move, not u256
+            if (a.kind === 'binary' && ['>', '<', '==', '!=', '>=', '<='].includes(a.operator)) {
+              return { kind: 'unary', operator: '!', operand: a };
+            }
             return { kind: 'binary', operator: '==', left: a, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };
+          }
           case 'mload':
             // Memory load - no direct Move equivalent, pass through as identifier
             return a;
@@ -2231,9 +2241,9 @@ function toSnakeCase(str: string): string {
   if (!str) return '';
 
   // Check if it's already SCREAMING_SNAKE_CASE (all caps with underscores)
+  // Move constants use SCREAMING_SNAKE — preserve as-is
   if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
-    // Preserve constants as-is, just lowercase
-    return str.toLowerCase();
+    return str;
   }
 
   // Convert camelCase/PascalCase to snake_case

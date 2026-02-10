@@ -220,12 +220,10 @@ module 0x1::multi_sig {
         state.owners
     }
 
-    #[view]
     public fun get_transaction_count(): u256 {
         vector::length(&state.transactions)
     }
 
-    #[view]
     public fun get_transaction(tx_index: u256): (address, u256, vector<u8>, bool, u256) {
         let to = @0x0;
         let value = 0u256;
@@ -236,7 +234,6 @@ module 0x1::multi_sig {
         (transaction.to, transaction.value, transaction.data, transaction.executed, transaction.num_confirmations)
     }
 
-    #[view]
     public fun get_pending_transactions(): vector<u256> {
         let pending_count: u256 = 0u256;
         let i: u256 = 0u256;
@@ -259,12 +256,10 @@ module 0x1::multi_sig {
         pending
     }
 
-    #[view]
     public fun is_transaction_confirmed_by(tx_index: u256, owner: address): bool {
         *table::borrow(&*table::borrow_with_default(&state.is_confirmed, tx_index, &0u256), owner)
     }
 
-    #[view]
     public fun get_confirmations(tx_index: u256): vector<address> {
         let count: u256 = 0u256;
         let i: u256 = 0u256;
@@ -287,17 +282,14 @@ module 0x1::multi_sig {
         confirmations
     }
 
-    #[view]
     public fun encode_add_owner(owner: address): vector<u8> {
         abi.encode_with_signature(string::utf8(b"addOwner(address)"), owner)
     }
 
-    #[view]
     public fun encode_remove_owner(owner: address): vector<u8> {
         abi.encode_with_signature(string::utf8(b"removeOwner(address)"), owner)
     }
 
-    #[view]
     public fun encode_change_requirement(required: u256): vector<u8> {
         abi.encode_with_signature(string::utf8(b"changeRequirement(uint256)"), required)
     }

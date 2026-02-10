@@ -219,7 +219,6 @@ module 0x1::simple_lending {
         event::emit(Liquidate { liquidator: signer::address_of(account), borrower: borrower, debt_asset: debt_asset, collateral_asset: collateral_asset, debt_repaid: debt_to_repay, collateral_seized: collateral_to_seize });
     }
 
-    #[view]
     public fun get_account_liquidity(user: address): (u256, u256, u256, u256) {
         let total_collateral_value = 0u256;
         let total_borrow_value = 0u256;
@@ -270,7 +269,6 @@ module 0x1::simple_lending {
         };
     }
 
-    #[view]
     public fun get_supply_rate(asset: address): u256 {
         let market: Market = *table::borrow_with_default(&state.markets, asset, &Market { is_listed: false, collateral_factor: 0u256, liquidation_threshold: 0u256, liquidation_bonus: 0u256, total_deposits: 0u256, total_borrows: 0u256, borrow_index: 0u256, last_update_block: 0u256 });
         if ((market.total_deposits == 0u256)) {
@@ -295,7 +293,6 @@ module 0x1::simple_lending {
         market.last_update_block = (block::get_current_block_height() as u256);
     }
 
-    #[view]
     public(package) fun borrow_balance_with_interest(user: address, asset: address): u256 {
         let position: UserPosition = *table::borrow(&*table::borrow_with_default(&state.user_positions, user, &0u256), asset);
         let market: Market = *table::borrow_with_default(&state.markets, asset, &Market { is_listed: false, collateral_factor: 0u256, liquidation_threshold: 0u256, liquidation_bonus: 0u256, total_deposits: 0u256, total_borrows: 0u256, borrow_index: 0u256, last_update_block: 0u256 });

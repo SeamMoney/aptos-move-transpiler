@@ -24,7 +24,6 @@ module 0x1::custom_errors {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
-    #[view]
     public fun check(balance: u256, amount: u256) {
         if ((balance < amount)) {
             abort E_INSUFFICIENT_BALANCE

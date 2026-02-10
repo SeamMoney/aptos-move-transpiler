@@ -24,7 +24,6 @@ module 0x1::for_loops {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
-    #[view]
     public fun sum(n: u256): u256 {
         let total = 0u256;
         let i: u256 = 0u256;

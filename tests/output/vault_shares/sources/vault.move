@@ -150,7 +150,6 @@ module 0x1::vault {
         transfer(from, to, amount, state)
     }
 
-    #[view]
     public fun total_assets(): u256 {
         total_assets(state)
     }
@@ -188,7 +187,6 @@ module 0x1::vault {
         (state.deposit_limit - total)
     }
 
-    #[view]
     public fun preview_deposit(assets: u256): u256 {
         convert_to_shares(assets)
     }
@@ -313,7 +311,6 @@ module 0x1::vault {
         ((state.total_debt + free_assets()) - locked_profit)
     }
 
-    #[view]
     public(package) fun free_assets(): u256 {
         0u256
     }

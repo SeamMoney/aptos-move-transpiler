@@ -19,6 +19,7 @@ export interface IRContract {
   inheritedContracts: string[];
   isAbstract: boolean;
   isInterface: boolean;
+  isLibrary: boolean;
   usingFor?: IRUsingFor[];  // using Library for Type declarations
 }
 

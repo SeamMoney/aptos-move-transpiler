@@ -26,7 +26,6 @@ module 0x1::require_test {
     const E_VALUE_MUST_BE_POSITIVE: u64 = 256u64;
     const E_VALUE_TOO_LARGE: u64 = 257u64;
 
-    #[view]
     public fun check_value(value: u256) {
         assert!((value > 0u256), E_VALUE_MUST_BE_POSITIVE);
         assert!((value < 1000u256), E_VALUE_TOO_LARGE);
