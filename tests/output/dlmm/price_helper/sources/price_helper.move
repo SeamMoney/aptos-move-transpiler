@@ -2,6 +2,10 @@ module 0x1::price_helper {
 
     // Error codes
     const REAL_ID_SHIFT: i256 = 8388608i256;
+    const SCALE: u256 = 340282366920938463463374607431768211456u256;
+    const SCALE_OFFSET: u8 = 128u8;
+    const BASIS_POINT_MAX: u256 = 10_000u256;
+    const PRECISION: u256 = 1000000000000000000u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -28,7 +32,7 @@ module 0x1::price_helper {
         let base: u256 = get_base(bin_step);
         let exponent: i256 = get_exponent(id);
         price = pow(base, exponent);
-        price
+        return price
     }
 
     public(package) fun get_id_from_price(price: u256, bin_step: u16): u32 {
@@ -36,22 +40,22 @@ module 0x1::price_helper {
         let base: u256 = get_base(bin_step);
         let real_id: i256 = (log2(price) / log2(base));
         id = (safe24(((REAL_ID_SHIFT + real_id) as u256)) as u32);
-        id
+        return id
     }
 
     public(package) fun get_base(bin_step: u16): u256 {
-        (SCALE + ((((bin_step as u256) << (SCALE_OFFSET as u8))) / BASIS_POINT_MAX))
+        return (SCALE + ((((bin_step as u256) << (SCALE_OFFSET as u8))) / BASIS_POINT_MAX))
     }
 
     public(package) fun get_exponent(id: u32): i256 {
-        ((id as i256) - REAL_ID_SHIFT)
+        return ((id as i256) - REAL_ID_SHIFT)
     }
 
     public(package) fun convert_decimal_price_to128x128(price: u256): u256 {
-        shift_div_round_down(price, SCALE_OFFSET, PRECISION)
+        return shift_div_round_down(price, SCALE_OFFSET, PRECISION)
     }
 
     public(package) fun convert128x128_price_to_decimal(price128x128: u256): u256 {
-        mul_shift_round_down(price128x128, PRECISION, SCALE_OFFSET)
+        return mul_shift_round_down(price128x128, PRECISION, SCALE_OFFSET)
     }
 }

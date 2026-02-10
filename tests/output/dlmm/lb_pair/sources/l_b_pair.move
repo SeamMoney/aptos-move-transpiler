@@ -10,6 +10,9 @@ module 0x1::l_b_pair {
 
     // Error codes
     const _M_A_X_T_O_T_A_L_F_E_E: u256 = 100000000000000000u256;
+    const SCALE_OFFSET: u8 = 128u8;
+    const CALLBACK_SUCCESS: u256 = 35999145600493609714228594312006990784747406012369540695634741508663724398019u256;
+    const PRECISION: u256 = 1000000000000000000u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -62,54 +65,54 @@ module 0x1::l_b_pair {
     public fun get_factory(): address acquires LBPairState {
         let state = borrow_global<LBPairState>(@0x1);
         let factory = @0x0;
-        state.factory
+        return state.factory
     }
 
     public fun get_token_x(): address {
         let token_x = @0x0;
-        token_x()
+        return token_x()
     }
 
     public fun get_token_y(): address {
         let token_y = @0x0;
-        token_y()
+        return token_y()
     }
 
     public fun get_bin_step(): u16 {
-        bin_step()
+        return bin_step()
     }
 
     public fun get_reserves(): (u128, u128) {
         let reserve_x = 0u128;
         let reserve_y = 0u128;
         (reserve_x, reserve_y) = decode((state.reserves - state.protocol_fees));
-        (reserve_x, reserve_y)
+        return (reserve_x, reserve_y)
     }
 
     public fun get_active_id(): u32 {
         let active_id = 0u32;
         active_id = (get_active_id(state.parameters) as u32);
-        active_id
+        return active_id
     }
 
     public fun get_bin(id: u32): (u128, u128) {
         let bin_reserve_x = 0u128;
         let bin_reserve_y = 0u128;
         (bin_reserve_x, bin_reserve_y) = decode(*table::borrow_with_default(&state.bins, id, &0u256));
-        (bin_reserve_x, bin_reserve_y)
+        return (bin_reserve_x, bin_reserve_y)
     }
 
     public fun get_next_non_empty_bin(swap_for_y: bool, id: u32): u32 {
         let next_id = 0u32;
         next_id = (get_next_non_empty_bin(swap_for_y, id) as u32);
-        next_id
+        return next_id
     }
 
     public fun get_protocol_fees(): (u128, u128) {
         let protocol_fee_x = 0u128;
         let protocol_fee_y = 0u128;
         (protocol_fee_x, protocol_fee_y) = decode(state.protocol_fees);
-        (protocol_fee_x, protocol_fee_y)
+        return (protocol_fee_x, protocol_fee_y)
     }
 
     #[view]
@@ -130,13 +133,13 @@ module 0x1::l_b_pair {
         variable_fee_control = (get_variable_fee_control(parameters) as u32);
         protocol_share = (get_protocol_share(parameters) as u16);
         max_volatility_accumulator = (get_max_volatility_accumulator(parameters) as u32);
-        (base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator)
+        return (base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator)
     }
 
     #[view]
     public fun get_l_b_hooks_parameters(): u256 acquires LBPairState {
         let state = borrow_global<LBPairState>(@0x1);
-        state.hooks_parameters
+        return state.hooks_parameters
     }
 
     #[view]
@@ -151,7 +154,7 @@ module 0x1::l_b_pair {
         volatility_reference = (get_volatility_reference(parameters) as u32);
         id_reference = (get_id_reference(parameters) as u32);
         time_of_last_update = (get_time_of_last_update(parameters) as u64);
-        (volatility_accumulator, volatility_reference, id_reference, time_of_last_update)
+        return (volatility_accumulator, volatility_reference, id_reference, time_of_last_update)
     }
 
     #[view]
@@ -178,7 +181,7 @@ module 0x1::l_b_pair {
                 first_timestamp = (get_sample_last_update(sample) as u64);
             };
         };
-        (sample_lifetime, size, active_size, last_updated, first_timestamp)
+        return (sample_lifetime, size, active_size, last_updated, first_timestamp)
     }
 
     #[view]
@@ -190,7 +193,7 @@ module 0x1::l_b_pair {
         let parameters: u256 = state.parameters;
         let oracle_id: u16 = get_oracle_id(parameters);
         if (((oracle_id == 0) || (lookup_timestamp > (timestamp::now_seconds() as u256)))) {
-            (0, 0, 0)
+            return (0, 0, 0)
         };
         let time_of_last_update: u64;
         (time_of_last_update, cumulative_id, cumulative_volatility, cumulative_bin_crossed) = get_sample_at(state.oracle, oracle_id, lookup_timestamp);
@@ -200,19 +203,19 @@ module 0x1::l_b_pair {
             cumulative_id += (((get_active_id(parameters) as u64) * delta_time) as u64);
             cumulative_volatility += (((get_volatility_accumulator(parameters) as u64) * delta_time) as u64);
         };
-        (cumulative_id, cumulative_volatility, cumulative_bin_crossed)
+        return (cumulative_id, cumulative_volatility, cumulative_bin_crossed)
     }
 
     public fun get_price_from_id(id: u32): u256 {
         let price = 0u256;
         price = get_price_from_id(id, bin_step());
-        price
+        return price
     }
 
     public fun get_id_from_price(price: u256): u32 {
         let id = 0u32;
         id = (get_id_from_price(price, bin_step()) as u32);
-        id
+        return id
     }
 
     #[view]
@@ -249,7 +252,7 @@ module 0x1::l_b_pair {
                 id = next_id;
             };
         }
-        (amount_in, amount_out_left, fee)
+        return (amount_in, amount_out_left, fee)
     }
 
     #[view]
@@ -285,7 +288,7 @@ module 0x1::l_b_pair {
             };
         }
         amount_in_left = (decode(amounts_in_left, swap_for_y) as u128);
-        (amount_in_left, amount_out, fee)
+        return (amount_in_left, amount_out, fee)
     }
 
     public fun swap(account: &signer, swap_for_y: bool, to: address): u256 acquires LBPairState {
@@ -347,7 +350,7 @@ module 0x1::l_b_pair {
         };
         non_reentrant_after();
         hooks::after_swap(hooks_parameters, signer::address_of(account), to, swap_for_y_, amounts_out);
-        amounts_out
+        return amounts_out
     }
 
     public entry fun flash_loan(account: &signer, receiver: address, amounts: u256, data: vector<u8>) acquires LBPairState {
@@ -402,7 +405,7 @@ module 0x1::l_b_pair {
         };
         non_reentrant_after();
         hooks::after_mint(hooks_parameters, signer::address_of(account), to, liquidity_configs, (amounts_received - amounts_left));
-        (amounts_received, amounts_left, liquidity_minted)
+        return (amounts_received, amounts_left, liquidity_minted)
     }
 
     public fun burn(account: &signer, from: address, to: address, ids: vector<u256>, amounts_to_burn: vector<u256>): vector<u256> acquires LBPairState {
@@ -447,7 +450,7 @@ module 0x1::l_b_pair {
         transfer(amounts_out, token_x(), token_y(), to);
         non_reentrant_after();
         hooks::after_burn(hooks_parameters, signer::address_of(account), from_, to, ids, amounts_to_burn);
-        amounts
+        return amounts
     }
 
     public fun collect_protocol_fees(account: &signer): u256 acquires LBPairState {
@@ -468,7 +471,7 @@ module 0x1::l_b_pair {
             event::emit(CollectedProtocolFees { arg0: signer::address_of(account), arg1: collected_protocol_fees });
             transfer(collected_protocol_fees, token_x(), token_y(), signer::address_of(account));
         };
-        collected_protocol_fees
+        return collected_protocol_fees
     }
 
     public entry fun increase_oracle_length(account: &signer, new_length: u16) acquires LBPairState {
@@ -532,19 +535,19 @@ module 0x1::l_b_pair {
     }
 
     public(package) fun token_x(): address {
-        IERC20(get_arg_address(0))
+        return IERC20(get_arg_address(0))
     }
 
     public(package) fun token_y(): address {
-        IERC20(get_arg_address(20))
+        return IERC20(get_arg_address(20))
     }
 
     public(package) fun bin_step(): u16 {
-        get_arg_uint16(40)
+        return get_arg_uint16(40)
     }
 
     public(package) fun get_next_non_empty_bin(swap_for_y: bool, id: u32): u32 {
-        if (swap_for_y) find_first_right(state.tree, id) else find_first_left(state.tree, id)
+        return if (swap_for_y) find_first_right(state.tree, id) else find_first_left(state.tree, id)
     }
 
     fun only_factory(account: address) {
@@ -559,7 +562,7 @@ module 0x1::l_b_pair {
         let precision_sub_one: u256 = (PRECISION - 1);
         x = safe128(((((((x as u256) * fee) + precision_sub_one)) / PRECISION)));
         y = safe128(((((((y as u256) * fee) + precision_sub_one)) / PRECISION)));
-        encode(x, y)
+        return encode(x, y)
     }
 
     public(package) fun set_static_fee_parameters(account: &signer, parameters: u256, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, state: &mut LBPairState) {
@@ -594,7 +597,7 @@ module 0x1::l_b_pair {
             mint(to, id, shares);
             i = (i + 1);
         }
-        amounts_left
+        return amounts_left
     }
 
     public(package) fun update_bin(account: &signer, bin_step: u16, active_id: u32, id: u32, max_amounts_in_to_bin: u256, parameters: u256, state: &mut LBPairState): (u256, u256, u256) {
@@ -632,6 +635,6 @@ module 0x1::l_b_pair {
             (state.tree + id);
         };
         *table::borrow_mut_with_default(&mut state.bins, id, 0u256) = (bin_reserves + amounts_in_to_bin);
-        (shares, amounts_in, amounts_in_to_bin)
+        return (shares, amounts_in, amounts_in_to_bin)
     }
 }

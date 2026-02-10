@@ -5,6 +5,8 @@ module 0x1::liquidity_configurations {
     const OFFSET_DISTRIBUTION_Y: u256 = 24u256;
     const OFFSET_DISTRIBUTION_X: u256 = 88u256;
     const PRECISION: u256 = 1000000000000000000u256;
+    const MASK_UINT64: u256 = 0xffffffffffffffffu256;
+    const MASK_UINT24: u256 = 0xffffffu256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -32,7 +34,7 @@ module 0x1::liquidity_configurations {
         config = set(config, distribution_x, MASK_UINT64, OFFSET_DISTRIBUTION_X);
         config = set(config, distribution_y, MASK_UINT64, OFFSET_DISTRIBUTION_Y);
         config = set(config, id, MASK_UINT24, OFFSET_ID);
-        config
+        return config
     }
 
     public(package) fun decode_params(config: u256): (u64, u64, u32) {
@@ -45,7 +47,7 @@ module 0x1::liquidity_configurations {
         if (((((config as u256) > 115792089237316195423570985008687907853269984665640564039457584007913129639935u256) || (distribution_x > PRECISION)) || (distribution_y > PRECISION))) {
             abort E_LIQUIDITY_CONFIGURATIONS_INVALID_CONFIG
         };
-        (distribution_x, distribution_y, id)
+        return (distribution_x, distribution_y, id)
     }
 
     public(package) fun get_amounts_and_id(config: u256, amounts_in: u256): (u256, u32) {
@@ -53,6 +55,6 @@ module 0x1::liquidity_configurations {
         let (x1, x2) = decode(amounts_in);
         x1 = ((x1 * distribution_x) / PRECISION);
         x2 = ((x2 * distribution_y) / PRECISION);
-        (encode(x1, x2), id)
+        return (encode(x1, x2), id)
     }
 }

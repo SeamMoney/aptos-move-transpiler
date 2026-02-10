@@ -22,6 +22,9 @@ export interface TranspileOptions {
   useFungibleAsset?: boolean;
   /** Use Digital Asset standard for ERC-721 tokens */
   useDigitalAsset?: boolean;
+  /** Additional Solidity sources for cross-file context (imports, libraries).
+   *  These are parsed for reference but don't generate output modules. */
+  contextSources?: string[];
 }
 
 export interface TranspileOutput {
@@ -49,6 +52,7 @@ export function transpile(
     packageName = 'transpiled',
     useFungibleAsset = false,
     useDigitalAsset = false,
+    contextSources = [],
   } = options;
 
   const output: TranspileOutput = {
@@ -90,6 +94,24 @@ export function transpile(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       output.warnings.push(`Could not parse ${contract.name} for inheritance: ${message}`);
+    }
+  }
+
+  // Parse context sources for cross-file references (libraries, constants, etc.)
+  for (const ctxSource of contextSources) {
+    try {
+      const ctxParse = parseSolidity(ctxSource);
+      if (ctxParse.success && ctxParse.ast) {
+        const ctxContracts = extractContracts(ctxParse.ast);
+        for (const ctxContract of ctxContracts) {
+          if (ctxContract.kind === 'interface') continue;
+          if (!allContractsIR.has(ctxContract.name)) {
+            allContractsIR.set(ctxContract.name, contractToIR(ctxContract));
+          }
+        }
+      }
+    } catch {
+      // Context sources are best-effort — skip on failure
     }
   }
 

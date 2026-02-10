@@ -55,137 +55,137 @@ module 0x1::safe_cast {
 
     public(package) fun safe248(x: u256): u256 {
         let y = 0u256;
-        y = (x & 452312848583266388373324160190187140051835877600158453279131187530910662655u256);
+        y = (x & 452312848583266388373324160190187140051835877600158453279131187530910662655);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS248_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe240(x: u256): u256 {
         let y = 0u256;
-        y = (x & 1766847064778384329583297500742918515827483896875618958121606201292619775u256);
+        y = (x & 1766847064778384329583297500742918515827483896875618958121606201292619775);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS240_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe232(x: u256): u256 {
         let y = 0u256;
-        y = (x & 6901746346790563787434755862277025452451108972170386555162524223799295u256);
+        y = (x & 6901746346790563787434755862277025452451108972170386555162524223799295);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS232_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe224(x: u256): u256 {
         let y = 0u256;
-        y = (x & 26959946667150639794667015087019630673637144422540572481103610249215u256);
+        y = (x & 26959946667150639794667015087019630673637144422540572481103610249215);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS224_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe216(x: u256): u256 {
         let y = 0u256;
-        y = (x & 105312291668557186697918027683670432318895095400549111254310977535u256);
+        y = (x & 105312291668557186697918027683670432318895095400549111254310977535);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS216_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe208(x: u256): u256 {
         let y = 0u256;
-        y = (x & 411376139330301510538742295639337626245683966408394965837152255u256);
+        y = (x & 411376139330301510538742295639337626245683966408394965837152255);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS208_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe200(x: u256): u256 {
         let y = 0u256;
-        y = (x & 1606938044258990275541962092341162602522202993782792835301375u256);
+        y = (x & 1606938044258990275541962092341162602522202993782792835301375);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS200_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe192(x: u256): u256 {
         let y = 0u256;
-        y = (x & 6277101735386680763835789423207666416102355444464034512895u256);
+        y = (x & 6277101735386680763835789423207666416102355444464034512895);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS192_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe184(x: u256): u256 {
         let y = 0u256;
-        y = (x & 24519928653854221733733552434404946937899825954937634815u256);
+        y = (x & 24519928653854221733733552434404946937899825954937634815);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS184_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe176(x: u256): u256 {
         let y = 0u256;
-        y = (x & 95780971304118053647396689196894323976171195136475135u256);
+        y = (x & 95780971304118053647396689196894323976171195136475135);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS176_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe168(x: u256): u256 {
         let y = 0u256;
-        y = (x & 374144419156711147060143317175368453031918731001855u256);
+        y = (x & 374144419156711147060143317175368453031918731001855);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS168_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe160(x: u256): u256 {
         let y = 0u256;
-        y = (x & 1461501637330902918203684832716283019655932542975u256);
+        y = (x & 1461501637330902918203684832716283019655932542975);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS160_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe152(x: u256): u256 {
         let y = 0u256;
-        y = (x & 5708990770823839524233143877797980545530986495u256);
+        y = (x & 5708990770823839524233143877797980545530986495);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS152_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe144(x: u256): u256 {
         let y = 0u256;
-        y = (x & 22300745198530623141535718272648361505980415u256);
+        y = (x & 22300745198530623141535718272648361505980415);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS144_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe136(x: u256): u256 {
         let y = 0u256;
-        y = (x & 87112285931760246646623899502532662132735u256);
+        y = (x & 87112285931760246646623899502532662132735);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS136_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe128(x: u256): u128 {
@@ -194,70 +194,70 @@ module 0x1::safe_cast {
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS128_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe120(x: u256): u128 {
         let y = 0u128;
-        y = ((x & 1329227995784915872903807060280344575u128) as u128);
+        y = ((x & 1329227995784915872903807060280344575) as u128);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS120_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe112(x: u256): u128 {
         let y = 0u128;
-        y = ((x & 5192296858534827628530496329220095u128) as u128);
+        y = ((x & 5192296858534827628530496329220095) as u128);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS112_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe104(x: u256): u128 {
         let y = 0u128;
-        y = ((x & 20282409603651670423947251286015u128) as u128);
+        y = ((x & 20282409603651670423947251286015) as u128);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS104_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe96(x: u256): u128 {
         let y = 0u128;
-        y = ((x & 79228162514264337593543950335u128) as u128);
+        y = ((x & 79228162514264337593543950335) as u128);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS96_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe88(x: u256): u128 {
         let y = 0u128;
-        y = ((x & 309485009821345068724781055u128) as u128);
+        y = ((x & 309485009821345068724781055) as u128);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS88_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe80(x: u256): u128 {
         let y = 0u128;
-        y = ((x & 1208925819614629174706175u128) as u128);
+        y = ((x & 1208925819614629174706175) as u128);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS80_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe72(x: u256): u128 {
         let y = 0u128;
-        y = ((x & 4722366482869645213695u128) as u128);
+        y = ((x & 4722366482869645213695) as u128);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS72_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe64(x: u256): u64 {
@@ -266,34 +266,34 @@ module 0x1::safe_cast {
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS64_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe56(x: u256): u64 {
         let y = 0u64;
-        y = ((x & 72057594037927935u64) as u64);
+        y = ((x & 72057594037927935) as u64);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS56_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe48(x: u256): u64 {
         let y = 0u64;
-        y = ((x & 281474976710655u64) as u64);
+        y = ((x & 281474976710655) as u64);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS48_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe40(x: u256): u64 {
         let y = 0u64;
-        y = ((x & 1099511627775u64) as u64);
+        y = ((x & 1099511627775) as u64);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS40_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe32(x: u256): u32 {
@@ -302,16 +302,16 @@ module 0x1::safe_cast {
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS32_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe24(x: u256): u32 {
         let y = 0u32;
-        y = ((x & 16777215u32) as u32);
+        y = ((x & 16777215) as u32);
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS24_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe16(x: u256): u16 {
@@ -320,7 +320,7 @@ module 0x1::safe_cast {
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS16_BITS
         };
-        y
+        return y
     }
 
     public(package) fun safe8(x: u256): u8 {
@@ -329,6 +329,6 @@ module 0x1::safe_cast {
         if ((y != x)) {
             abort E_SAFE_CAST_EXCEEDS8_BITS
         };
-        y
+        return y
     }
 }

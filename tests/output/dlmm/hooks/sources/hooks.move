@@ -51,7 +51,7 @@ module 0x1::hooks {
 
     public(package) fun encode(parameters: Parameters): u256 {
         let hooks_parameters = 0u256;
-        hooks_parameters = ((evm_compat::to_address(parameters.hooks) & 1461501637330902918203684832716283019655932542975u256) as u256);
+        hooks_parameters = ((evm_compat::to_address(parameters.hooks) & 1461501637330902918203684832716283019655932542975) as u256);
         if (parameters.before_swap) {
             hooks_parameters |= BEFORE_SWAP_FLAG;
         };
@@ -82,7 +82,7 @@ module 0x1::hooks {
         if (parameters.after_batch_transfer_from) {
             hooks_parameters |= AFTER_TRANSFER_FLAG;
         };
-        hooks_parameters
+        return hooks_parameters
     }
 
     public(package) fun decode(hooks_parameters: u256): Parameters {
@@ -98,23 +98,23 @@ module 0x1::hooks {
         parameters.after_burn = (((hooks_parameters & AFTER_BURN_FLAG)) != 0);
         parameters.before_batch_transfer_from = (((hooks_parameters & BEFORE_TRANSFER_FLAG)) != 0);
         parameters.after_batch_transfer_from = (((hooks_parameters & AFTER_TRANSFER_FLAG)) != 0);
-        parameters
+        return parameters
     }
 
     public(package) fun get_hooks(hooks_parameters: u256): address {
         let hooks = @0x0;
-        hooks = (evm_compat::to_address(((hooks_parameters as u256) & 1461501637330902918203684832716283019655932542975u256)) as address);
-        hooks
+        hooks = (evm_compat::to_address(((hooks_parameters as u256) & 1461501637330902918203684832716283019655932542975)) as address);
+        return hooks
     }
 
     public(package) fun set_hooks(hooks_parameters: u256, new_hooks: address): u256 {
-        ((hooks_parameters as u256) | ((new_hooks & 1461501637330902918203684832716283019655932542975u256) as u256))
+        return ((hooks_parameters as u256) | ((new_hooks & 1461501637330902918203684832716283019655932542975) as u256))
     }
 
     public(package) fun get_flags(hooks_parameters: u256): u128 {
         let flags = 0u128;
         flags = (hooks_parameters as u128);
-        flags
+        return flags
     }
 
     public(package) fun on_hooks_set(hooks_parameters: u256, on_hooks_set_data: vector<u8>) {
@@ -188,7 +188,7 @@ module 0x1::hooks {
         let hooks: address = get_hooks(hooks_parameters);
         let expected_selector = ((data + 0x20u256) >> (224 as u8));
         success = call(0, hooks, 0, (data + 0x20u256), data, 0, 0x20u256);
-        if (((if ((success == 0)) 1 else 0 & if (!(0 == 0)) 1 else 0) != 0)) {
+        if (((if (!success) 1 else 0 & if (!(0 == 0)) 1 else 0) != 0)) {
             returndatacopy(0, 0, 0);
             abort E_REQUIRE_FAILED
         };

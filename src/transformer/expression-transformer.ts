@@ -445,6 +445,11 @@ function transformVariableDeclaration(
   const names = Array.isArray(stmt.name) ? stmt.name : [stmt.name];
   const pattern = names.length === 1 ? toSnakeCase(names[0]) : names.map(toSnakeCase);
 
+  // Track local variable types for type-aware transformations (e.g., bool-to-int fixes)
+  if (stmt.type && names.length === 1) {
+    context.localVariables.set(toSnakeCase(names[0]), stmt.type);
+  }
+
   return {
     kind: 'let',
     pattern,
@@ -1251,12 +1256,32 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
     };
   }
 
+  // Fix bool-to-int comparisons from Yul: iszero(bool_var) → (bool_var == 0u256)
+  // In Move, comparing bool with u256 is a type error. Detect and fix:
+  // (bool_var == 0) → !bool_var, (bool_var != 0) → bool_var
+  if ((op === '==' || op === '!=') && isZeroLiteral(right)) {
+    if (left.kind === 'identifier' && isBoolVariable(left.name, context)) {
+      if (op === '==') return { kind: 'unary', operator: '!', operand: left };
+      return left; // != 0 on a bool is just the bool itself
+    }
+  }
+
   return {
     kind: 'binary',
     operator: op as any,
     left,
     right,
   };
+}
+
+function isZeroLiteral(expr: any): boolean {
+  return expr?.kind === 'literal' && expr?.type === 'number' && (expr?.value === 0 || expr?.value === '0');
+}
+
+function isBoolVariable(name: string, context: TranspileContext): boolean {
+  const varType = context.localVariables?.get(name);
+  if (varType && (varType.solidity === 'bool' || varType.move?.name === 'bool')) return true;
+  return false;
 }
 
 /**
@@ -1998,12 +2023,12 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
       // Non-standard width: use bitmask to truncate
       // uint24(x) → (x & 0xffffff), uint40(x) → (x & 0xffffffffff), etc.
       const mask = ((1n << BigInt(bits)) - 1n).toString();
-      const suffix = targetType?.name || 'u256';
+      // No suffix — let Move infer from context (source is u256, so mask inferred as u256)
       return {
         kind: 'binary',
         operator: '&',
         left: value,
-        right: { kind: 'literal', type: 'number', value: mask, suffix },
+        right: { kind: 'literal', type: 'number', value: mask },
       };
     }
   }
@@ -2014,12 +2039,12 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
     const standardBits = [8, 16, 32, 64, 128, 256];
     if (!standardBits.includes(bits)) {
       const mask = ((1n << BigInt(bits)) - 1n).toString();
-      const suffix = targetType?.name || 'i256';
+      // No suffix — let Move infer from context
       return {
         kind: 'binary',
         operator: '&',
         left: value,
-        right: { kind: 'literal', type: 'number', value: mask, suffix },
+        right: { kind: 'literal', type: 'number', value: mask },
       };
     }
   }
@@ -2213,11 +2238,11 @@ function transformTxAccess(expr: any, context: TranspileContext): MoveExpression
  * Transpile a Yul assembly block to Move IR statements.
  * Supports: assignments, let declarations, if/for blocks, and common Yul builtins.
  */
-function transpileAssemblyBlock(operations: any[]): IRStatement[] {
+function transpileAssemblyBlock(operations: any[], context?: TranspileContext): IRStatement[] {
   const statements: IRStatement[] = [];
 
   for (const op of operations) {
-    const stmt = transpileAssemblyOperation(op);
+    const stmt = transpileAssemblyOperation(op, context);
     if (stmt) {
       if (Array.isArray(stmt)) {
         statements.push(...stmt);
@@ -2233,7 +2258,7 @@ function transpileAssemblyBlock(operations: any[]): IRStatement[] {
 /**
  * Transpile a single Yul assembly operation to Move IR.
  */
-function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null {
+function transpileAssemblyOperation(op: any, context?: TranspileContext): IRStatement | IRStatement[] | null {
   if (!op) return null;
 
   switch (op.type) {
@@ -2241,13 +2266,13 @@ function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null
       // name := expression
       const nameNode = op.names?.[0];
       if (!nameNode) return null;
-      const value = transpileYulExpression(op.expression);
+      const value = transpileYulExpression(op.expression, context);
       if (!value) return null;
 
       // Handle AssemblyMemberAccess targets (e.g., $.slot := value)
       let target: IRExpression;
       if (nameNode.type === 'AssemblyMemberAccess') {
-        const objExpr = transpileYulExpression(nameNode.expression);
+        const objExpr = transpileYulExpression(nameNode.expression, context);
         const memberName = typeof nameNode.memberName === 'string'
           ? nameNode.memberName
           : nameNode.memberName?.name || 'unknown';
@@ -2263,7 +2288,7 @@ function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null
     case 'AssemblyLocalDefinition': {
       // let name := expression
       const name = op.names?.[0]?.name || op.names?.[0];
-      const value = op.expression ? transpileYulExpression(op.expression) : { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+      const value = op.expression ? transpileYulExpression(op.expression, context) : { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
       if (!name) return null;
       return {
         kind: 'variable_declaration',
@@ -2274,9 +2299,9 @@ function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null
 
     case 'AssemblyIf': {
       // if condition { body }
-      const condition = transpileYulExpression(op.condition);
+      const condition = transpileYulExpression(op.condition, context);
       if (!condition) return null;
-      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations) : [];
+      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations, context) : [];
       // In Yul, `if` checks for non-zero. If condition is already boolean
       // (comparison, unary !, logical &&/||), use it directly; otherwise wrap with != 0
       const moveCondition = isBooleanExpression(condition) ? condition
@@ -2290,10 +2315,10 @@ function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null
 
     case 'AssemblyFor': {
       // for { init } condition { post } { body }
-      const initStmts = op.pre?.operations ? transpileAssemblyBlock(op.pre.operations) : [];
-      const condition = transpileYulExpression(op.condition);
-      const postStmts = op.post?.operations ? transpileAssemblyBlock(op.post.operations) : [];
-      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations) : [];
+      const initStmts = op.pre?.operations ? transpileAssemblyBlock(op.pre.operations, context) : [];
+      const condition = transpileYulExpression(op.condition, context);
+      const postStmts = op.post?.operations ? transpileAssemblyBlock(op.post.operations, context) : [];
+      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations, context) : [];
       // Emit as: init; while(condition) { body; post; }
       const allStmts: IRStatement[] = [...initStmts];
       allStmts.push({
@@ -2307,14 +2332,14 @@ function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null
     case 'AssemblyExpression':
     case 'AssemblyCall': {
       // Standalone expression (e.g., revert(0, 0))
-      const expr = transpileYulExpression(op);
+      const expr = transpileYulExpression(op, context);
       if (!expr) return null;
       return { kind: 'expression', expression: expr };
     }
 
     case 'AssemblyBlock': {
       // Nested block
-      return op.operations ? transpileAssemblyBlock(op.operations) : null;
+      return op.operations ? transpileAssemblyBlock(op.operations, context) : null;
     }
 
     default:
@@ -2326,7 +2351,7 @@ function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null
  * Transpile a Yul expression to Move IR expression.
  * Maps Yul builtins to Move operators/functions.
  */
-function transpileYulExpression(expr: any): IRExpression | null {
+function transpileYulExpression(expr: any, context?: TranspileContext): IRExpression | null {
   if (!expr) return null;
 
   switch (expr.type) {
@@ -2348,7 +2373,7 @@ function transpileYulExpression(expr: any): IRExpression | null {
 
       // One-argument builtins
       if (args.length === 1) {
-        const a = transpileYulExpression(args[0]);
+        const a = transpileYulExpression(args[0], context);
         if (!a) return null;
 
         switch (name) {
@@ -2365,6 +2390,13 @@ function transpileYulExpression(expr: any): IRExpression | null {
             if (isBooleanExpression(a)) {
               return { kind: 'unary', operator: '!', operand: a };
             }
+            // Check if identifier refers to a bool variable in the Solidity scope
+            if (a.kind === 'identifier' && context?.localVariables) {
+              const varType = context.localVariables.get(a.name) || context.localVariables.get(toSnakeCase(a.name));
+              if (varType && (varType.solidity === 'bool' || varType.move?.name === 'bool')) {
+                return { kind: 'unary', operator: '!', operand: a };
+              }
+            }
             return { kind: 'binary', operator: '==', left: a, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };
           }
           case 'mload':
@@ -2378,8 +2410,8 @@ function transpileYulExpression(expr: any): IRExpression | null {
 
       // Two-argument builtins
       if (args.length === 2) {
-        const a = transpileYulExpression(args[0]);
-        const b = transpileYulExpression(args[1]);
+        const a = transpileYulExpression(args[0], context);
+        const b = transpileYulExpression(args[1], context);
         if (!a || !b) return null;
 
         switch (name) {
@@ -2433,9 +2465,9 @@ function transpileYulExpression(expr: any): IRExpression | null {
 
       // Three-argument builtins
       if (args.length === 3) {
-        const a = transpileYulExpression(args[0]);
-        const b = transpileYulExpression(args[1]);
-        const c = transpileYulExpression(args[2]);
+        const a = transpileYulExpression(args[0], context);
+        const b = transpileYulExpression(args[1], context);
+        const c = transpileYulExpression(args[2], context);
         if (!a || !b || !c) return null;
 
         switch (name) {
@@ -2451,7 +2483,7 @@ function transpileYulExpression(expr: any): IRExpression | null {
       }
 
       // Multi-argument fallback
-      const transpiled = args.map(transpileYulExpression).filter(Boolean);
+      const transpiled = args.map((a: any) => transpileYulExpression(a, context)).filter(Boolean);
       return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: transpiled as any[] };
     }
 
@@ -2471,7 +2503,7 @@ function transpileYulExpression(expr: any): IRExpression | null {
       return { kind: 'identifier', name: toSnakeCase(expr.name) };
 
     case 'AssemblyMemberAccess': {
-      const obj = transpileYulExpression(expr.expression);
+      const obj = transpileYulExpression(expr.expression, context);
       const member = typeof expr.memberName === 'string' ? expr.memberName : (expr.memberName?.name || 'unknown');
       return { kind: 'member_access', object: obj || { kind: 'identifier', name: 'unknown' }, member };
     }

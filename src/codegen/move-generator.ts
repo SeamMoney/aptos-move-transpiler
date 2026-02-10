@@ -322,7 +322,7 @@ function generateStatement(stmt: MoveStatement, indent: number): string {
 
     case 'return':
       if (stmt.value) {
-        return `${pad}${generateExpression(stmt.value)}`;
+        return `${pad}return ${generateExpression(stmt.value)}`;
       }
       return `${pad}return`;
 
