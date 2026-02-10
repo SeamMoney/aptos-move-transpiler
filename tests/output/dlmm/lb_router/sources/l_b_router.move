@@ -7,6 +7,9 @@ module 0x1::l_b_router {
     use aptos_framework::timestamp;
     use std::vector;
     use std::u256;
+    use 0x1::token_helper;
+    use 0x1::liquidity_configurations;
+    use 0x1::packed_uint128_math;
 
     // Error codes
     const E_REVERT: u64 = 0u64;
@@ -52,42 +55,42 @@ module 0x1::l_b_router {
     #[view]
     public fun get_factory(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
-        let lb_factory = @0x0;
+        let _lb_factory = @0x0;
         return state.factory2_2
     }
 
     #[view]
     public fun get_factory_v2_1(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
-        let lb_factory = @0x0;
+        let _lb_factory = @0x0;
         return state.factory2_1
     }
 
     #[view]
     public fun get_legacy_factory(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
-        let legacy_l_bfactory = @0x0;
+        let _legacy_l_bfactory = @0x0;
         return state.legacy_factory
     }
 
     #[view]
     public fun get_v1_factory(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
-        let factory_v1 = @0x0;
+        let _factory_v1 = @0x0;
         return state.factory_v1
     }
 
     #[view]
     public fun get_legacy_router(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
-        let legacy_router = @0x0;
+        let _legacy_router = @0x0;
         return state.legacy_router
     }
 
     #[view]
     public fun get_w_n_a_t_i_v_e(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
-        let wnative = @0x0;
+        let _wnative = @0x0;
         return state.wnative
     }
 
@@ -405,7 +408,7 @@ module 0x1::l_b_router {
         return amount_out
     }
 
-    public entry fun sweep(account: &signer, token: address, to: address, amount: u256) {
+    public entry fun sweep(account: &signer, token: address, to: address, amount: u256) acquires LBRouterState {
         let state = borrow_global_mut<LBRouterState>(@0x1);
         if ((signer::address_of(account) != owner(ownable(evm_compat::to_address(state.factory2_2))))) {
             abort E_L_B_ROUTER_NOT_FACTORY_OWNER
@@ -419,7 +422,7 @@ module 0x1::l_b_router {
         };
     }
 
-    public entry fun sweep_l_b_token(account: &signer, lb_token: address, to: address, ids: vector<u256>, amounts: vector<u256>) {
+    public entry fun sweep_l_b_token(account: &signer, lb_token: address, to: address, ids: vector<u256>, amounts: vector<u256>) acquires LBRouterState {
         let state = borrow_global_mut<LBRouterState>(@0x1);
         if ((signer::address_of(account) != owner(ownable(evm_compat::to_address(state.factory2_2))))) {
             abort E_L_B_ROUTER_NOT_FACTORY_OWNER
@@ -434,7 +437,7 @@ module 0x1::l_b_router {
         let amount_y_left = 0u256;
         let deposit_ids = vector::empty();
         let liquidity_minted = vector::empty();
-        if (((timestamp::now_seconds() as u256) > deadline)) {
+        if (((timestamp::now_seconds() as u256) > liq.deadline)) {
             abort E_L_B_ROUTER_DEADLINE_EXCEEDED
         };
         if (((vector::length(&liq.delta_ids) != vector::length(&liq.distribution_x)) || (vector::length(&liq.delta_ids) != vector::length(&liq.distribution_y)))) {
@@ -450,7 +453,7 @@ module 0x1::l_b_router {
             abort E_L_B_ROUTER_ID_SLIPPAGE_CAUGHT
         };
         let i: u256;
-        while ((i < vector::length(&liquidity_configs))) {
+        while ((i < (vector::length(&liquidity_configs) as u256))) {
             let id: i256 = ((active_id as i256) + *vector::borrow(&liq.delta_ids, (i as u64)));
             if (((id < 0) || ((id as u256) > 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
                 abort E_L_B_ROUTER_ID_OVERFLOWS
@@ -506,7 +509,7 @@ module 0x1::l_b_router {
         let amount_y = 0u256;
         let amounts_burned: vector<u256> = burn(pair, signer::address_of(account), to, ids, amounts);
         let i: u256;
-        while ((i < vector::length(&amounts_burned))) {
+        while ((i < (vector::length(&amounts_burned) as u256))) {
             amount_x += packed_uint128_math::decode_x(*vector::borrow(&amounts_burned, (i as u64)));
             amount_y += packed_uint128_math::decode_y(*vector::borrow(&amounts_burned, (i as u64)));
             i = (i + 1);
@@ -526,12 +529,12 @@ module 0x1::l_b_router {
         let token_next: address = *vector::borrow(&token_path, 0u64);
         amount_out = amount_in;
         let i: u256;
-        while ((i < vector::length(&pairs))) {
+        while ((i < (vector::length(&pairs) as u256))) {
             pair = *vector::borrow(&pairs, (i as u64));
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
             token_next = *vector::borrow(&token_path, ((i + 1) as u64));
-            recipient = if (((i + 1) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1) as u64));
+            recipient = if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64));
             if ((version == V1)) {
                 let (reserve0, reserve1, 2) = get_reserves(i_joe_pair(pair));
                 if ((token < token_next)) {
@@ -573,12 +576,12 @@ module 0x1::l_b_router {
         let version: Version;
         let token_next: address = *vector::borrow(&token_path, 0u64);
         let i: u256;
-        while ((i < vector::length(&pairs))) {
+        while ((i < (vector::length(&pairs) as u256))) {
             pair = *vector::borrow(&pairs, (i as u64));
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
             token_next = *vector::borrow(&token_path, ((i + 1) as u64));
-            recipient = if (((i + 1) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1) as u64));
+            recipient = if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64));
             if ((version == V1)) {
                 amount_out = *vector::borrow(&amounts_in, ((i + 1) as u64));
                 if ((token < token_next)) {
@@ -617,12 +620,12 @@ module 0x1::l_b_router {
         let pair: address;
         let token_next: address = *vector::borrow(&token_path, 0u64);
         let i: u256;
-        while ((i < vector::length(&pairs))) {
+        while ((i < (vector::length(&pairs) as u256))) {
             pair = *vector::borrow(&pairs, (i as u64));
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
             token_next = *vector::borrow(&token_path, ((i + 1) as u64));
-            recipient = if (((i + 1) == vector::length(&pairs))) to else *vector::borrow(&pairs, ((i + 1) as u64));
+            recipient = if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64));
             if ((version == V1)) {
                 let (reserve0, reserve1, 2) = get_reserves(i_joe_pair(pair));
                 if ((token < token_next)) {
@@ -681,7 +684,7 @@ module 0x1::l_b_router {
         let token: address;
         let token_next: address = *vector::borrow(&token_path, 0u64);
         let i: u256;
-        while ((i < vector::length(&pairs))) {
+        while ((i < (vector::length(&pairs) as u256))) {
             token = token_next;
             token_next = *vector::borrow(&token_path, ((i + 1) as u64));
             *vector::borrow_mut(&mut pairs, (i as u64)) = get_pair(token, token_next, *vector::borrow(&pair_bin_steps, (i as u64)), *vector::borrow(&versions, (i as u64)));

@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-02-10T05:49:57.172Z",
+  "timestamp": "2026-02-10T21:35:11.579Z",
   "totalContracts": 22,
   "successfulTranspiles": 22,
   "totalFunctions": 317,
   "totalErrors": 0,
   "totalWarnings": 23,
-  "totalUnsupported": 2,
-  "totalAssemblyBlocks": 0,
+  "totalUnsupported": 3,
+  "totalAssemblyBlocks": 1,
   "contracts": [
     {
       "contract": "constants",
@@ -77,7 +77,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 171,
+      "lineCount": 172,
       "moveCode": ""
     },
     {
@@ -89,7 +89,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 139,
+      "lineCount": 141,
       "moveCode": ""
     },
     {
@@ -101,7 +101,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 117,
+      "lineCount": 119,
       "moveCode": ""
     },
     {
@@ -113,7 +113,7 @@
       "warningCount": 1,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 159,
+      "lineCount": 160,
       "moveCode": ""
     },
     {
@@ -125,7 +125,7 @@
       "warningCount": 1,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 60,
+      "lineCount": 63,
       "moveCode": ""
     },
     {
@@ -149,7 +149,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 61,
+      "lineCount": 65,
       "moveCode": ""
     },
     {
@@ -161,7 +161,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 211,
+      "lineCount": 218,
       "moveCode": ""
     },
     {
@@ -173,7 +173,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 231,
+      "lineCount": 234,
       "moveCode": ""
     },
     {
@@ -185,7 +185,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 160,
+      "lineCount": 163,
       "moveCode": ""
     },
     {
@@ -197,7 +197,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 200,
+      "lineCount": 202,
       "moveCode": ""
     },
     {
@@ -209,7 +209,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 44,
+      "lineCount": 47,
       "moveCode": ""
     },
     {
@@ -219,8 +219,8 @@
       "structCount": 2,
       "errorCount": 0,
       "warningCount": 2,
-      "unsupportedCount": 0,
-      "assemblyBlockCount": 0,
+      "unsupportedCount": 1,
+      "assemblyBlockCount": 1,
       "lineCount": 81,
       "moveCode": ""
     },
@@ -245,7 +245,7 @@
       "warningCount": 6,
       "unsupportedCount": 1,
       "assemblyBlockCount": 0,
-      "lineCount": 640,
+      "lineCount": 652,
       "moveCode": ""
     },
     {
@@ -257,7 +257,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 417,
+      "lineCount": 424,
       "moveCode": ""
     },
     {
@@ -269,7 +269,7 @@
       "warningCount": 13,
       "unsupportedCount": 1,
       "assemblyBlockCount": 0,
-      "lineCount": 732,
+      "lineCount": 735,
       "moveCode": ""
     }
   ]

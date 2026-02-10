@@ -2,6 +2,9 @@ module 0x1::oracle_helper {
 
     use std::vector;
     use aptos_framework::timestamp;
+    use 0x1::sample_math;
+    use 0x1::pair_parameter_helper;
+    use 0x1::safe_cast;
 
     // Error codes
     const _M_A_X_S_A_M_P_L_E_L_I_F_E_T_I_M_E: u256 = 120u256;

@@ -3,6 +3,7 @@ module 0x1::tree_math {
     use std::vector;
     use std::u8;
     use std::u256;
+    use 0x1::bit_math;
 
     // Error codes
     const E_REVERT: u64 = 0u64;

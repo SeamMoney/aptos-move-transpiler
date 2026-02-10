@@ -1,6 +1,13 @@
 module 0x1::bin_helper {
 
     use std::u128;
+    use 0x1::packed_uint128_math;
+    use 0x1::safe_cast;
+    use 0x1::uint256x256_math;
+    use 0x1::fee_helper;
+    use 0x1::pair_parameter_helper;
+    use 0x1::price_helper;
+    use 0x1::token_helper;
 
     // Error codes
     const SCALE: u256 = 340282366920938463463374607431768211456u256;
@@ -47,7 +54,7 @@ module 0x1::bin_helper {
 
     public(package) fun get_shares_and_effective_amounts_in(bin_reserves: u256, amounts_in: u256, price: u256, total_supply: u256): (u256, u256) {
         let shares = 0u256;
-        let effective_amounts_in = 0u256;
+        let _effective_amounts_in = 0u256;
         let (x, y) = packed_uint128_math::decode(amounts_in);
         let user_liquidity: u256 = get_liquidity(x, y, price);
         if ((user_liquidity == 0)) {
@@ -81,7 +88,7 @@ module 0x1::bin_helper {
     }
 
     public(package) fun get_liquidity(amounts: u256, price: u256): u256 {
-        let liquidity = 0u256;
+        let _liquidity = 0u256;
         let (x, y) = packed_uint128_math::decode(amounts);
         return get_liquidity(x, y, price)
     }

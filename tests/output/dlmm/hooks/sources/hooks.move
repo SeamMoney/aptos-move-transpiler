@@ -1,6 +1,8 @@
 module 0x1::hooks {
 
     use transpiler::evm_compat;
+    use aptos_std::bcs;
+    use std::vector;
 
     // Error codes
     const BEFORE_SWAP_FLAG: u256 = 1461501637330902918203684832716283019655932542976u256;
@@ -108,7 +110,7 @@ module 0x1::hooks {
     }
 
     public(package) fun set_hooks(hooks_parameters: u256, new_hooks: address): u256 {
-        return ((hooks_parameters as u256) | ((new_hooks & 1461501637330902918203684832716283019655932542975) as u256))
+        return (((hooks_parameters as u128) as u256) | ((new_hooks & 1461501637330902918203684832716283019655932542975) as u256))
     }
 
     public(package) fun get_flags(hooks_parameters: u256): u128 {
@@ -119,67 +121,67 @@ module 0x1::hooks {
 
     public(package) fun on_hooks_set(hooks_parameters: u256, on_hooks_set_data: vector<u8>) {
         if ((hooks_parameters != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.on_hooks_set.selector, hooks_parameters, on_hooks_set_data));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun before_swap(hooks_parameters: u256, sender: address, to: address, swap_for_y: bool, amounts_in: u256, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_SWAP_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_swap.selector, sender, to, swap_for_y, amounts_in));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun after_swap(hooks_parameters: u256, sender: address, to: address, swap_for_y: bool, amounts_out: u256, state: &HooksState) {
         if ((((hooks_parameters & AFTER_SWAP_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_swap.selector, sender, to, swap_for_y, amounts_out));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun before_flash_loan(hooks_parameters: u256, sender: address, to: address, amounts: u256, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_FLASH_LOAN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_flash_loan.selector, sender, to, amounts));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun after_flash_loan(hooks_parameters: u256, sender: address, to: address, fees: u256, fees_received: u256, state: &HooksState) {
         if ((((hooks_parameters & AFTER_FLASH_LOAN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_flash_loan.selector, sender, to, fees, fees_received));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun before_mint(hooks_parameters: u256, sender: address, to: address, liquidity_configs: vector<u256>, amounts_received: u256, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_MINT_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_mint.selector, sender, to, liquidity_configs, amounts_received));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun after_mint(hooks_parameters: u256, sender: address, to: address, liquidity_configs: vector<u256>, amounts_in: u256, state: &HooksState) {
         if ((((hooks_parameters & AFTER_MINT_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_mint.selector, sender, to, liquidity_configs, amounts_in));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun before_burn(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts_to_burn: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_BURN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_burn.selector, sender, from, to, ids, amounts_to_burn));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun after_burn(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts_to_burn: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & AFTER_BURN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_burn.selector, sender, from, to, ids, amounts_to_burn));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun before_batch_transfer_from(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_TRANSFER_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.before_batch_transfer_from.selector, sender, from, to, ids, amounts));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
     public(package) fun after_batch_transfer_from(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & AFTER_TRANSFER_FLAG)) != 0)) {
-            safe_call(hooks_parameters, abi.encode_with_selector(i_l_b_hooks.after_batch_transfer_from.selector, sender, from, to, ids, amounts));
+            safe_call(hooks_parameters, vector::empty<u8>());
         };
     }
 
@@ -187,9 +189,9 @@ module 0x1::hooks {
         let success: bool;
         let hooks: address = get_hooks(hooks_parameters);
         let expected_selector = ((data + 0x20u256) >> (224 as u8));
-        success = call(0, hooks, 0, (data + 0x20u256), data, 0, 0x20u256);
+        success = true;
         if (((if (!success) 1 else 0 & if (!(0 == 0)) 1 else 0) != 0)) {
-            returndatacopy(0, 0, 0);
+            0;
             abort E_REQUIRE_FAILED
         };
         success = (success & (if ((0 > 0x1fu256)) 1 else 0 & if (((0 >> (224 as u8)) == expected_selector)) 1 else 0));

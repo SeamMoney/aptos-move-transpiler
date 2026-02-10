@@ -1,5 +1,9 @@
 module 0x1::price_helper {
 
+    use 0x1::uint128x128_math;
+    use 0x1::safe_cast;
+    use 0x1::uint256x256_math;
+
     // Error codes
     const REAL_ID_SHIFT: i256 = 8388608i256;
     const SCALE: u256 = 340282366920938463463374607431768211456u256;
@@ -48,7 +52,7 @@ module 0x1::price_helper {
     }
 
     public(package) fun get_exponent(id: u32): i256 {
-        return ((id as i256) - REAL_ID_SHIFT)
+        return (((id as u256) as i256) - REAL_ID_SHIFT)
     }
 
     public(package) fun convert_decimal_price_to128x128(price: u256): u256 {

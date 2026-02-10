@@ -102,7 +102,8 @@ export function transformFunction(
       value: getDefaultValueForType(moveType),
     });
     // Add to local variables so assignments know it's already declared
-    context.localVariables.set(param.name, param.type);
+    // Use snake_case name to match how lookupVariableType queries
+    context.localVariables.set(toSnakeCase(param.name), param.type);
   }
 
   // Add modifier PRE-checks SECOND (after state is borrowed)
@@ -169,8 +170,26 @@ export function transformFunction(
     }
   }
 
-  // Determine if this needs acquires
-  const acquires = determineAcquires(fn, context);
+  // Prefix unused named return params with `_` to suppress Move warnings
+  if (namedReturnParams.length > 0) {
+    for (const param of namedReturnParams) {
+      const varName = toSnakeCase(param.name);
+      // Check if the variable is actually used in the body (beyond its own declaration)
+      const isUsed = isVariableReferencedInStatements(varName, fullBody);
+      if (!isUsed) {
+        // Find the let statement and prefix the pattern with _
+        for (const stmt of fullBody) {
+          if (stmt.kind === 'let' && stmt.pattern === varName) {
+            stmt.pattern = `_${varName}`;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Determine acquires by scanning the generated Move body for borrow_global calls
+  const acquires = determineAcquiresFromBody(fullBody, fn, context);
 
   const moveFunc: MoveFunction = {
     name: toSnakeCase(fn.name),
@@ -471,6 +490,43 @@ function generateRoleCheck(roleArg: any, context: TranspileContext): MoveStateme
 }
 
 /**
+ * Substitute modifier parameter names with actual argument expressions in an IR statement.
+ * Deep-clones the statement tree, replacing any identifier matching a param name.
+ */
+function substituteParamsInStatement(stmt: any, paramMap: Map<string, any>): any {
+  if (!stmt || typeof stmt !== 'object') return stmt;
+
+  // Deep clone and substitute
+  if (Array.isArray(stmt)) {
+    return stmt.map(s => substituteParamsInStatement(s, paramMap));
+  }
+
+  const result: any = {};
+  for (const key of Object.keys(stmt)) {
+    const val = stmt[key];
+    if (key === 'kind' || key === 'type' || key === 'operator' || key === 'prefix' ||
+        key === 'member' || key === 'field' || typeof val === 'boolean' || typeof val === 'number') {
+      result[key] = val;
+    } else if (key === 'name' && stmt.kind === 'identifier' && paramMap.has(val)) {
+      // Substitute: replace this identifier with the argument expression
+      const replacement = paramMap.get(val);
+      return typeof replacement === 'object' ? { ...replacement } : replacement;
+    } else if (Array.isArray(val)) {
+      result[key] = val.map((item: any) =>
+        typeof item === 'object' && item !== null
+          ? substituteParamsInStatement(item, paramMap)
+          : item
+      );
+    } else if (typeof val === 'object' && val !== null) {
+      result[key] = substituteParamsInStatement(val, paramMap);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
+/**
  * Inline a custom modifier body - returns only PRE-placeholder statements
  * Post-placeholder statements are handled by getModifierPostStatements
  */
@@ -481,7 +537,7 @@ function inlineModifierBody(
 ): MoveStatement[] {
   const statements: MoveStatement[] = [];
 
-  // Create parameter mapping
+  // Create parameter mapping: modifier formal param name → actual argument expression
   const paramMap = new Map<string, any>();
   if (modifierDef.params && args) {
     modifierDef.params.forEach((param: any, i: number) => {
@@ -500,7 +556,9 @@ function inlineModifierBody(
       break;
     }
 
-    const transformed = transformStatement(stmt, context);
+    // Substitute modifier parameter names with actual argument expressions
+    const substituted = paramMap.size > 0 ? substituteParamsInStatement(stmt, paramMap) : stmt;
+    const transformed = transformStatement(substituted, context);
     if (transformed) {
       statements.push(transformed);
     }
@@ -520,6 +578,16 @@ function getModifierPostStatements(
 ): MoveStatement[] {
   const statements: MoveStatement[] = [];
 
+  // Create parameter mapping for substitution
+  const paramMap = new Map<string, any>();
+  if (modifierDef.params && args) {
+    modifierDef.params.forEach((param: any, i: number) => {
+      if (args[i]) {
+        paramMap.set(param.name, args[i]);
+      }
+    });
+  }
+
   // Find statements AFTER the placeholder
   let foundPlaceholder = false;
   for (const stmt of modifierDef.body || []) {
@@ -529,7 +597,8 @@ function getModifierPostStatements(
     }
 
     if (foundPlaceholder) {
-      const transformed = transformStatement(stmt, context);
+      const substituted = paramMap.size > 0 ? substituteParamsInStatement(stmt, paramMap) : stmt;
+      const transformed = transformStatement(substituted, context);
       if (transformed) {
         statements.push(transformed);
       }
@@ -543,6 +612,86 @@ function getModifierPostStatements(
  * Recursively check if an IR statement contains a return statement.
  * Used to prevent duplicate returns when named return params are present.
  */
+/**
+ * Check if a variable name is referenced in a list of statements (beyond its declaration).
+ * Recursively walks expressions and statements looking for identifier references.
+ */
+function isVariableReferencedInStatements(varName: string, stmts: any[]): boolean {
+  for (const stmt of stmts) {
+    if (isVarInStatement(varName, stmt)) return true;
+  }
+  return false;
+}
+
+function isVarInStatement(varName: string, stmt: any): boolean {
+  if (!stmt) return false;
+  switch (stmt.kind) {
+    case 'let':
+      // Don't count the declaration itself, only check the value
+      return false; // The value is the default, not a reference to the var
+    case 'assign':
+      if (isVarInExpr(varName, stmt.target)) return true;
+      return isVarInExpr(varName, stmt.value);
+    case 'if':
+      if (isVarInExpr(varName, stmt.condition)) return true;
+      if (stmt.thenBlock?.some((s: any) => isVarInStatement(varName, s))) return true;
+      if (stmt.elseBlock?.some((s: any) => isVarInStatement(varName, s))) return true;
+      return false;
+    case 'while':
+      if (isVarInExpr(varName, stmt.condition)) return true;
+      return stmt.body?.some((s: any) => isVarInStatement(varName, s)) || false;
+    case 'loop':
+      return stmt.body?.some((s: any) => isVarInStatement(varName, s)) || false;
+    case 'for':
+      if (isVarInExpr(varName, stmt.iterable)) return true;
+      return stmt.body?.some((s: any) => isVarInStatement(varName, s)) || false;
+    case 'return':
+      return stmt.value ? isVarInExpr(varName, stmt.value) : false;
+    case 'abort':
+      return isVarInExpr(varName, stmt.code);
+    case 'expression':
+      return isVarInExpr(varName, stmt.expression);
+    case 'block':
+      return stmt.statements?.some((s: any) => isVarInStatement(varName, s)) || false;
+  }
+  return false;
+}
+
+function isVarInExpr(varName: string, expr: any): boolean {
+  if (!expr) return false;
+  switch (expr.kind) {
+    case 'identifier':
+      return expr.name === varName;
+    case 'binary':
+      return isVarInExpr(varName, expr.left) || isVarInExpr(varName, expr.right);
+    case 'unary':
+      return isVarInExpr(varName, expr.operand);
+    case 'call':
+      return expr.args?.some((a: any) => isVarInExpr(varName, a)) || false;
+    case 'method_call':
+      return isVarInExpr(varName, expr.receiver) || expr.args?.some((a: any) => isVarInExpr(varName, a)) || false;
+    case 'field_access':
+      return isVarInExpr(varName, expr.object);
+    case 'index':
+      return isVarInExpr(varName, expr.object) || isVarInExpr(varName, expr.index);
+    case 'struct':
+      return expr.fields?.some((f: any) => isVarInExpr(varName, f.value)) || false;
+    case 'borrow':
+    case 'dereference':
+    case 'move':
+    case 'copy':
+      return isVarInExpr(varName, expr.value);
+    case 'cast':
+      return isVarInExpr(varName, expr.value);
+    case 'if_expr':
+      return isVarInExpr(varName, expr.condition) || isVarInExpr(varName, expr.thenExpr) || isVarInExpr(varName, expr.elseExpr);
+    case 'tuple':
+    case 'vector':
+      return expr.elements?.some((e: any) => isVarInExpr(varName, e)) || false;
+  }
+  return false;
+}
+
 function containsReturn(stmt: any): boolean {
   if (!stmt) return false;
   if (stmt.kind === 'return') return true;
@@ -1385,6 +1534,71 @@ function accessesState(
 /**
  * Determine what resources a function acquires
  */
+/**
+ * Determine acquires by scanning the generated Move body for borrow_global/borrow_global_mut calls.
+ * This is more reliable than scanning IR because it catches all state access patterns
+ * including those generated by transformers (modifiers, state borrows, etc.).
+ */
+function determineAcquiresFromBody(
+  body: any[],
+  fn: IRFunction,
+  context: TranspileContext
+): string[] {
+  // Internal/private functions receive state as a parameter — they don't need acquires
+  const isInternalFunction = fn.visibility === 'private' || fn.visibility === 'internal';
+  if (isInternalFunction) return [];
+
+  // Libraries don't have resources
+  if ((context as any).isLibrary) return [];
+
+  const resourceNames = new Set<string>();
+
+  // Recursively scan for borrow_global/borrow_global_mut calls
+  function scanExpr(expr: any): void {
+    if (!expr) return;
+    if (expr.kind === 'call' && (expr.function === 'borrow_global' || expr.function === 'borrow_global_mut' || expr.function === 'move_from')) {
+      if (expr.typeArgs?.[0]?.name) {
+        resourceNames.add(expr.typeArgs[0].name);
+      }
+    }
+    // Recurse into all expression fields
+    if (expr.args) expr.args.forEach(scanExpr);
+    if (expr.left) scanExpr(expr.left);
+    if (expr.right) scanExpr(expr.right);
+    if (expr.operand) scanExpr(expr.operand);
+    if (expr.value) scanExpr(expr.value);
+    if (expr.condition) scanExpr(expr.condition);
+    if (expr.thenExpr) scanExpr(expr.thenExpr);
+    if (expr.elseExpr) scanExpr(expr.elseExpr);
+    if (expr.object) scanExpr(expr.object);
+    if (expr.index) scanExpr(expr.index);
+    if (expr.receiver) scanExpr(expr.receiver);
+    if (expr.elements) expr.elements.forEach(scanExpr);
+    if (expr.fields) expr.fields.forEach((f: any) => scanExpr(f.value));
+    if (expr.expression) scanExpr(expr.expression);
+    if (expr.code) scanExpr(expr.code);
+  }
+
+  function scanStmt(stmt: any): void {
+    if (!stmt) return;
+    switch (stmt.kind) {
+      case 'let': if (stmt.value) scanExpr(stmt.value); break;
+      case 'assign': scanExpr(stmt.target); scanExpr(stmt.value); break;
+      case 'if': scanExpr(stmt.condition); stmt.thenBlock?.forEach(scanStmt); stmt.elseBlock?.forEach(scanStmt); break;
+      case 'while': scanExpr(stmt.condition); stmt.body?.forEach(scanStmt); break;
+      case 'loop': stmt.body?.forEach(scanStmt); break;
+      case 'for': scanExpr(stmt.iterable); stmt.body?.forEach(scanStmt); break;
+      case 'return': if (stmt.value) scanExpr(stmt.value); break;
+      case 'abort': scanExpr(stmt.code); break;
+      case 'expression': scanExpr(stmt.expression); break;
+      case 'block': stmt.statements?.forEach(scanStmt); break;
+    }
+  }
+
+  body.forEach(scanStmt);
+  return Array.from(resourceNames);
+}
+
 function determineAcquires(
   fn: IRFunction,
   context: TranspileContext
@@ -1630,6 +1844,9 @@ function getDefaultValueForType(moveType: any): any {
  */
 function toSnakeCase(str: string): string {
   if (!str) return '';
+  // Handle $ variable (EVM storage reference) — not valid in Move
+  if (str === '$') return '_storage_ref';
+  if (str.includes('$')) str = str.replace(/\$/g, '_');
   // Preserve SCREAMING_SNAKE_CASE constants
   if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
     return str.toLowerCase();

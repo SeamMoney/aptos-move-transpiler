@@ -572,9 +572,18 @@ function generateExpression(expr: MoveExpression): string {
       if (expr.targetType?.kind === 'primitive' && expr.targetType.name === 'bool') {
         return `(${generateExpression(expr.value)} != 0)`;
       }
-      // Collapse chained casts: (x as T1) as T2 → (x as T2)
+      // Collapse chained casts: (x as T1) as T2 → (x as T2), but only when
+      // T1 and T2 are the same type (truly redundant) or when the inner value
+      // is a simple expression (no intermediate operations that need T1)
       if (expr.value?.kind === 'cast') {
-        return `(${generateExpression(expr.value.value)} as ${generateType(expr.targetType)})`;
+        const innerTarget = expr.value.targetType;
+        const outerTarget = expr.targetType;
+        // Only collapse if the inner cast target matches outer (redundant double cast)
+        if (innerTarget?.kind === 'primitive' && outerTarget?.kind === 'primitive' &&
+            innerTarget.name === outerTarget.name) {
+          return `(${generateExpression(expr.value.value)} as ${generateType(expr.targetType)})`;
+        }
+        // Otherwise, keep both casts (the inner one may be needed for type correctness)
       }
       // Skip no-op casts where value is a literal with matching type suffix
       if (expr.value?.kind === 'literal' && expr.value?.type === 'number' && expr.value?.suffix) {

@@ -95,6 +95,13 @@ export interface IRModifierInvocation {
   args: IRExpression[];
 }
 
+// Function signature for type inference (used in TranspileContext)
+export interface FunctionSignature {
+  params: MoveType[];
+  returnType?: MoveType | MoveType[];  // undefined = void, array = tuple return
+  module?: string;  // Qualified module name if from another module
+}
+
 // Constructor
 export interface IRConstructor {
   params: IRFunctionParam[];
@@ -383,6 +390,7 @@ export interface TranspileContext {
   paramNameMap?: Map<string, string>;  // Maps Solidity param names to Move snake_case names
   usingFor?: IRUsingFor[];  // using Library for Type declarations
   libraryFunctions?: Map<string, string>;  // Maps function_name → library_module_name for cross-module calls
+  functionSignatures?: Map<string, FunctionSignature>;  // Maps qualified function name → signature for type inference
 }
 
 export interface TranspileError {

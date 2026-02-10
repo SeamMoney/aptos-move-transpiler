@@ -1,5 +1,8 @@
 module 0x1::pair_parameter_helper {
 
+    use 0x1::encoded;
+    use 0x1::safe_cast;
+
     // Error codes
     const OFFSET_BASE_FACTOR: u256 = 0u256;
     const OFFSET_FILTER_PERIOD: u256 = 16u256;
@@ -165,7 +168,7 @@ module 0x1::pair_parameter_helper {
     }
 
     public(package) fun set_active_id(params: u256, active_id: u32): u256 {
-        let new_params = 0u256;
+        let _new_params = 0u256;
         return encoded::set(params, active_id, MASK_UINT24, OFFSET_ACTIVE_ID)
     }
 
@@ -185,13 +188,13 @@ module 0x1::pair_parameter_helper {
     }
 
     public(package) fun update_id_reference(params: u256): u256 {
-        let new_params = 0u256;
+        let _new_params = 0u256;
         let active_id: u32 = get_active_id(params);
         return encoded::set(params, active_id, MASK_UINT24, OFFSET_ID_REF)
     }
 
     public(package) fun update_time_of_last_update(params: u256, timestamp: u256): u256 {
-        let new_params = 0u256;
+        let _new_params = 0u256;
         let current_time: u64 = safe_cast::safe40(timestamp);
         return encoded::set(params, current_time, MASK_UINT40, OFFSET_TIME_LAST_UPDATE)
     }
@@ -217,9 +220,9 @@ module 0x1::pair_parameter_helper {
 
     public(package) fun update_references(params: u256, timestamp: u256): u256 {
         let dt: u256 = (timestamp - get_time_of_last_update(params));
-        if ((dt >= get_filter_period(params))) {
+        if ((dt >= (get_filter_period(params) as u256))) {
             params = update_id_reference(params);
-            params = if ((dt < get_decay_period(params))) update_volatility_reference(params) else set_volatility_reference(params, 0);
+            params = if ((dt < (get_decay_period(params) as u256))) update_volatility_reference(params) else set_volatility_reference(params, 0);
         };
         return update_time_of_last_update(params, timestamp)
     }

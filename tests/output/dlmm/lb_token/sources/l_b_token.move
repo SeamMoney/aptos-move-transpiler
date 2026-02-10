@@ -59,10 +59,10 @@ module 0x1::l_b_token {
 
     public fun balance_of_batch(accounts: vector<address>, ids: vector<u256>): vector<u256> {
         let batch_balances = vector::empty();
-        check_length(length_a, length_b);
+        check_length(vector::length(&accounts), vector::length(&ids));
         batch_balances = unknown(vector::length(&accounts));
         let i: u256;
-        while ((i < vector::length(&accounts))) {
+        while ((i < (vector::length(&accounts) as u256))) {
             *vector::borrow_mut(&mut batch_balances, (i as u64)) = balance_of(*vector::borrow(&accounts, (i as u64)), *vector::borrow(&ids, (i as u64)));
             i = (i + 1);
         }
@@ -78,7 +78,7 @@ module 0x1::l_b_token {
     }
 
     public entry fun batch_transfer_from(account: &signer, from: address, to: address, ids: vector<u256>, amounts: vector<u256>) {
-        if (!is_approved_for_all(from, spender, state)) {
+        if (!is_approved_for_all(from, signer::address_of(account), state)) {
             abort E_L_B_TOKEN_SPENDER_NOT_APPROVED
         };
         batch_transfer_from(from, to, ids, amounts, state);
@@ -104,12 +104,12 @@ module 0x1::l_b_token {
     }
 
     public(package) fun batch_transfer_from(account: &signer, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &mut LBTokenState) {
-        check_length(length_a, length_b);
-        not_address_zero_or_this(account);
+        check_length(vector::length(&ids), vector::length(&amounts));
+        not_address_zero_or_this(to);
         let from_balances: aptos_std::table::Table<u256, u256> = *table::borrow_with_default(&state.balances, from, &0u256);
         let to_balances: aptos_std::table::Table<u256, u256> = *table::borrow_with_default(&state.balances, to, &0u256);
         let i: u256;
-        while ((i < vector::length(&ids))) {
+        while ((i < (vector::length(&ids) as u256))) {
             let id: u256 = *vector::borrow(&ids, (i as u64));
             let amount: u256 = *vector::borrow(&amounts, (i as u64));
             let from_balance: u256 = *vector::borrow(&from_balances, (id as u64));
@@ -124,7 +124,7 @@ module 0x1::l_b_token {
     }
 
     public(package) fun approve_for_all(owner: address, spender: address, approved: bool, state: &mut LBTokenState) {
-        not_address_zero_or_this(account);
+        not_address_zero_or_this(owner);
         if ((owner == spender)) {
             abort E_L_B_TOKEN_SELF_APPROVAL
         };

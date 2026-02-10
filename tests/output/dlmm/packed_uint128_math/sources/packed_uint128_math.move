@@ -48,7 +48,7 @@ module 0x1::packed_uint128_math {
     }
 
     public(package) fun encode_u_bool(x: u128, first: bool): u256 {
-        let z = 0u256;
+        let _z = 0u256;
         return if (first) encode_first(x) else encode_second(x)
     }
 
@@ -73,14 +73,14 @@ module 0x1::packed_uint128_math {
     }
 
     public(package) fun decode_b_bool(z: u256, first: bool): u128 {
-        let x = 0u128;
+        let _x = 0u128;
         return if (first) decode_x(z) else decode_y(z)
     }
 
     public(package) fun add(x: u256, y: u256): u256 {
         let z = 0u256;
         z = (x + y);
-        if (((z < x) || ((z as u128) < (x as u128)))) {
+        if (((z < x) || (((z as u256) as u128) < ((x as u256) as u128)))) {
             abort E_PACKED_UINT128_MATH_ADD_OVERFLOW
         };
         return z
@@ -93,7 +93,7 @@ module 0x1::packed_uint128_math {
     public(package) fun sub(x: u256, y: u256): u256 {
         let z = 0u256;
         z = (x - y);
-        if (((z > x) || ((z as u128) > (x as u128)))) {
+        if (((z > x) || (((z as u256) as u128) > ((x as u256) as u128)))) {
             abort E_PACKED_UINT128_MATH_SUB_UNDERFLOW
         };
         return z
@@ -116,7 +116,7 @@ module 0x1::packed_uint128_math {
     }
 
     public(package) fun scalar_mul_div_basis_point_round_down(x: u256, multiplier: u128): u256 {
-        let z = 0u256;
+        let _z = 0u256;
         if ((multiplier == 0)) {
             return 0
         };

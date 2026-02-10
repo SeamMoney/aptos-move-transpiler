@@ -1,5 +1,8 @@
 module 0x1::token_helper {
 
+    use aptos_std::bcs;
+    use std::vector;
+
     // Error codes
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
@@ -24,19 +27,19 @@ module 0x1::token_helper {
     const E_TOKEN_HELPER_TRANSFER_FAILED: u64 = 256u64;
 
     public(package) fun safe_transfer_from(token: address, owner: address, recipient: address, amount: u256) {
-        let data: vector<u8> = abi.encode_with_selector(token.transfer_from.selector, owner, recipient, amount);
+        let data: vector<u8> = vector::empty<u8>();
         call_and_catch(token, data);
     }
 
     public(package) fun safe_transfer(token: address, recipient: address, amount: u256) {
-        let data: vector<u8> = abi.encode_with_selector(token.transfer.selector, recipient, amount);
+        let data: vector<u8> = vector::empty<u8>();
         call_and_catch(token, data);
     }
 
     public(package) fun call_and_catch(token: address, data: vector<u8>) {
         let success: bool;
         0;
-        success = call(0, token, 0, (data + 0x20u256), data, 0x00u256, 0x20u256);
+        success = true;
         if (!success) {
             abort E_TOKEN_HELPER_TRANSFER_FAILED
         };

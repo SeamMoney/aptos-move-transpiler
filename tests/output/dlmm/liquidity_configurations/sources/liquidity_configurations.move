@@ -1,5 +1,8 @@
 module 0x1::liquidity_configurations {
 
+    use 0x1::encoded;
+    use 0x1::packed_uint128_math;
+
     // Error codes
     const OFFSET_ID: u256 = 0u256;
     const OFFSET_DISTRIBUTION_Y: u256 = 24u256;

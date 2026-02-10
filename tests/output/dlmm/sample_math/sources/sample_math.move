@@ -1,5 +1,7 @@
 module 0x1::sample_math {
 
+    use 0x1::encoded;
+
     // Error codes
     const OFFSET_ORACLE_LENGTH: u256 = 0u256;
     const OFFSET_CUMULATIVE_ID: u256 = 16u256;
@@ -44,32 +46,32 @@ module 0x1::sample_math {
     }
 
     public(package) fun get_oracle_length(sample: u256): u16 {
-        let length = 0u16;
+        let _length = 0u16;
         return encoded::decode_uint16(sample, 0)
     }
 
     public(package) fun get_cumulative_id(sample: u256): u64 {
-        let id = 0u64;
+        let _id = 0u64;
         return encoded::decode_uint64(sample, OFFSET_CUMULATIVE_ID)
     }
 
     public(package) fun get_cumulative_volatility(sample: u256): u64 {
-        let volatility_accumulator = 0u64;
+        let _volatility_accumulator = 0u64;
         return encoded::decode_uint64(sample, OFFSET_CUMULATIVE_VOLATILITY)
     }
 
     public(package) fun get_cumulative_bin_crossed(sample: u256): u64 {
-        let bin_crossed = 0u64;
+        let _bin_crossed = 0u64;
         return encoded::decode_uint64(sample, OFFSET_CUMULATIVE_BIN_CROSSED)
     }
 
     public(package) fun get_sample_lifetime(sample: u256): u8 {
-        let lifetime = 0u8;
+        let _lifetime = 0u8;
         return encoded::decode_uint8(sample, OFFSET_SAMPLE_LIFETIME)
     }
 
     public(package) fun get_sample_creation(sample: u256): u64 {
-        let creation = 0u64;
+        let _creation = 0u64;
         return encoded::decode_uint40(sample, OFFSET_SAMPLE_CREATION)
     }
 

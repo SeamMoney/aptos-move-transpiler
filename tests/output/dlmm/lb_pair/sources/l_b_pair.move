@@ -6,7 +6,19 @@ module 0x1::l_b_pair {
     use aptos_framework::timestamp;
     use aptos_framework::event;
     use transpiler::evm_compat;
+    use aptos_std::bcs;
     use std::vector;
+    use 0x1::pair_parameter_helper;
+    use 0x1::packed_uint128_math;
+    use 0x1::oracle_helper;
+    use 0x1::sample_math;
+    use 0x1::price_helper;
+    use 0x1::uint256x256_math;
+    use 0x1::fee_helper;
+    use 0x1::bin_helper;
+    use 0x1::hooks;
+    use 0x1::safe_cast;
+    use 0x1::l_b_token;
 
     // Error codes
     const _M_A_X_T_O_T_A_L_F_E_E: u256 = 100000000000000000u256;
@@ -53,7 +65,7 @@ module 0x1::l_b_pair {
         move_to(&resource_signer, LBPairState { implementation: /* unsupported expression */, factory: factory_, parameters: 0, reserves: 0, protocol_fees: 0, bins: table::new(), tree: 0, oracle: 0, hooks_parameters: 0, signer_cap: signer_cap });
     }
 
-    public entry fun initialize(account: &signer, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, active_id: u32) {
+    public entry fun initialize(account: &signer, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, active_id: u32) acquires LBPairState {
         let state = borrow_global_mut<LBPairState>(@0x1);
         only_factory();
         assert!(true, E_MODIFIER_INITIALIZER);
@@ -64,17 +76,17 @@ module 0x1::l_b_pair {
     #[view]
     public fun get_factory(): address acquires LBPairState {
         let state = borrow_global<LBPairState>(@0x1);
-        let factory = @0x0;
+        let _factory = @0x0;
         return state.factory
     }
 
     public fun get_token_x(): address {
-        let token_x = @0x0;
+        let _token_x = @0x0;
         return token_x()
     }
 
     public fun get_token_y(): address {
-        let token_y = @0x0;
+        let _token_y = @0x0;
         return token_y()
     }
 
@@ -364,8 +376,8 @@ module 0x1::l_b_pair {
         let total_fees: u256 = get_flash_loan_fees(amounts);
         hooks::before_flash_loan(hooks_parameters, signer::address_of(account), evm_compat::to_address(receiver), amounts);
         bin_helper::transfer(amounts, token_x(), token_y(), evm_compat::to_address(receiver));
-        let (success, r_data) = call(evm_compat::to_address(receiver), encode_with_selector(abi, i_l_b_flash_loan_callback.l_b_flash_loan_callback.selector, signer::address_of(account), token_x(), token_y(), amounts, total_fees, data));
-        if (((!success || (vector::length(&r_data) != 32)) || (packed_uint128_math::decode(abi, r_data, (0)) != CALLBACK_SUCCESS))) {
+        let (success, r_data) = call(evm_compat::to_address(receiver), vector::empty<u8>());
+        if (((!success || (vector::length(&r_data) != 32)) || (bcs::from_bytes(r_data) != CALLBACK_SUCCESS))) {
             abort E_L_B_PAIR_FLASH_LOAN_CALLBACK_FAILED
         };
         let balances_after: u256 = bin_helper::received((0 as u256), token_x(), token_y());
@@ -422,7 +434,7 @@ module 0x1::l_b_pair {
         amounts = unknown(vector::length(&ids));
         let amounts_out: u256;
         let i: u256;
-        while ((i < vector::length(&ids))) {
+        while ((i < (vector::length(&ids) as u256))) {
             let id: u32 = safe_cast::safe24(*vector::borrow(&ids, (i as u64)));
             let amount_to_burn: u256 = *vector::borrow(&amounts_to_burn, (i as u64));
             if ((amount_to_burn == 0)) {
@@ -587,7 +599,7 @@ module 0x1::l_b_pair {
         let active_id: u32 = pair_parameter_helper::get_active_id(parameters);
         amounts_left = amounts_received;
         let i: u256;
-        while ((i < vector::length(&liquidity_configs))) {
+        while ((i < (vector::length(&liquidity_configs) as u256))) {
             let (max_amounts_in_to_bin, id) = get_amounts_and_id(*vector::borrow(&liquidity_configs, (i as u64)), amounts_received);
             let (shares, amounts_in, amounts_in_to_bin) = update_bin(bin_step, active_id, id, max_amounts_in_to_bin, parameters, state);
             amounts_left = (amounts_left - amounts_in);

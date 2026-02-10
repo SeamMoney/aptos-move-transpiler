@@ -332,6 +332,9 @@ export function analyze(source: string): {
 
 function toSnakeCase(str: string): string {
   if (!str) return '';
+  // Handle $ variable (EVM storage reference) — not valid in Move
+  if (str === '$') return '_storage_ref';
+  if (str.includes('$')) str = str.replace(/\$/g, '_');
   // Preserve SCREAMING_SNAKE_CASE constants
   if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
     return str.toLowerCase();

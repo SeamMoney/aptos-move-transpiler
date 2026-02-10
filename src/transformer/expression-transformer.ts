@@ -7,6 +7,17 @@ import type { MoveStatement, MoveExpression, MoveType } from '../types/move-ast.
 import type { IRStatement, IRExpression, TranspileContext } from '../types/ir.js';
 import { MoveTypes } from '../types/move-ast.js';
 import { createIRType } from '../mapper/type-mapper.js';
+import {
+  getTypeWidth,
+  isBoolType,
+  isSignedType,
+  inferBinaryResultType,
+  getExprInferredType,
+  setExprInferredType,
+  lookupVariableType,
+  suffixToMoveType,
+  harmonizeComparisonTypes,
+} from './type-inference.js';
 
 /**
  * Transform a Solidity statement AST node to IR
@@ -1089,19 +1100,23 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
       // Only add explicit suffix for values that exceed u64 range (need disambiguation)
       // or hex literals (which are common in bitwise contexts and need u256)
       const suffix = needsExplicitSuffix(String(value)) ? 'u256' : undefined;
-      return {
+      const numResult: MoveExpression = {
         kind: 'literal',
         type: 'number',
         value,
         suffix,
       };
+      if (suffix) setExprInferredType(numResult, suffixToMoveType(suffix));
+      return numResult;
 
     case 'bool':
-      return {
+      const boolResult: MoveExpression = {
         kind: 'literal',
         type: 'bool',
         value: expr.value,
+        inferredType: { kind: 'primitive', name: 'bool' },
       };
+      return boolResult;
 
     case 'string':
       context.usedModules.add('std::string');
@@ -1113,6 +1128,7 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
           type: 'bytestring',
           value: `b"${expr.value}"`,
         }],
+        inferredType: { kind: 'struct', name: 'String', module: 'string' },
       };
 
     case 'hex':
@@ -1120,6 +1136,7 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
         kind: 'literal',
         type: 'bytestring',
         value: `x"${String(expr.value).replace('0x', '')}"`,
+        inferredType: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } },
       };
 
     case 'address':
@@ -1127,6 +1144,7 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
         kind: 'literal',
         type: 'address',
         value: `@${expr.value}`,
+        inferredType: { kind: 'primitive', name: 'address' },
       };
 
     default:
@@ -1183,30 +1201,39 @@ function transformIdentifier(expr: any, context: TranspileContext): MoveExpressi
       kind: 'literal',
       type: 'address',
       value: `@${context.moduleAddress}`,
+      inferredType: { kind: 'primitive', name: 'address' },
     };
   }
 
   // Check if it's a constant - constants are accessed directly by their SCREAMING_SNAKE_CASE name
   if (context.constants?.has(expr.name)) {
+    const constDef = context.constants.get(expr.name);
+    const constType = constDef?.type?.move;
     return {
       kind: 'identifier',
       name: toScreamingSnakeCase(expr.name),
+      inferredType: constType,
     };
   }
 
   // Check if it's a state variable (but not a constant)
   const stateVar = context.stateVariables.get(expr.name);
   if (stateVar && stateVar.mutability !== 'constant') {
-    return {
+    const result: MoveExpression = {
       kind: 'field_access',
       object: { kind: 'identifier', name: 'state' },
       field: name,
     };
+    if (stateVar.type?.move) setExprInferredType(result, stateVar.type.move);
+    return result;
   }
 
+  // Look up type from local variables
+  const varType = lookupVariableType(name, context);
   return {
     kind: 'identifier',
     name,
+    inferredType: varType,
   };
 }
 
@@ -1230,31 +1257,79 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
   // Handle exponentiation specially - use math::pow
   if (expr.operator === '**') {
     context.usedModules.add('aptos_std::math128');
-    return {
+    const result: MoveExpression = {
       kind: 'call',
       function: 'math128::pow',
       args: [left, right],
+      inferredType: getExprInferredType(left), // pow returns same type as base
     };
+    return result;
+  }
+
+  // Move doesn't support bitwise ops on signed integers (i8-i256).
+  // For bitwise ops with signed operands: cast to unsigned, perform op, cast back.
+  const isBitwiseOp = ['&', '|', '^', '<<', '>>', '<<=', '>>='].includes(expr.operator);
+  if (isBitwiseOp) {
+    const leftType = getExprInferredType(left);
+    const rightType = getExprInferredType(right);
+    const leftSigned = isSignedType(leftType);
+
+    if (leftSigned && leftType?.kind === 'primitive') {
+      // Convert signed type name to unsigned (i256 → u256, i128 → u128, etc.)
+      const unsignedName = leftType.name.replace('i', 'u') as any;
+      const unsignedType = { kind: 'primitive' as const, name: unsignedName };
+
+      // Cast left to unsigned
+      const unsignedLeft: MoveExpression = { kind: 'cast', value: left, targetType: unsignedType, inferredType: unsignedType };
+
+      // For shift ops, right operand is u8
+      if (expr.operator === '<<' || expr.operator === '>>' || expr.operator === '<<=' || expr.operator === '>>=') {
+        const castRight = castToU8ForShift(right);
+        const bitwiseResult: MoveExpression = {
+          kind: 'binary', operator: op as any,
+          left: unsignedLeft, right: castRight,
+          inferredType: unsignedType,
+        };
+        // Cast result back to signed
+        return { kind: 'cast', value: bitwiseResult, targetType: leftType, inferredType: leftType };
+      }
+
+      // For &, |, ^ — cast both operands to unsigned
+      let unsignedRight: MoveExpression = right;
+      if (isSignedType(rightType) && rightType?.kind === 'primitive') {
+        unsignedRight = { kind: 'cast', value: right, targetType: unsignedType, inferredType: unsignedType };
+      }
+      const bitwiseResult: MoveExpression = {
+        kind: 'binary', operator: op as any,
+        left: unsignedLeft, right: unsignedRight,
+        inferredType: unsignedType,
+      };
+      // Cast result back to signed
+      return { kind: 'cast', value: bitwiseResult, targetType: leftType, inferredType: leftType };
+    }
   }
 
   // Shift operators: right operand must be u8 in Move
   // Also handles compound shift assignments (>>=, <<=) when they appear as binary expressions
   if (expr.operator === '<<' || expr.operator === '>>' || expr.operator === '<<=' || expr.operator === '>>=') {
     const castRight = castToU8ForShift(right);
-    return {
+    const result: MoveExpression = {
       kind: 'binary',
       operator: op as any,
       left,
       right: castRight,
+      inferredType: getExprInferredType(left), // shift result is type of left operand
     };
+    return result;
   }
 
   // Fix bool-to-int comparisons from Yul: iszero(bool_var) → (bool_var == 0u256)
   // In Move, comparing bool with u256 is a type error. Detect and fix:
   // (bool_var == 0) → !bool_var, (bool_var != 0) → bool_var
   if ((op === '==' || op === '!=') && isZeroLiteral(right)) {
-    if (left.kind === 'identifier' && isBoolVariable(left.name, context)) {
-      if (op === '==') return { kind: 'unary', operator: '!', operand: left };
+    const leftType = getExprInferredType(left);
+    if (isBoolType(leftType) || (left.kind === 'identifier' && isBoolVariable(left.name, context))) {
+      if (op === '==') return { kind: 'unary', operator: '!', operand: left, inferredType: { kind: 'primitive', name: 'bool' } };
       return left; // != 0 on a bool is just the bool itself
     }
   }
@@ -1263,14 +1338,32 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
   // Upcast the narrower operand to the wider type.
   // e.g., (y:u128 != x:u256) → ((y as u256) != x)
   if (['==', '!=', '<', '>', '<=', '>='].includes(op)) {
+    // Try new inferredType-based harmonization first, then fall back to context-based
+    const leftType = getExprInferredType(left);
+    const rightType = getExprInferredType(right);
+    if (leftType && rightType) {
+      const harmonized = harmonizeComparisonTypes(left, right);
+      const result: MoveExpression = {
+        kind: 'binary',
+        operator: op as any,
+        left: harmonized.left,
+        right: harmonized.right,
+        inferredType: { kind: 'primitive', name: 'bool' },
+      };
+      return result;
+    }
+    // Fall back to old context-based harmonization
     return harmonizeComparison(op, left, right, context);
   }
 
+  // Infer type for arithmetic/bitwise operations
+  const resultType = inferBinaryResultType(op, getExprInferredType(left), getExprInferredType(right));
   return {
     kind: 'binary',
     operator: op as any,
     left,
     right,
+    inferredType: resultType,
   };
 }
 
@@ -1279,8 +1372,12 @@ function isZeroLiteral(expr: any): boolean {
 }
 
 function isBoolVariable(name: string, context: TranspileContext): boolean {
+  // Check localVariables
   const varType = context.localVariables?.get(name);
   if (varType && (varType.solidity === 'bool' || varType.move?.name === 'bool')) return true;
+  // Check stateVariables
+  const stateVar = context.stateVariables?.get(name);
+  if (stateVar?.type?.solidity === 'bool' || stateVar?.type?.move?.kind === 'primitive' && (stateVar?.type?.move as any)?.name === 'bool') return true;
   return false;
 }
 
@@ -1295,6 +1392,12 @@ const INT_WIDTHS: Record<string, number> = {
 };
 
 function getIntegerWidth(expr: any, context: TranspileContext): number | undefined {
+  // First check inferredType (from the new type inference system)
+  const inferred = getExprInferredType(expr);
+  if (inferred) {
+    const w = getTypeWidth(inferred);
+    if (w !== undefined) return w;
+  }
   // Identifier: look up in localVariables
   if (expr.kind === 'identifier') {
     const varType = context.localVariables?.get(expr.name);
@@ -1304,10 +1407,13 @@ function getIntegerWidth(expr: any, context: TranspileContext): number | undefin
   if (expr.kind === 'cast' && expr.targetType?.name) {
     return INT_WIDTHS[expr.targetType.name];
   }
-  // Function call parameter: check function params
-  if (expr.kind === 'call' && expr.function) {
-    // Can't determine return type without full type inference
-    return undefined;
+  // Function call: check signature registry
+  if (expr.kind === 'call' && expr.function && context.functionSignatures) {
+    const sig = context.functionSignatures.get(expr.function);
+    if (sig?.returnType && !Array.isArray(sig.returnType)) {
+      const w = getTypeWidth(sig.returnType);
+      if (w !== undefined) return w;
+    }
   }
   return undefined;
 }
@@ -1318,6 +1424,7 @@ function getIntegerWidth(expr: any, context: TranspileContext): number | undefin
  * Returns a binary expression with the correct types.
  */
 function harmonizeComparison(op: string, left: any, right: any, context: TranspileContext): any {
+  const boolType = { kind: 'primitive', name: 'bool' };
   const leftWidth = getIntegerWidth(left, context);
   const rightWidth = getIntegerWidth(right, context);
   if (leftWidth !== undefined && rightWidth !== undefined && leftWidth !== rightWidth) {
@@ -1328,13 +1435,13 @@ function harmonizeComparison(op: string, left: any, right: any, context: Transpi
     if (leftSigned === rightSigned && absLeft !== absRight) {
       const widerType: any = { kind: 'primitive', name: `${leftSigned ? 'i' : 'u'}${Math.max(absLeft, absRight)}` };
       if (absLeft < absRight) {
-        return { kind: 'binary', operator: op, left: { kind: 'cast', value: left, targetType: widerType }, right };
+        return { kind: 'binary', operator: op, left: { kind: 'cast', value: left, targetType: widerType, inferredType: widerType }, right, inferredType: boolType };
       } else {
-        return { kind: 'binary', operator: op, left, right: { kind: 'cast', value: right, targetType: widerType } };
+        return { kind: 'binary', operator: op, left, right: { kind: 'cast', value: right, targetType: widerType, inferredType: widerType }, inferredType: boolType };
       }
     }
   }
-  return { kind: 'binary', operator: op, left, right };
+  return { kind: 'binary', operator: op, left, right, inferredType: boolType };
 }
 
 /**
@@ -1343,6 +1450,8 @@ function harmonizeComparison(op: string, left: any, right: any, context: Transpi
 function transformUnary(expr: any, context: TranspileContext): MoveExpression {
   const operand = transformExpression(expr.operand, context);
 
+  const operandType = getExprInferredType(operand);
+
   // Handle increment/decrement
   if (expr.operator === '++') {
     return {
@@ -1350,6 +1459,7 @@ function transformUnary(expr: any, context: TranspileContext): MoveExpression {
       operator: '+',
       left: operand,
       right: { kind: 'literal', type: 'number', value: 1 },
+      inferredType: operandType,
     };
   }
 
@@ -1359,13 +1469,17 @@ function transformUnary(expr: any, context: TranspileContext): MoveExpression {
       operator: '-',
       left: operand,
       right: { kind: 'literal', type: 'number', value: 1 },
+      inferredType: operandType,
     };
   }
 
+  // `!` always returns bool, `-` returns same as operand
+  const unaryType = expr.operator === '!' ? { kind: 'primitive' as const, name: 'bool' as const } : operandType;
   return {
     kind: 'unary',
     operator: expr.operator as any,
     operand,
+    inferredType: unaryType,
   };
 }
 
@@ -1476,6 +1590,68 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     const obj = transformExpression(expr.function.object, context);
     const method = expr.function.member;
 
+    // Handle abi.* calls (encode, encodePacked, encodeWithSelector, decode)
+    // In Move, ABI encoding doesn't exist. Use bcs::to_bytes for serialization.
+    if (expr.function.object?.kind === 'identifier' && expr.function.object.name === 'abi') {
+      context.usedModules.add('aptos_std::bcs');
+
+      if (method === 'encodeWithSelector') {
+        // abi.encodeWithSelector(Interface.method.selector, arg1, arg2, ...)
+        // Skip the selector (first arg), serialize remaining data args
+        const dataArgs = args.slice(1);
+        if (dataArgs.length === 1) {
+          return {
+            kind: 'call',
+            function: 'bcs::to_bytes',
+            args: [{ kind: 'borrow', mutable: false, value: dataArgs[0] }],
+          };
+        }
+        // Multiple or zero data args — use vector::empty placeholder
+        context.usedModules.add('std::vector');
+        return {
+          kind: 'call',
+          function: 'vector::empty',
+          typeArgs: [{ kind: 'primitive', name: 'u8' }],
+          args: [],
+        };
+      }
+
+      if (method === 'encode' || method === 'encodePacked') {
+        if (args.length === 1) {
+          return {
+            kind: 'call',
+            function: 'bcs::to_bytes',
+            args: [{ kind: 'borrow', mutable: false, value: args[0] }],
+          };
+        }
+        context.usedModules.add('std::vector');
+        return {
+          kind: 'call',
+          function: 'vector::empty',
+          typeArgs: [{ kind: 'primitive', name: 'u8' }],
+          args: [],
+        };
+      }
+
+      if (method === 'decode') {
+        // abi.decode(data, (Type)) → bcs::from_bytes(data)
+        if (args.length >= 1) {
+          return {
+            kind: 'call',
+            function: 'bcs::from_bytes',
+            args: [args[0]],
+          };
+        }
+      }
+
+      // Fallback for any other abi.* method
+      return {
+        kind: 'call',
+        function: 'bcs::to_bytes',
+        args,
+      };
+    }
+
     // Handle super.method() - with inheritance flattening, the parent's function
     // is already in the current module, so just call it directly
     if (expr.function.object?.kind === 'identifier' && expr.function.object.name === 'super') {
@@ -1493,11 +1669,21 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
       // PascalCase identifier (starts with uppercase, has lowercase letters) = likely a module/library
       if (/^[A-Z]/.test(objName) && /[a-z]/.test(objName)) {
         const moduleName = toSnakeCase(objName);
-        return {
+        const qualifiedName = `${moduleName}::${toSnakeCase(method)}`;
+        const callExpr: MoveExpression = {
           kind: 'call',
-          function: `${moduleName}::${toSnakeCase(method)}`,
+          function: qualifiedName,
           args,
         };
+        // Look up return type from signature registry
+        if (context.functionSignatures) {
+          const sig = context.functionSignatures.get(qualifiedName);
+          if (sig?.returnType) {
+            const retType = Array.isArray(sig.returnType) ? sig.returnType[0] : sig.returnType;
+            setExprInferredType(callExpr, retType);
+          }
+        }
+        return callExpr;
       }
     }
 
@@ -1534,6 +1720,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
         kind: 'call',
         function: 'vector::length',
         args: [{ kind: 'borrow', mutable: false, value: obj }],
+        inferredType: { kind: 'primitive', name: 'u64' },
       };
     }
 
@@ -1682,11 +1869,20 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     }
   }
 
-  return {
+  // Look up return type from function signature registry
+  const callResult: MoveExpression = {
     kind: 'call',
     function: funcName || 'unknown',
     args,
   };
+  if (funcName && context.functionSignatures) {
+    const sig = context.functionSignatures.get(funcName);
+    if (sig?.returnType) {
+      const retType = Array.isArray(sig.returnType) ? sig.returnType[0] : sig.returnType;
+      setExprInferredType(callResult, retType);
+    }
+  }
+  return callResult;
 }
 
 /**
@@ -1715,6 +1911,12 @@ function transformMemberAccess(expr: any, context: TranspileContext): MoveExpres
     (context as any).importedConstants.set(expr.member, { source: libName, name: expr.member });
     // Emit as just the constant name (will be defined in this module)
     return { kind: 'identifier', name: expr.member };
+  }
+
+  // Handle .selector property (EVM function selector - no Move equivalent)
+  // Interface.method.selector → 0u32 placeholder (selectors don't exist in Move)
+  if (expr.member === 'selector') {
+    return { kind: 'literal', type: 'number', value: '0', suffix: 'u32' };
   }
 
   const obj = transformExpression(expr.object, context);
@@ -2004,17 +2206,21 @@ function transformConditional(expr: any, context: TranspileContext): MoveExpress
  */
 function transformTuple(expr: any, context: TranspileContext): MoveExpression {
   let placeholderIdx = 0;
-  return {
-    kind: 'tuple',
-    elements: (expr.elements || []).map((e: any) => {
-      if (e === null) {
-        // Generate a placeholder for ignored tuple elements: _0, _1, _2, etc.
-        return { kind: 'identifier', name: `_${placeholderIdx++}` };
-      }
+  const elements = (expr.elements || []).map((e: any) => {
+    if (e === null) {
+      // Generate a placeholder for ignored tuple elements: _0, _1, _2, etc.
+      return { kind: 'identifier', name: `_${placeholderIdx++}` };
+    }
       placeholderIdx++;
       return transformExpression(e, context);
-    }),
-  };
+    });
+
+  // For single-element tuples (from Solidity parenthesized expressions),
+  // propagate the inner element's inferredType to the tuple
+  const inferredType = elements.length === 1 ? getExprInferredType(elements[0]) : undefined;
+  const result: MoveExpression = { kind: 'tuple', elements };
+  if (inferredType) setExprInferredType(result, inferredType);
+  return result;
 }
 
 /**
@@ -2030,19 +2236,20 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
   if (targetTypeName === 'address') {
     // If already an address literal, return as-is (e.g., address(this) where this is @0x1)
     if (value.kind === 'literal' && (value as any).type === 'address') {
+      setExprInferredType(value, { kind: 'primitive', name: 'address' });
       return value;
     }
     // Check if converting a literal number to address
     if (value.kind === 'literal' && value.type === 'number') {
       const numValue = value.value;
       if (numValue === 0 || numValue === '0') {
-        return { kind: 'literal', type: 'address', value: '@0x0' };
+        return { kind: 'literal', type: 'address', value: '@0x0', inferredType: { kind: 'primitive', name: 'address' } };
       }
       // For other numeric literals, convert to hex address
       const hexValue = typeof numValue === 'number'
         ? numValue.toString(16)
         : numValue.toString();
-      return { kind: 'literal', type: 'address', value: `@0x${hexValue}` };
+      return { kind: 'literal', type: 'address', value: `@0x${hexValue}`, inferredType: { kind: 'primitive', name: 'address' } };
     }
     // For non-literal values, use evm_compat::to_address if needed
     // This is a limitation - Move doesn't support runtime int-to-address conversion
@@ -2108,6 +2315,7 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
       kind: 'cast',
       value,
       targetType,
+      inferredType: targetType,
     };
   }
 
@@ -2323,12 +2531,17 @@ function transpileAssemblyOperation(op: any, context?: TranspileContext): IRStat
       if (!value) return null;
 
       // Handle AssemblyMemberAccess targets (e.g., $.slot := value)
+      // In EVM, $.slot sets storage location — no Move equivalent. Skip these.
       let target: IRExpression;
       if (nameNode.type === 'AssemblyMemberAccess') {
-        const objExpr = transpileYulExpression(nameNode.expression, context);
         const memberName = typeof nameNode.memberName === 'string'
           ? nameNode.memberName
           : nameNode.memberName?.name || 'unknown';
+        if (memberName === 'slot' || memberName === 'offset') {
+          // EVM storage slot/offset assignment — skip entirely
+          return null;
+        }
+        const objExpr = transpileYulExpression(nameNode.expression, context);
         target = { kind: 'member_access', object: objExpr || { kind: 'identifier', name: 'unknown' }, member: memberName };
       } else {
         const name = typeof nameNode === 'string' ? nameNode : (nameNode.name || 'unknown');
@@ -2455,6 +2668,12 @@ function transpileYulExpression(expr: any, context?: TranspileContext): IRExpres
           case 'mload':
             // Memory load - no direct Move equivalent, pass through as identifier
             return a;
+          case 'calldataload':
+          case 'extcodesize':
+          case 'codesize':
+          case 'selfbalance':
+            // EVM-specific opcodes with no Move equivalent → literal 0
+            return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
           default:
             // Unknown unary - emit as function call
             return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a] };
@@ -2530,9 +2749,23 @@ function transpileYulExpression(expr: any, context?: TranspileContext): IRExpres
           case 'mulmod':
             // (a * b) % c
             return { kind: 'binary', operator: '%', left: { kind: 'binary', operator: '*', left: a, right: b }, right: c };
+          case 'returndatacopy':
+          case 'calldatacopy':
+          case 'codecopy':
+            // EVM memory operations — no Move equivalent, skip
+            return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
           default:
             return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a, b, c] };
         }
+      }
+
+      // Handle EVM call opcodes with many args
+      // call(gas, addr, value, inOff, inLen, outOff, outLen) → bool (success)
+      // staticcall(gas, addr, inOff, inLen, outOff, outLen) → bool (success)
+      if (name === 'call' || name === 'staticcall' || name === 'delegatecall') {
+        // These are low-level EVM calls — no Move equivalent
+        // Return true as success value (stub)
+        return { kind: 'literal', type: 'bool', value: true };
       }
 
       // Multi-argument fallback
@@ -2552,8 +2785,13 @@ function transpileYulExpression(expr: any, context?: TranspileContext): IRExpres
     case 'BooleanLiteral':
       return { kind: 'literal', type: 'bool', value: expr.value };
 
-    case 'Identifier':
-      return { kind: 'identifier', name: toSnakeCase(expr.name) };
+    case 'Identifier': {
+      // Handle $ variable (EVM storage reference) — not valid in Move
+      let idName = expr.name;
+      if (idName === '$') idName = '_storage_ref';
+      else if (idName.includes('$')) idName = idName.replace(/\$/g, '_');
+      return { kind: 'identifier', name: toSnakeCase(idName) };
+    }
 
     case 'AssemblyMemberAccess': {
       const obj = transpileYulExpression(expr.expression, context);
@@ -2601,6 +2839,10 @@ function boolToU256(expr: any): any {
  */
 function toSnakeCase(str: string): string {
   if (!str) return '';
+
+  // Handle $ variable (EVM storage reference) — not valid in Move
+  if (str === '$') return '_storage_ref';
+  if (str.includes('$')) str = str.replace(/\$/g, '_');
 
   // Check if it's already SCREAMING_SNAKE_CASE (all caps with underscores)
   // Move constants use SCREAMING_SNAKE — preserve as-is

@@ -1,6 +1,7 @@
 module 0x1::uint128x128_math {
 
     use std::u256;
+    use 0x1::bit_math;
 
     // Error codes
     const LOG_SCALE_OFFSET: u256 = 127u256;
@@ -47,7 +48,7 @@ module 0x1::uint128x128_math {
             x = (LOG_SCALE_SQUARED / x);
         };
         let n: u256 = bit_math::most_significant_bit(((x >> (LOG_SCALE_OFFSET as u8))));
-        result = (((n as i256) << (LOG_SCALE_OFFSET as u8)) as i256);
+        result = ((((n as i256) as u256) << (LOG_SCALE_OFFSET as u8)) as i256);
         let y: u256 = (x >> (n as u8));
         if ((y != LOG_SCALE)) {
             let delta: i256 = ((1 << (((LOG_SCALE_OFFSET - 1)) as u8)) as i256);
@@ -57,10 +58,10 @@ module 0x1::uint128x128_math {
                     result += delta;
                     y >>= 1u8;
                 };
-                (delta >>= 1u8);
+                (((delta as u256) >>= 1u8) as i256);
             }
         };
-        result = ((((result * sign)) << 1u8) as i256);
+        result = (((((result * sign)) as u256) << 1u8) as i256);
         return result
     }
 

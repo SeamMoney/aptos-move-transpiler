@@ -229,11 +229,13 @@ export interface MoveLiteralExpression {
   type: 'number' | 'bool' | 'address' | 'bytestring' | 'string';
   value: string | number | boolean;
   suffix?: string; // e.g., 'u64', 'u256'
+  inferredType?: MoveType;
 }
 
 export interface MoveIdentifierExpression {
   kind: 'identifier';
   name: string;
+  inferredType?: MoveType;
 }
 
 export interface MoveBinaryExpression {
@@ -243,12 +245,14 @@ export interface MoveBinaryExpression {
             '&&' | '||' | '&' | '|' | '^' | '<<' | '>>';
   left: MoveExpression;
   right: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveUnaryExpression {
   kind: 'unary';
   operator: '!' | '-';
   operand: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveCallExpression {
@@ -257,6 +261,7 @@ export interface MoveCallExpression {
   module?: string;
   typeArgs?: MoveType[];
   args: MoveExpression[];
+  inferredType?: MoveType;
 }
 
 export interface MoveMethodCallExpression {
@@ -265,18 +270,21 @@ export interface MoveMethodCallExpression {
   method: string;
   typeArgs?: MoveType[];
   args: MoveExpression[];
+  inferredType?: MoveType;
 }
 
 export interface MoveFieldAccessExpression {
   kind: 'field_access';
   object: MoveExpression;
   field: string;
+  inferredType?: MoveType;
 }
 
 export interface MoveIndexExpression {
   kind: 'index';
   object: MoveExpression;
   index: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveStructExpression {
@@ -285,23 +293,27 @@ export interface MoveStructExpression {
   name: string;
   typeArgs?: MoveType[];
   fields: { name: string; value: MoveExpression }[];
+  inferredType?: MoveType;
 }
 
 export interface MoveBorrowExpression {
   kind: 'borrow';
   mutable: boolean;
   value: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveDereferenceExpression {
   kind: 'dereference';
   value: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveCastExpression {
   kind: 'cast';
   value: MoveExpression;
   targetType: MoveType;
+  inferredType?: MoveType;
 }
 
 export interface MoveIfExpression {
@@ -309,38 +321,45 @@ export interface MoveIfExpression {
   condition: MoveExpression;
   thenExpr: MoveExpression;
   elseExpr?: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveTupleExpression {
   kind: 'tuple';
   elements: MoveExpression[];
+  inferredType?: MoveType;
 }
 
 export interface MoveVectorExpression {
   kind: 'vector';
   elementType?: MoveType;
   elements: MoveExpression[];
+  inferredType?: MoveType;
 }
 
 export interface MoveBreakExpression {
   kind: 'break';
   label?: string;
   value?: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveContinueExpression {
   kind: 'continue';
   label?: string;
+  inferredType?: MoveType;
 }
 
 export interface MoveMoveExpression {
   kind: 'move';
   value: MoveExpression;
+  inferredType?: MoveType;
 }
 
 export interface MoveCopyExpression {
   kind: 'copy';
   value: MoveExpression;
+  inferredType?: MoveType;
 }
 
 // Helper functions to create types

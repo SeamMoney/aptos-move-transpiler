@@ -1,5 +1,7 @@
 module 0x1::uint256x256_math {
 
+    use 0x1::bit_math;
+
     // Error codes
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
@@ -25,7 +27,7 @@ module 0x1::uint256x256_math {
     const E_UINT256X256_MATH_MUL_DIV_OVERFLOW: u64 = 257u64;
 
     public(package) fun mul_div_round_down(x: u256, y: u256, denominator: u256): u256 {
-        let result = 0u256;
+        let _result = 0u256;
         let (prod0, prod1) = get_mul_prods(x, y);
         return get_end_of_div_round_down(x, y, denominator, prod0, prod1)
     }
@@ -64,7 +66,7 @@ module 0x1::uint256x256_math {
     }
 
     public(package) fun shift_div_round_down(x: u256, offset: u8, denominator: u256): u256 {
-        let result = 0u256;
+        let _result = 0u256;
         let prod0: u256;
         let prod1: u256;
         prod0 = (x << (offset as u8));

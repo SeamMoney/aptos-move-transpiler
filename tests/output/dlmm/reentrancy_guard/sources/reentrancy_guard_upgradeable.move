@@ -44,9 +44,9 @@ module 0x1::reentrancy_guard_upgradeable {
     }
 
     fun get_reentrancy_guard_storage(): ReentrancyGuardStorage {
-        let $ = 0u256;
-        $.slot = reentrancy_guard_storage_location;
-        return $
+        let _storage_ref = 0u256;
+        string::utf8(b"UNSUPPORTED: inline assembly (Yul) - complex pattern not yet supported");
+        return _storage_ref
     }
 
     public(package) fun __reentrancy_guard_init(state: &mut ReentrancyGuardUpgradeableState) {
@@ -56,26 +56,26 @@ module 0x1::reentrancy_guard_upgradeable {
 
     public(package) fun __reentrancy_guard_init_unchained(state: &mut ReentrancyGuardUpgradeableState) {
         assert!(true, E_MODIFIER_ONLY_INITIALIZING);
-        let $: ReentrancyGuardStorage = get_reentrancy_guard_storage();
-        $.status = NOT_ENTERED;
+        let _storage_ref: ReentrancyGuardStorage = get_reentrancy_guard_storage();
+        _storage_ref.status = NOT_ENTERED;
     }
 
     public(package) fun non_reentrant_before(state: &mut ReentrancyGuardUpgradeableState) {
-        let $: ReentrancyGuardStorage = get_reentrancy_guard_storage();
-        if (($.status == ENTERED)) {
+        let _storage_ref: ReentrancyGuardStorage = get_reentrancy_guard_storage();
+        if ((_storage_ref.status == ENTERED)) {
             abort E_REENTRANCY_GUARD_REENTRANT_CALL
         };
-        $.status = ENTERED;
+        _storage_ref.status = ENTERED;
     }
 
     public(package) fun non_reentrant_after(state: &mut ReentrancyGuardUpgradeableState) {
-        let $: ReentrancyGuardStorage = get_reentrancy_guard_storage();
-        $.status = NOT_ENTERED;
+        let _storage_ref: ReentrancyGuardStorage = get_reentrancy_guard_storage();
+        _storage_ref.status = NOT_ENTERED;
     }
 
     #[view]
     public(package) fun reentrancy_guard_entered(state: &ReentrancyGuardUpgradeableState): bool {
-        let $: ReentrancyGuardStorage = get_reentrancy_guard_storage();
-        return ($.status == ENTERED)
+        let _storage_ref: ReentrancyGuardStorage = get_reentrancy_guard_storage();
+        return (_storage_ref.status == ENTERED)
     }
 }

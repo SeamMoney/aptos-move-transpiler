@@ -30,18 +30,18 @@ module 0x1::fee_helper {
     const E_FEE_HELPER_PROTOCOL_SHARE_TOO_LARGE: u64 = 257u64;
 
     public(package) fun get_fee_amount_from(amount_with_fees: u128, total_fee: u128): u128 {
-        verify_fee(fee);
+        verify_fee(total_fee);
         return (((((((amount_with_fees as u256) * total_fee) + PRECISION) - 1)) / PRECISION) as u128)
     }
 
     public(package) fun get_fee_amount(amount: u128, total_fee: u128): u128 {
-        verify_fee(fee);
+        verify_fee(total_fee);
         let denominator: u256 = (PRECISION - total_fee);
         return (((((((amount as u256) * total_fee) + denominator) - 1)) / denominator) as u128)
     }
 
     public(package) fun get_composition_fee(amount_with_fees: u128, total_fee: u128): u128 {
-        verify_fee(fee);
+        verify_fee(total_fee);
         let denominator: u256 = SQUARED_PRECISION;
         return (((((amount_with_fees as u256) * total_fee) * (((total_fee as u256) + PRECISION))) / denominator) as u128)
     }

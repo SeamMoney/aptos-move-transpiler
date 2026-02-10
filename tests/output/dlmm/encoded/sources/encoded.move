@@ -40,7 +40,7 @@ module 0x1::encoded {
     }
 
     public(package) fun set_bool(encoded: u256, boolean: bool, offset: u256): u256 {
-        let new_encoded = 0u256;
+        let _new_encoded = 0u256;
         return set(encoded, if (boolean) 1 else 0, MASK_UINT1, offset)
     }
 

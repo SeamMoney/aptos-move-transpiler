@@ -4,8 +4,8 @@
  */
 
 import type { ContractDefinition, FunctionDefinition, EventDefinition, ModifierDefinition } from '@solidity-parser/parser/dist/src/ast-types.js';
-import type { MoveModule, MoveUseDeclaration, MoveStruct, MoveFunction, MoveConstant } from '../types/move-ast.js';
-import type { IRContract, IRStateVariable, IRFunction, IREvent, IRModifier, IRConstructor, TranspileContext, TranspileResult } from '../types/ir.js';
+import type { MoveModule, MoveUseDeclaration, MoveStruct, MoveFunction, MoveConstant, MoveExpression, MoveStatement } from '../types/move-ast.js';
+import type { IRContract, IRStateVariable, IRFunction, IREvent, IRModifier, IRConstructor, TranspileContext, TranspileResult, FunctionSignature } from '../types/ir.js';
 import { transformStateVariable } from './state-transformer.js';
 import { transformFunction, transformConstructor } from './function-transformer.js';
 import { transformEvent } from './event-transformer.js';
@@ -450,6 +450,72 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   }
   context.libraryFunctions = libraryFunctions;
 
+  // Build function signature registry for type inference
+  const functionSignatures = new Map<string, FunctionSignature>();
+
+  // 1. Local functions from this contract
+  for (const fn of flattenedIR.functions) {
+    const fnName = toSnakeCase(fn.name);
+    const paramTypes = fn.params.map(p => p.type.move || { kind: 'primitive' as const, name: 'u256' as const });
+    const returnType = fn.returnParams.length === 0
+      ? undefined
+      : fn.returnParams.length === 1
+        ? (fn.returnParams[0].type.move || { kind: 'primitive' as const, name: 'u256' as const })
+        : fn.returnParams.map(p => p.type.move || { kind: 'primitive' as const, name: 'u256' as const });
+    functionSignatures.set(fnName, { params: paramTypes, returnType });
+  }
+
+  // 2. Library functions from usingFor declarations
+  if (allContracts && flattenedIR.usingFor) {
+    for (const using of flattenedIR.usingFor) {
+      const library = allContracts.get(using.libraryName);
+      if (library) {
+        const moduleName = toSnakeCase(using.libraryName);
+        for (const fn of library.functions) {
+          const fnName = toSnakeCase(fn.name);
+          const qualifiedName = `${moduleName}::${fnName}`;
+          if (!functionSignatures.has(qualifiedName)) {
+            const paramTypes = fn.params.map(p => p.type.move || { kind: 'primitive' as const, name: 'u256' as const });
+            const returnType = fn.returnParams.length === 0
+              ? undefined
+              : fn.returnParams.length === 1
+                ? (fn.returnParams[0].type.move || { kind: 'primitive' as const, name: 'u256' as const })
+                : fn.returnParams.map(p => p.type.move || { kind: 'primitive' as const, name: 'u256' as const });
+            functionSignatures.set(qualifiedName, { params: paramTypes, returnType, module: moduleName });
+          }
+          // Also register unqualified name for local lookups
+          if (!functionSignatures.has(fnName)) {
+            const paramTypes = fn.params.map(p => p.type.move || { kind: 'primitive' as const, name: 'u256' as const });
+            const returnType = fn.returnParams.length === 0
+              ? undefined
+              : fn.returnParams.length === 1
+                ? (fn.returnParams[0].type.move || { kind: 'primitive' as const, name: 'u256' as const })
+                : fn.returnParams.map(p => p.type.move || { kind: 'primitive' as const, name: 'u256' as const });
+            functionSignatures.set(fnName, { params: paramTypes, returnType, module: moduleName });
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Standard library functions with known return types
+  const stdlibSignatures: [string, FunctionSignature][] = [
+    ['vector::length', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'vector', elementType: { kind: 'generic', name: 'T' } } }], returnType: { kind: 'primitive', name: 'u64' } }],
+    ['vector::is_empty', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'vector', elementType: { kind: 'generic', name: 'T' } } }], returnType: { kind: 'primitive', name: 'bool' } }],
+    ['vector::contains', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'vector', elementType: { kind: 'generic', name: 'T' } } }, { kind: 'reference', mutable: false, innerType: { kind: 'generic', name: 'T' } }], returnType: { kind: 'primitive', name: 'bool' } }],
+    ['table::contains', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'struct', name: 'Table' } }, { kind: 'generic', name: 'K' }], returnType: { kind: 'primitive', name: 'bool' } }],
+    ['string::length', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'struct', name: 'String' } }], returnType: { kind: 'primitive', name: 'u64' } }],
+    ['timestamp::now_seconds', { params: [], returnType: { kind: 'primitive', name: 'u64' } }],
+    ['signer::address_of', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } }], returnType: { kind: 'primitive', name: 'address' } }],
+  ];
+  for (const [name, sig] of stdlibSignatures) {
+    if (!functionSignatures.has(name)) {
+      functionSignatures.set(name, sig);
+    }
+  }
+
+  context.functionSignatures = functionSignatures;
+
   // Build the Move module
   const module: MoveModule = {
     address: moduleAddress,
@@ -569,6 +635,9 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   const errorConstants = generateErrorConstants(flattenedIR, context);
   module.constants.push(...errorConstants);
 
+  // Auto-discover cross-module references from function bodies
+  discoverModuleReferences(module, context);
+
   // Finalize imports based on used modules
   module.uses = generateImports(context);
 
@@ -606,6 +675,159 @@ function generateImports(context: TranspileContext): MoveUseDeclaration[] {
   }
 
   return imports;
+}
+
+// Standard library module address mapping
+const STDLIB_MODULES: Record<string, string> = {
+  'vector': 'std::vector',
+  'string': 'std::string',
+  'option': 'std::option',
+  'signer': 'std::signer',
+  'hash': 'std::hash',
+  'bcs': 'aptos_std::bcs',
+  'table': 'aptos_std::table',
+  'smart_table': 'aptos_std::smart_table',
+  'simple_map': 'aptos_std::simple_map',
+  'math64': 'aptos_std::math64',
+  'math128': 'aptos_std::math128',
+  'aptos_hash': 'aptos_std::aptos_hash',
+  'type_info': 'aptos_std::type_info',
+  'coin': 'aptos_framework::coin',
+  'account': 'aptos_framework::account',
+  'timestamp': 'aptos_framework::timestamp',
+  'event': 'aptos_framework::event',
+  'object': 'aptos_framework::object',
+  'fungible_asset': 'aptos_framework::fungible_asset',
+  'primary_fungible_store': 'aptos_framework::primary_fungible_store',
+  'evm_compat': 'transpiler::evm_compat',
+  'u256': 'std::u256',
+  'u128': 'std::u128',
+  'u64': 'std::u64',
+};
+
+/**
+ * Scan all function bodies for cross-module references (module::function patterns)
+ * and auto-add the required use declarations to context.usedModules.
+ */
+function discoverModuleReferences(module: MoveModule, context: TranspileContext): void {
+  const discovered = new Set<string>();
+
+  for (const func of module.functions) {
+    for (const stmt of func.body) {
+      walkStatement(stmt, discovered);
+    }
+  }
+  // Also scan constant values
+  for (const constant of module.constants) {
+    walkExpression(constant.value, discovered);
+  }
+
+  for (const moduleName of discovered) {
+    // Check if it's a known stdlib module
+    const fullPath = STDLIB_MODULES[moduleName];
+    if (fullPath) {
+      context.usedModules.add(fullPath);
+    } else {
+      // Assume it's a sibling module at the same address
+      context.usedModules.add(`${context.moduleAddress}::${moduleName}`);
+    }
+  }
+}
+
+function walkStatement(stmt: MoveStatement, modules: Set<string>): void {
+  switch (stmt.kind) {
+    case 'let':
+      if (stmt.value) walkExpression(stmt.value, modules);
+      break;
+    case 'assign':
+      walkExpression(stmt.target, modules);
+      walkExpression(stmt.value, modules);
+      break;
+    case 'if':
+      walkExpression(stmt.condition, modules);
+      stmt.thenBlock.forEach(s => walkStatement(s, modules));
+      stmt.elseBlock?.forEach(s => walkStatement(s, modules));
+      break;
+    case 'while':
+      walkExpression(stmt.condition, modules);
+      stmt.body.forEach(s => walkStatement(s, modules));
+      break;
+    case 'loop':
+      stmt.body.forEach(s => walkStatement(s, modules));
+      break;
+    case 'for':
+      walkExpression(stmt.iterable, modules);
+      stmt.body.forEach(s => walkStatement(s, modules));
+      break;
+    case 'return':
+      if (stmt.value) walkExpression(stmt.value, modules);
+      break;
+    case 'abort':
+      walkExpression(stmt.code, modules);
+      break;
+    case 'expression':
+      walkExpression(stmt.expression, modules);
+      break;
+    case 'block':
+      stmt.statements.forEach(s => walkStatement(s, modules));
+      break;
+  }
+}
+
+function walkExpression(expr: MoveExpression, modules: Set<string>): void {
+  switch (expr.kind) {
+    case 'call':
+      // Check for module::function pattern
+      if (expr.function.includes('::')) {
+        const moduleName = expr.function.split('::')[0];
+        modules.add(moduleName);
+      }
+      expr.args.forEach(a => walkExpression(a, modules));
+      break;
+    case 'binary':
+      walkExpression(expr.left, modules);
+      walkExpression(expr.right, modules);
+      break;
+    case 'unary':
+      walkExpression(expr.operand, modules);
+      break;
+    case 'method_call':
+      walkExpression(expr.receiver, modules);
+      expr.args.forEach(a => walkExpression(a, modules));
+      break;
+    case 'field_access':
+      walkExpression(expr.object, modules);
+      break;
+    case 'index':
+      walkExpression(expr.object, modules);
+      walkExpression(expr.index, modules);
+      break;
+    case 'struct':
+      expr.fields.forEach(f => walkExpression(f.value, modules));
+      break;
+    case 'borrow':
+    case 'dereference':
+    case 'move':
+    case 'copy':
+      walkExpression(expr.value, modules);
+      break;
+    case 'cast':
+      walkExpression(expr.value, modules);
+      break;
+    case 'if_expr':
+      walkExpression(expr.condition, modules);
+      walkExpression(expr.thenExpr, modules);
+      if (expr.elseExpr) walkExpression(expr.elseExpr, modules);
+      break;
+    case 'tuple':
+    case 'vector':
+      expr.elements.forEach(e => walkExpression(e, modules));
+      break;
+    case 'break':
+      if (expr.value) walkExpression(expr.value, modules);
+      break;
+    // literal, identifier, continue don't have sub-expressions
+  }
 }
 
 /**
@@ -1143,6 +1365,9 @@ function getDefaultValue(type: any): any {
  */
 function toSnakeCase(str: string): string {
   if (!str) return '';
+  // Handle $ variable (EVM storage reference) — not valid in Move
+  if (str === '$') return '_storage_ref';
+  if (str.includes('$')) str = str.replace(/\$/g, '_');
   // Preserve SCREAMING_SNAKE_CASE constants
   if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
     return str.toLowerCase();
