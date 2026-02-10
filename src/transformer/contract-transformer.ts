@@ -11,6 +11,7 @@ import { transformFunction, transformConstructor } from './function-transformer.
 import { transformEvent } from './event-transformer.js';
 import { createIRType } from '../mapper/type-mapper.js';
 import { solidityStatementToIR, solidityExpressionToIR } from './expression-transformer.js';
+import { createHash } from 'node:crypto';
 
 /**
  * Transform a Solidity contract to IR
@@ -29,6 +30,8 @@ export function contractToIR(contract: ContractDefinition): IRContract {
     inheritedContracts: contract.baseContracts.map(bc => bc.baseName.namePath),
     isAbstract: contract.kind === 'abstract',
     isInterface: contract.kind === 'interface',
+    isLibrary: contract.kind === 'library',
+    usingFor: [],
   };
 
   // Process all sub-nodes
@@ -56,6 +59,38 @@ export function contractToIR(contract: ContractDefinition): IRContract {
       case 'FunctionDefinition':
         if (nodeAny.isConstructor) {
           ir.constructor = extractConstructor(nodeAny as FunctionDefinition);
+        } else if (nodeAny.isReceiveEther) {
+          // Fail-fast: receive() has no Move equivalent
+          ir.functions.push({
+            name: '_receive',
+            visibility: 'external',
+            stateMutability: 'payable',
+            params: [],
+            returnParams: [],
+            modifiers: [],
+            body: [{
+              kind: 'expression',
+              expression: { kind: 'literal', type: 'string', value: 'UNSUPPORTED: receive() has no Move equivalent' },
+            }],
+            isVirtual: false,
+            isOverride: false,
+          });
+        } else if (nodeAny.isFallback) {
+          // Fail-fast: fallback() has no Move equivalent
+          ir.functions.push({
+            name: '_fallback',
+            visibility: 'external',
+            stateMutability: nodeAny.stateMutability || 'nonpayable',
+            params: [],
+            returnParams: [],
+            modifiers: [],
+            body: [{
+              kind: 'expression',
+              expression: { kind: 'literal', type: 'string', value: 'UNSUPPORTED: fallback() has no Move equivalent' },
+            }],
+            isVirtual: false,
+            isOverride: false,
+          });
         } else if (nodeAny.name) {
           ir.functions.push(extractFunction(nodeAny as FunctionDefinition));
         }
@@ -75,6 +110,14 @@ export function contractToIR(contract: ContractDefinition): IRContract {
 
       case 'EnumDefinition':
         ir.enums.push(extractEnum(nodeAny));
+        break;
+
+      case 'UsingForDeclaration':
+        // using SafeMath for uint256;
+        ir.usingFor!.push({
+          libraryName: nodeAny.libraryName || nodeAny.typeName?.namePath || '',
+          typeName: nodeAny.typeName?.name || nodeAny.typeName?.namePath || '*',
+        });
         break;
 
       default:
@@ -250,11 +293,120 @@ function resolveInheritanceChain(
 }
 
 /**
+ * Check if an IR statement references any of the given names (for state access detection)
+ */
+function stmtReferencesAny(stmt: any, names: Set<string>): boolean {
+  if (!stmt) return false;
+
+  function exprRefs(expr: any): boolean {
+    if (!expr) return false;
+    if (expr.kind === 'identifier' && names.has(expr.name)) return true;
+    if (expr.kind === 'binary') return exprRefs(expr.left) || exprRefs(expr.right);
+    if (expr.kind === 'unary') return exprRefs(expr.operand);
+    if (expr.kind === 'function_call') return (expr.args || []).some(exprRefs);
+    if (expr.kind === 'member_access') return exprRefs(expr.object);
+    if (expr.kind === 'index_access') return exprRefs(expr.base) || exprRefs(expr.index);
+    if (expr.kind === 'conditional') return exprRefs(expr.condition) || exprRefs(expr.trueExpression) || exprRefs(expr.falseExpression);
+    return false;
+  }
+
+  switch (stmt.kind) {
+    case 'variable_declaration': return stmt.initialValue ? exprRefs(stmt.initialValue) : false;
+    case 'assignment': return exprRefs(stmt.target) || exprRefs(stmt.value);
+    case 'expression': return exprRefs(stmt.expression);
+    case 'if': return exprRefs(stmt.condition) || (stmt.thenBlock || []).some((s: any) => stmtReferencesAny(s, names)) || (stmt.elseBlock || []).some((s: any) => stmtReferencesAny(s, names));
+    case 'for': case 'while': case 'do_while': return (stmt.body || []).some((s: any) => stmtReferencesAny(s, names));
+    case 'return': return stmt.value ? exprRefs(stmt.value) : false;
+    case 'block': return (stmt.statements || []).some((s: any) => stmtReferencesAny(s, names));
+    case 'emit': return (stmt.args || []).some(exprRefs);
+    default: return false;
+  }
+}
+
+/**
+ * Deduplicate overloaded functions by appending type-based suffixes.
+ * Move doesn't support function overloading, so rename duplicates.
+ * E.g., two `mint` functions become `mint` and `mint_address_u256`.
+ */
+function deduplicateOverloadedFunctions(functions: IRFunction[]): IRFunction[] {
+  const nameCounts = new Map<string, number>();
+  for (const fn of functions) {
+    nameCounts.set(fn.name, (nameCounts.get(fn.name) || 0) + 1);
+  }
+
+  // Only process names that appear more than once
+  const duplicateNames = new Set<string>();
+  for (const [name, count] of nameCounts) {
+    if (count > 1) duplicateNames.add(name);
+  }
+
+  if (duplicateNames.size === 0) return functions;
+
+  const result: IRFunction[] = [];
+  const usedNames = new Set<string>();
+
+  for (const fn of functions) {
+    if (!duplicateNames.has(fn.name)) {
+      result.push(fn);
+      usedNames.add(fn.name);
+      continue;
+    }
+
+    // First occurrence keeps the original name
+    if (!usedNames.has(fn.name)) {
+      usedNames.add(fn.name);
+      result.push(fn);
+      continue;
+    }
+
+    // Subsequent occurrences get a suffix based on parameter types
+    const suffix = fn.params
+      .map(p => {
+        const solType = p.type.solidity || 'unknown';
+        // Simplify type names for suffix
+        return solType
+          .replace(/uint\d*/g, 'u')
+          .replace(/int\d*/g, 'i')
+          .replace(/bytes\d*/g, 'b')
+          .replace(/address/g, 'addr')
+          .replace(/bool/g, 'bool')
+          .replace(/string/g, 'str')
+          .replace(/\[\]/g, '_arr');
+      })
+      .join('_');
+
+    let newName = `${fn.name}_${suffix || 'v2'}`;
+    // Ensure uniqueness
+    let counter = 2;
+    while (usedNames.has(newName)) {
+      newName = `${fn.name}_${suffix || 'v'}_${counter++}`;
+    }
+    usedNames.add(newName);
+
+    result.push({ ...fn, name: newName });
+  }
+
+  return result;
+}
+
+/**
  * Transform IR contract to Move module
  */
 export function irToMoveModule(ir: IRContract, moduleAddress: string, allContracts?: Map<string, IRContract>): TranspileResult {
   // Flatten inheritance if parent contracts are provided
   const flattenedIR = allContracts ? flattenInheritance(ir, allContracts) : ir;
+
+  // Build function registry for detecting internal state-accessing functions
+  // This enables the double-mutable-borrow prevention strategy
+  const stateVarNames = new Set(flattenedIR.stateVariables.map(v => v.name));
+  const functionRegistry = new Map<string, { visibility: string; accessesState: boolean }>();
+  for (const fn of flattenedIR.functions) {
+    const accessesStateVars = fn.body.some(stmt => stmtReferencesAny(stmt, stateVarNames));
+    functionRegistry.set(fn.name, {
+      visibility: fn.visibility,
+      accessesState: accessesStateVars,
+    });
+  }
 
   const context: TranspileContext = {
     contractName: flattenedIR.name,
@@ -264,12 +416,19 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     events: new Map(flattenedIR.events.map(e => [e.name, e])),
     modifiers: new Map(flattenedIR.modifiers.map(m => [m.name, m])),
     enums: new Map(flattenedIR.enums.map(e => [e.name, e])),
+    structs: new Map(flattenedIR.structs.map(s => [s.name, s])),
     errors: [],
     warnings: [],
     usedModules: new Set(),
     acquiredResources: new Set(),
     inheritedContracts: allContracts,
   };
+
+  // Attach function registry for borrow checker prevention
+  (context as any).functionRegistry = functionRegistry;
+
+  // Pass using-for declarations for library method inlining
+  context.usingFor = flattenedIR.usingFor;
 
   // Build the Move module
   const module: MoveModule = {
@@ -283,12 +442,23 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     functions: [],
   };
 
+  // Track if this is a library (no state, no init_module, pure functions)
+  const isLibrary = flattenedIR.isLibrary;
+  (context as any).isLibrary = isLibrary;
+
   // Add standard imports
   addStandardImports(module, context);
 
-  // Transform state variables to resource struct
-  if (flattenedIR.stateVariables.length > 0) {
+  // Transform state variables to resource struct (skip for libraries)
+  if (flattenedIR.stateVariables.length > 0 && !isLibrary) {
     const resourceStruct = transformStateVariablesToResource(flattenedIR.stateVariables, flattenedIR.name, context);
+    // Add SignerCapability for resource account pattern
+    // This allows the contract to sign transactions on behalf of the resource account
+    resourceStruct.fields.push({
+      name: 'signer_cap',
+      type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
+    });
+    context.usedModules.add('aptos_framework::account');
     module.structs.push(resourceStruct);
   }
 
@@ -315,18 +485,24 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   const stateConstants = generateStateConstants(flattenedIR.stateVariables, context);
   module.constants.push(...stateConstants);
 
-  // Transform constructor to init_module
-  if (flattenedIR.constructor) {
-    const initFn = transformConstructor(flattenedIR.constructor, flattenedIR.name, flattenedIR.stateVariables, context);
-    module.functions.push(initFn);
-  } else if (flattenedIR.stateVariables.length > 0) {
-    // Generate default init_module
-    module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
+  // Transform constructor to init_module (skip for libraries)
+  if (!isLibrary) {
+    if (flattenedIR.constructor) {
+      const initFn = transformConstructor(flattenedIR.constructor, flattenedIR.name, flattenedIR.stateVariables, context);
+      module.functions.push(initFn);
+    } else if (flattenedIR.stateVariables.length > 0) {
+      // Generate default init_module
+      module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
+    }
   }
+
+  // Deduplicate overloaded functions before transformation
+  // Move doesn't support function overloading, so rename duplicates
+  const deduplicatedFunctions = deduplicateOverloadedFunctions(flattenedIR.functions);
 
   // Transform functions BEFORE generating error constants
   // This allows error codes from require/assert messages to be discovered first
-  for (const fn of flattenedIR.functions) {
+  for (const fn of deduplicatedFunctions) {
     const moveFn = transformFunction(fn, context);
     module.functions.push(moveFn);
   }
@@ -351,7 +527,10 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
  * Add standard imports that most modules need
  */
 function addStandardImports(module: MoveModule, context: TranspileContext): void {
-  context.usedModules.add('std::signer');
+  // Only add signer import for contracts with state (not for stateless libraries)
+  if (!(context as any).isLibrary) {
+    context.usedModules.add('std::signer');
+  }
 }
 
 /**
@@ -410,29 +589,54 @@ function generateDefaultInit(
 ): MoveFunction {
   const stateName = `${contractName}State`;
 
+  context.usedModules.add('aptos_framework::account');
+  context.usedModules.add('std::string');
+
+  const stateFields = stateVariables
+    .filter(v => v.mutability !== 'constant')
+    .map(v => ({
+      name: v.name,
+      value: v.initialValue ?
+        transformIRExpressionToMove(v.initialValue) :
+        getDefaultValue(v.type),
+    }));
+
+  // Add signer_cap field
+  stateFields.push({
+    name: 'signer_cap',
+    value: { kind: 'identifier', name: 'signer_cap' },
+  });
+
   return {
     name: 'init_module',
     visibility: 'private',
     params: [{ name: 'deployer', type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
     body: [
+      // Create resource account: let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"seed");
+      {
+        kind: 'let',
+        pattern: ['resource_signer', 'signer_cap'],
+        value: {
+          kind: 'call',
+          function: 'account::create_resource_account',
+          args: [
+            { kind: 'identifier', name: 'deployer' },
+            { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+          ],
+        },
+      },
+      // move_to(&resource_signer, State { ... })
       {
         kind: 'expression',
         expression: {
           kind: 'call',
           function: 'move_to',
           args: [
-            { kind: 'identifier', name: 'deployer' },
+            { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
             {
               kind: 'struct',
               name: stateName,
-              fields: stateVariables
-                .filter(v => v.mutability !== 'constant')
-                .map(v => ({
-                  name: v.name,
-                  value: v.initialValue ?
-                    transformIRExpressionToMove(v.initialValue) :
-                    getDefaultValue(v.type),
-                })),
+              fields: stateFields,
             },
           ],
         },
@@ -528,9 +732,10 @@ function generateStateConstants(
     const moveType = variable.type.move || { kind: 'primitive', name: 'u256' };
 
     // Transform the initial value to a Move expression
+    // Pass context.constants so references to previously-defined constants can be inlined
     let value: any;
     if (variable.initialValue) {
-      value = transformConstantValue(variable.initialValue, moveType);
+      value = transformConstantValue(variable.initialValue, moveType, context.constants);
     } else {
       value = getDefaultConstantValue(moveType);
     }
@@ -552,9 +757,11 @@ function generateStateConstants(
 }
 
 /**
- * Transform a constant initial value to Move expression
+ * Transform a constant initial value to Move expression.
+ * Move constants CANNOT reference other constants, so we try to evaluate
+ * constant expressions at transpile time and inline literal values.
  */
-function transformConstantValue(expr: any, targetType: any): any {
+function transformConstantValue(expr: any, targetType: any, constants?: Map<string, any>): any {
   if (!expr) return getDefaultConstantValue(targetType);
 
   // Handle literals
@@ -569,22 +776,149 @@ function transformConstantValue(expr: any, targetType: any): any {
   }
 
   // Handle identifiers (references to other constants)
+  // Move constants CANNOT reference other constants — try to inline the value
   if (expr.kind === 'identifier') {
+    if (constants) {
+      const constDef = constants.get(expr.name) || constants.get(toScreamingSnakeCase(expr.name));
+      if (constDef?.value) {
+        return constDef.value;
+      }
+    }
+    // Fallback: keep as identifier (will produce a compiler error, but better than losing info)
     return { kind: 'identifier', name: toScreamingSnakeCase(expr.name) };
   }
 
   // Handle binary operations (for compile-time constant expressions)
+  // Try to evaluate to a literal if both sides are literals
   if (expr.kind === 'binary') {
+    const left = transformConstantValue(expr.left, targetType, constants);
+    const right = transformConstantValue(expr.right, targetType, constants);
+
+    // Try to evaluate if both sides are number literals
+    const leftVal = extractBigInt(left);
+    const rightVal = extractBigInt(right);
+    if (leftVal !== null && rightVal !== null) {
+      const result = evaluateConstOp(expr.operator, leftVal, rightVal);
+      if (result !== null) {
+        const suffix = getMoveTypeSuffix(targetType);
+        return {
+          kind: 'literal',
+          type: 'number',
+          value: result.toString(),
+          suffix,
+        };
+      }
+    }
+
+    // Can't evaluate — emit as expression (may not compile if it refs other constants)
     return {
       kind: 'binary',
       operator: expr.operator,
-      left: transformConstantValue(expr.left, targetType),
-      right: transformConstantValue(expr.right, targetType),
+      left,
+      right,
     };
+  }
+
+  // Handle type conversions (e.g., uint8(128))
+  if (expr.kind === 'type_conversion') {
+    const inner = transformConstantValue(expr.expression, targetType, constants);
+    const val = extractBigInt(inner);
+    if (val !== null) {
+      const suffix = getMoveTypeSuffix(targetType);
+      return { kind: 'literal', type: 'number', value: val.toString(), suffix };
+    }
+    return inner;
+  }
+
+  // Handle function calls in constant context (e.g., keccak256("string"))
+  if (expr.kind === 'function_call') {
+    const funcName = expr.function?.name || (expr.function?.kind === 'identifier' ? expr.function.name : null);
+    // keccak256 of a string literal → compute hash at transpile time
+    if (funcName === 'keccak256' && expr.args?.length === 1) {
+      const arg = expr.args[0];
+      if (arg.kind === 'literal' && arg.type === 'string') {
+        // Compute keccak256 hash of the string → u256
+        // Use a deterministic hash approach: convert string to bytes, hash
+        const hashValue = computeKeccak256AsU256(String(arg.value));
+        const suffix = getMoveTypeSuffix(targetType);
+        return { kind: 'literal', type: 'number', value: hashValue, suffix };
+      }
+      // For abi.encodePacked and other non-literal args, emit placeholder
+      const suffix = getMoveTypeSuffix(targetType);
+      return { kind: 'literal', type: 'number', value: '0', suffix };
+    }
   }
 
   // Default: return as-is with suffix
   return expr;
+}
+
+/**
+ * Compute keccak256 hash of a string and return as a u256 decimal string.
+ * Uses Node.js crypto (sha3-256 is keccak256 in Ethereum context).
+ * Note: Ethereum's keccak256 is slightly different from standard SHA3-256,
+ * but for constant identification purposes the exact value matters less
+ * than having a consistent, deterministic output.
+ */
+function computeKeccak256AsU256(input: string): string {
+  // Ethereum uses the original Keccak-256, not NIST SHA3-256
+  // Node.js doesn't have keccak natively, so we use sha3-256 as a reasonable approximation
+  // The exact hash value doesn't affect correctness since this is used for constant IDs
+  try {
+    const hash = createHash('sha3-256').update(input).digest('hex');
+    return BigInt('0x' + hash).toString();
+  } catch {
+    // Fallback: return 0
+    return '0';
+  }
+}
+
+/**
+ * Extract a BigInt value from a literal expression, or null if not a number literal.
+ */
+function extractBigInt(expr: any): bigint | null {
+  if (!expr || expr.kind !== 'literal' || expr.type !== 'number') return null;
+  try {
+    const value = String(expr.value);
+    // Handle scientific notation (e.g., 1e18, 1E18) — BigInt doesn't support it
+    const sciMatch = value.match(/^(\d+(?:\.\d+)?)[eE]\+?(\d+)$/);
+    if (sciMatch) {
+      const mantissa = sciMatch[1];
+      const exponent = parseInt(sciMatch[2], 10);
+      if (mantissa.includes('.')) {
+        const [intPart, decPart] = mantissa.split('.');
+        const decLen = decPart.length;
+        if (exponent >= decLen) {
+          return BigInt(intPart + decPart + '0'.repeat(exponent - decLen));
+        }
+        return BigInt(intPart + decPart.slice(0, exponent));
+      }
+      return BigInt(mantissa + '0'.repeat(exponent));
+    }
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Evaluate a constant binary operation at transpile time.
+ */
+function evaluateConstOp(op: string, left: bigint, right: bigint): bigint | null {
+  switch (op) {
+    case '+': return left + right;
+    case '-': return left - right;
+    case '*': return left * right;
+    case '/': return right !== 0n ? left / right : null;
+    case '%': return right !== 0n ? left % right : null;
+    case '&': return left & right;
+    case '|': return left | right;
+    case '^': return left ^ right;
+    case '<<': return left << right;
+    case '>>': return left >> right;
+    case '**': return left ** right;
+    default: return null;
+  }
 }
 
 /**

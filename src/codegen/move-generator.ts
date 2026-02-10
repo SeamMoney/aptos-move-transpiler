@@ -532,6 +532,10 @@ function generateExpression(expr: MoveExpression): string {
       return `(${generateExpression(expr.left)} ${expr.operator} ${generateExpression(expr.right)})`;
 
     case 'unary':
+      // Move doesn't have bitwise NOT (~), convert to XOR with max value
+      if (expr.operator === '~') {
+        return `(${generateExpression(expr.operand)} ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256)`;
+      }
       return `${expr.operator}${generateExpression(expr.operand)}`;
 
     case 'call':
@@ -563,6 +567,21 @@ function generateExpression(expr: MoveExpression): string {
       return `*${generateExpression(expr.value)}`;
 
     case 'cast':
+      // Move doesn't support casting to bool - use != 0 instead
+      if (expr.targetType?.kind === 'primitive' && expr.targetType.name === 'bool') {
+        return `(${generateExpression(expr.value)} != 0)`;
+      }
+      // Collapse chained casts: (x as T1) as T2 → (x as T2)
+      if (expr.value?.kind === 'cast') {
+        return `(${generateExpression(expr.value.value)} as ${generateType(expr.targetType)})`;
+      }
+      // Skip no-op casts where value is a literal with matching type suffix
+      if (expr.value?.kind === 'literal' && expr.value?.type === 'number' && expr.value?.suffix) {
+        const targetName = expr.targetType?.kind === 'primitive' ? expr.targetType.name : null;
+        if (targetName && expr.value.suffix === targetName) {
+          return generateExpression(expr.value);
+        }
+      }
       return `(${generateExpression(expr.value)} as ${generateType(expr.targetType)})`;
 
     case 'if_expr':
@@ -650,25 +669,37 @@ function normalizeNumber(value: string): string {
     const exponent = parseInt(sciMatch[2], 10);
 
     // Handle mantissa with decimal point
+    let result: string;
     if (mantissa.includes('.')) {
       const [intPart, decPart] = mantissa.split('.');
       const decLen = decPart.length;
       if (exponent >= decLen) {
         // All decimals move to integer part, add zeros
-        return intPart + decPart + '0'.repeat(exponent - decLen);
+        result = intPart + decPart + '0'.repeat(exponent - decLen);
       } else {
         // Some decimals remain - but for integer types, truncate
-        return intPart + decPart.slice(0, exponent);
+        result = intPart + decPart.slice(0, exponent);
       }
     } else {
       // No decimal point, just add zeros
-      return mantissa + '0'.repeat(exponent);
+      result = mantissa + '0'.repeat(exponent);
     }
+    // Strip leading zeros from the expanded result (e.g., 0.1e18 → "0100..." → "100...")
+    if (/^0\d/.test(result)) {
+      result = result.replace(/^0+/, '') || '0';
+    }
+    return result;
   }
 
   // Handle hex numbers
   if (value.startsWith('0x') || value.startsWith('0X')) {
     return value;
+  }
+
+  // Strip leading zeros from decimal numbers (0100... → 100...)
+  // but preserve "0" itself
+  if (/^0\d/.test(value)) {
+    value = value.replace(/^0+/, '') || '0';
   }
 
   // Return as-is if already a plain number

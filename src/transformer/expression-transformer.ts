@@ -18,7 +18,7 @@ export function solidityStatementToIR(stmt: any): IRStatement {
       const vars = stmt.variables || [];
       return {
         kind: 'variable_declaration',
-        name: vars.map((v: any) => v?.name || '_').filter(Boolean),
+        name: vars.map((v: any, i: number) => v?.name ? v.name : `_${i}`),
         type: vars[0]?.typeName ? createIRType(vars[0].typeName) : undefined,
         initialValue: stmt.initialValue ? solidityExpressionToIR(stmt.initialValue) : undefined,
       };
@@ -116,6 +116,41 @@ export function solidityStatementToIR(stmt: any): IRStatement {
     case 'PlaceholderStatement':
       // The _ placeholder in modifiers - indicates where function body is inserted
       return { kind: 'placeholder' };
+
+    case 'InlineAssemblyStatement':
+      // Attempt to transpile Yul assembly to Move IR
+      // Common patterns: bit manipulation (shl, shr, and, or, not), arithmetic
+      if (stmt.body?.operations) {
+        const assemblyStatements = transpileAssemblyBlock(stmt.body.operations);
+        if (assemblyStatements.length > 0) {
+          return { kind: 'block', statements: assemblyStatements };
+        }
+      }
+      // Fallback for unsupported assembly patterns
+      return {
+        kind: 'expression',
+        expression: {
+          kind: 'literal',
+          type: 'string',
+          value: 'UNSUPPORTED: inline assembly (Yul) - complex pattern not yet supported',
+        },
+      };
+
+    case 'TryStatement':
+      // Basic try/catch support - extract the expression and body
+      return {
+        kind: 'try',
+        expression: stmt.expression ? solidityExpressionToIR(stmt.expression) : { kind: 'literal', type: 'number', value: 0 },
+        body: (stmt.body?.statements || []).map(solidityStatementToIR),
+        catchClauses: (stmt.catchClauses || []).map((c: any) => ({
+          errorName: c.kind,
+          params: (c.parameters || []).map((p: any) => ({
+            name: p.name || '',
+            type: p.typeName ? createIRType(p.typeName) : { solidity: 'bytes', move: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } }, isArray: false, isMapping: false },
+          })),
+          body: (c.body?.statements || []).map(solidityStatementToIR),
+        })),
+      };
 
     default:
       // Fallback for unsupported statements
@@ -271,6 +306,18 @@ export function solidityExpressionToIR(expr: any): IRExpression {
         };
       }
 
+      // Handle type(T).max, type(T).min patterns
+      if (expr.expression?.type === 'FunctionCall' &&
+          expr.expression?.expression?.name === 'type') {
+        const typeArg = expr.expression.arguments?.[0];
+        const typeName = typeArg?.name || typeArg?.type || 'uint256';
+        return {
+          kind: 'type_member',
+          typeName,
+          member: expr.memberName,
+        } as any;
+      }
+
       return {
         kind: 'member_access',
         object: baseExpr,
@@ -424,10 +471,14 @@ function transformAssignment(
     target = transformExpression(stmt.target, context);
   }
 
-  const value = transformExpression(stmt.value, context);
+  let value = transformExpression(stmt.value, context);
 
   // Handle compound assignment
   if (stmt.operator && stmt.operator !== '=') {
+    // For shift compound assignments, right operand must be u8 in Move
+    if (stmt.operator === '<<=' || stmt.operator === '>>=') {
+      value = castToU8ForShift(value);
+    }
     return {
       kind: 'assign',
       target,
@@ -447,6 +498,30 @@ function transformAssignment(
  * Transform if statement
  */
 function transformIf(stmt: any, context: TranspileContext): MoveStatement {
+  // Detect assignment-in-condition pattern: if ((y = expr) != x)
+  // Split into: y = expr; if (y != x) { ... }
+  const extracted = extractAssignmentFromCondition(stmt.condition, context);
+  if (extracted) {
+    return {
+      kind: 'block',
+      statements: [
+        ...extracted.preStatements,
+        {
+          kind: 'if',
+          condition: extracted.condition,
+          thenBlock: stmt.thenBlock
+            .map((s: any) => transformStatement(s, context))
+            .filter((s: any): s is MoveStatement => s !== undefined),
+          elseBlock: stmt.elseBlock
+            ? stmt.elseBlock
+                .map((s: any) => transformStatement(s, context))
+                .filter((s: any): s is MoveStatement => s !== undefined)
+            : undefined,
+        },
+      ],
+    };
+  }
+
   return {
     kind: 'if',
     condition: transformExpression(stmt.condition, context),
@@ -458,6 +533,89 @@ function transformIf(stmt: any, context: TranspileContext): MoveStatement {
           .map((s: any) => transformStatement(s, context))
           .filter((s: any): s is MoveStatement => s !== undefined)
       : undefined,
+  };
+}
+
+/**
+ * Extract assignment expressions from if conditions.
+ * Solidity allows `if ((y = expr) != x)` — Move does not.
+ * Returns pre-statements and a cleaned condition, or null if no assignment found.
+ */
+function extractAssignmentFromCondition(condition: any, context: TranspileContext): { preStatements: MoveStatement[]; condition: MoveExpression } | null {
+  if (!condition || condition.kind !== 'binary') return null;
+
+  // Unwrap single-element tuple/parenthesized expressions on left side
+  let left = condition.left;
+  if (left?.kind === 'tuple' && left.elements?.length === 1) {
+    left = left.elements[0];
+  }
+
+  // Check left side for assignment: (y = expr) != x  or  (y = expr) == x
+  if (left?.kind === 'assignment' || (left?.kind === 'binary' && left.operator === '=')) {
+    const assign = left;
+    const target = transformExpression(assign.target || assign.left, context);
+    const value = transformExpression(assign.value || assign.right, context);
+    const preStmt: MoveStatement = { kind: 'assign', target, value };
+
+    // The condition becomes: target != right (or whatever the comparison operator is)
+    const newCondition: MoveExpression = {
+      kind: 'binary',
+      operator: condition.operator,
+      left: target,
+      right: transformExpression(condition.right, context),
+    };
+
+    return { preStatements: [preStmt], condition: newCondition };
+  }
+
+  // Unwrap single-element tuple on right side too
+  let right = condition.right;
+  if (right?.kind === 'tuple' && right.elements?.length === 1) {
+    right = right.elements[0];
+  }
+
+  if (right?.kind === 'assignment' || (right?.kind === 'binary' && right.operator === '=')) {
+    const assign = right;
+    const target = transformExpression(assign.target || assign.left, context);
+    const value = transformExpression(assign.value || assign.right, context);
+    const preStmt: MoveStatement = { kind: 'assign', target, value };
+
+    const newCondition: MoveExpression = {
+      kind: 'binary',
+      operator: condition.operator,
+      left: transformExpression(condition.left, context),
+      right: target,
+    };
+
+    return { preStatements: [preStmt], condition: newCondition };
+  }
+
+  return null;
+}
+
+/**
+ * Transform an increment/decrement expression (i++, ++i, i--, --i) into an assignment statement.
+ * Returns undefined if the expression is not an increment/decrement.
+ */
+function transformIncrementDecrementToAssignment(
+  expr: any,
+  context: TranspileContext
+): MoveStatement | undefined {
+  if (expr.kind !== 'unary') return undefined;
+  if (expr.operator !== '++' && expr.operator !== '--') return undefined;
+
+  const operand = transformExpression(expr.operand, context);
+  const op = expr.operator === '++' ? '+' : '-';
+
+  return {
+    kind: 'assign',
+    target: operand,
+    value: {
+      kind: 'binary',
+      operator: op as any,
+      left: operand,
+      right: { kind: 'literal', type: 'number', value: 1 },
+    },
   };
 }
 
@@ -506,10 +664,15 @@ function transformFor(stmt: any, context: TranspileContext): MoveStatement {
 
   // Add update at end of body
   if (stmt.update) {
-    body.push({
-      kind: 'expression',
-      expression: transformExpression(stmt.update, context),
-    });
+    const updateStmt = transformIncrementDecrementToAssignment(stmt.update, context);
+    if (updateStmt) {
+      body.push(updateStmt);
+    } else {
+      body.push({
+        kind: 'expression',
+        expression: transformExpression(stmt.update, context),
+      });
+    }
   }
 
   statements.push({
@@ -775,6 +938,12 @@ function transformExpressionStatement(
     }
   }
 
+  // Handle standalone increment/decrement (i++, i--, ++i, --i)
+  if (expr.kind === 'unary' && (expr.operator === '++' || expr.operator === '--')) {
+    const assignStmt = transformIncrementDecrementToAssignment(expr, context);
+    if (assignStmt) return assignStmt;
+  }
+
   return {
     kind: 'expression',
     expression: transformExpression(expr, context),
@@ -892,6 +1061,9 @@ export function transformExpression(
 
     case 'tx_access':
       return transformTxAccess(expr, context);
+
+    case 'type_member':
+      return transformTypeMember(expr, context);
 
     default:
       return { kind: 'literal', type: 'number', value: 0 };
@@ -1016,13 +1188,25 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
 
   const op = opMap[expr.operator] || expr.operator;
 
-  // Handle exponentiation specially - use our evm_compat module
+  // Handle exponentiation specially - use math::pow
   if (expr.operator === '**') {
-    context.usedModules.add('transpiler::evm_compat');
+    context.usedModules.add('aptos_std::math128');
     return {
       kind: 'call',
-      function: 'evm_compat::exp_u256',
+      function: 'math128::pow',
       args: [left, right],
+    };
+  }
+
+  // Shift operators: right operand must be u8 in Move
+  // Also handles compound shift assignments (>>=, <<=) when they appear as binary expressions
+  if (expr.operator === '<<' || expr.operator === '>>' || expr.operator === '<<=' || expr.operator === '>>=') {
+    const castRight = castToU8ForShift(right);
+    return {
+      kind: 'binary',
+      operator: op as any,
+      left,
+      right: castRight,
     };
   }
 
@@ -1097,23 +1281,23 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
       };
     }
 
-    // addmod(a, b, n) -> evm_compat::addmod
-    if (name === 'addmod') {
-      context.usedModules.add('transpiler::evm_compat');
+    // addmod(a, b, n) -> ((a + b) % n)
+    if (name === 'addmod' && args.length === 3) {
       return {
-        kind: 'call',
-        function: 'evm_compat::addmod',
-        args,
+        kind: 'binary',
+        operator: '%',
+        left: { kind: 'binary', operator: '+', left: args[0], right: args[1] },
+        right: args[2],
       };
     }
 
-    // mulmod(a, b, n) -> evm_compat::mulmod
-    if (name === 'mulmod') {
-      context.usedModules.add('transpiler::evm_compat');
+    // mulmod(a, b, n) -> ((a * b) % n)
+    if (name === 'mulmod' && args.length === 3) {
       return {
-        kind: 'call',
-        function: 'evm_compat::mulmod',
-        args,
+        kind: 'binary',
+        operator: '%',
+        left: { kind: 'binary', operator: '*', left: args[0], right: args[1] },
+        right: args[2],
       };
     }
 
@@ -1172,6 +1356,39 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
   if (expr.function?.kind === 'member_access') {
     const obj = transformExpression(expr.function.object, context);
     const method = expr.function.member;
+
+    // Handle super.method() - with inheritance flattening, the parent's function
+    // is already in the current module, so just call it directly
+    if (expr.function.object?.kind === 'identifier' && expr.function.object.name === 'super') {
+      return {
+        kind: 'call',
+        function: toSnakeCase(method),
+        args,
+      };
+    }
+
+    // Handle cross-module library calls: LibraryName.method(args) → library_name::method(args)
+    // Detect by checking if the object is a PascalCase identifier (looks like a library/contract name)
+    if (expr.function.object?.kind === 'identifier') {
+      const objName = expr.function.object.name;
+      // PascalCase identifier (starts with uppercase, has lowercase letters) = likely a module/library
+      if (/^[A-Z]/.test(objName) && /[a-z]/.test(objName)) {
+        const moduleName = toSnakeCase(objName);
+        return {
+          kind: 'call',
+          function: `${moduleName}::${toSnakeCase(method)}`,
+          args,
+        };
+      }
+    }
+
+    // Handle using X for Y library calls
+    // e.g., amount.add(other) with `using SafeMath for uint256` → (amount + other)
+    // Common SafeMath patterns: add, sub, mul, div, mod
+    if (context.usingFor && context.usingFor.length > 0) {
+      const libraryMethod = transformUsingForCall(obj, method, args, context);
+      if (libraryMethod) return libraryMethod;
+    }
 
     // Array methods
     if (method === 'push') {
@@ -1274,9 +1491,9 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     }
 
     if (method === 'delegatecall') {
-      context.warnings.push({
-        message: 'delegatecall not supported in Move - consider capability pattern',
-        severity: 'warning',
+      context.errors.push({
+        message: 'UNSUPPORTED: delegatecall cannot be transpiled to Move - Move has no execution context switching. Consider using the capability pattern instead.',
+        severity: 'error',
       });
       return {
         kind: 'tuple',
@@ -1318,6 +1535,34 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
   const funcExpr = expr.function ? transformExpression(expr.function, context) : null;
   const funcName = funcExpr?.kind === 'identifier' ? funcExpr.name : undefined;
 
+  // Check if this is a struct constructor call: StructName(arg1, arg2, ...)
+  // In Solidity, structs can be constructed with positional args
+  if (expr.function?.kind === 'identifier') {
+    const structName = expr.function.name;
+    const structDef = context.structs?.get(structName);
+    if (structDef) {
+      // Map positional args to struct fields
+      const fields = structDef.fields.map((field: any, i: number) => ({
+        name: toSnakeCase(field.name),
+        value: args[i] || { kind: 'literal', type: 'number', value: 0, suffix: 'u256' },
+      }));
+      return {
+        kind: 'struct',
+        name: structName,
+        fields,
+      };
+    }
+  }
+
+  // If calling an internal/private function that takes state, append state arg
+  // This prevents double mutable borrow - internal functions receive state as param
+  if (funcName && funcName !== 'unknown') {
+    const originalName = expr.function?.name;
+    if (originalName && isInternalStateFunction(originalName, context)) {
+      args.push({ kind: 'identifier', name: 'state' });
+    }
+  }
+
   return {
     kind: 'call',
     function: funcName || 'unknown',
@@ -1339,7 +1584,31 @@ function transformMemberAccess(expr: any, context: TranspileContext): MoveExpres
     };
   }
 
+  // Handle cross-module constant references like constants.BASIS_POINT_MAX or encoded.MASK_UINT16
+  // In Solidity, libraries can reference constants from other libraries via LibName.CONSTANT
+  // In Move, constants are module-private, so we copy them into the current module
+  if (expr.object?.kind === 'identifier' && /^[A-Z][A-Z0-9_]*$/.test(expr.member)) {
+    const libName = expr.object.name;
+    // Track this as an imported constant so the contract transformer can copy it
+    if (!(context as any).importedConstants) {
+      (context as any).importedConstants = new Map<string, { source: string; name: string }>();
+    }
+    (context as any).importedConstants.set(expr.member, { source: libName, name: expr.member });
+    // Emit as just the constant name (will be defined in this module)
+    return { kind: 'identifier', name: expr.member };
+  }
+
   const obj = transformExpression(expr.object, context);
+
+  // Handle .length on arrays/vectors → vector::length(&v)
+  if (expr.member === 'length') {
+    context.usedModules.add('std::vector');
+    return {
+      kind: 'call',
+      function: 'vector::length',
+      args: [{ kind: 'borrow', mutable: false, value: obj }],
+    };
+  }
 
   return {
     kind: 'field_access',
@@ -1362,16 +1631,18 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
     if (stateVar?.isMapping) {
       context.usedModules.add('aptos_std::table');
 
-      // Check context to determine if this is a mutable access (assignment target)
-      // For now we assume read access - mutation will be handled in assignment transform
+      // Use table::borrow_with_default for safe access
+      // Solidity mappings return 0/false/address(0) for missing keys
+      const defaultValue = getDefaultForMappingValue(stateVar, context);
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow',
+          function: 'table::borrow_with_default',
           args: [
             { kind: 'borrow', mutable: false, value: base },
             index,
+            { kind: 'borrow', mutable: false, value: defaultValue },
           ],
         },
       };
@@ -1397,7 +1668,7 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
     };
   }
 
-  // Vector index access
+  // Vector index access - cast index to u64 (Move vectors require u64 index)
   context.usedModules.add('std::vector');
   return {
     kind: 'dereference',
@@ -1406,10 +1677,132 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
       function: 'vector::borrow',
       args: [
         { kind: 'borrow', mutable: false, value: base },
-        index,
+        castToU64IfNeeded(index),
       ],
     },
   };
+}
+
+/**
+ * Cast an expression to u64 if it's not already a u64 literal.
+ * Move vectors require u64 indices, but Solidity uses uint256 by default.
+ */
+function castToU64IfNeeded(expr: MoveExpression): MoveExpression {
+  // If it's already a u64 literal, no cast needed
+  if (expr.kind === 'literal' && expr.type === 'number' && (expr as any).suffix === 'u64') {
+    return expr;
+  }
+  // If it's a number literal with u256 suffix, just change the suffix
+  if (expr.kind === 'literal' && expr.type === 'number') {
+    return { ...expr, suffix: 'u64' } as any;
+  }
+  // For identifiers and complex expressions, add a cast
+  return {
+    kind: 'cast',
+    value: expr,
+    targetType: { kind: 'primitive', name: 'u64' },
+  };
+}
+
+/**
+ * Cast an expression to u8 for use as a shift amount.
+ * Move requires shift right operands to be u8.
+ */
+function castToU8ForShift(expr: MoveExpression): MoveExpression {
+  // If it's already a u8 literal, no cast needed
+  if (expr.kind === 'literal' && expr.type === 'number' && (expr as any).suffix === 'u8') {
+    return expr;
+  }
+  // If it's a number literal, just change the suffix
+  if (expr.kind === 'literal' && expr.type === 'number') {
+    return { ...expr, suffix: 'u8' } as any;
+  }
+  // If it's already a cast to u8, return as-is
+  if (expr.kind === 'cast' && (expr as any).targetType?.kind === 'primitive' && (expr as any).targetType.name === 'u8') {
+    return expr;
+  }
+  // For identifiers and complex expressions, add a cast to u8
+  return {
+    kind: 'cast',
+    value: expr,
+    targetType: { kind: 'primitive', name: 'u8' },
+  };
+}
+
+/**
+ * Get the default value for a mapping's value type.
+ * Solidity mappings return 0/false/address(0) for missing keys.
+ */
+function getDefaultForMappingValue(stateVar: any, context: TranspileContext): MoveExpression {
+  const valueType = stateVar.mappingValueType?.move;
+  if (!valueType) {
+    return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+  }
+
+  return getDefaultForMoveType(valueType, stateVar.mappingValueType, context);
+}
+
+/**
+ * Get a default value expression for a given Move type.
+ * Handles primitives, vectors, and structs (with zero-initialized fields).
+ */
+function getDefaultForMoveType(moveType: any, irType: any, context: TranspileContext): MoveExpression {
+  if (!moveType) {
+    return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+  }
+
+  switch (moveType.kind) {
+    case 'primitive':
+      if (moveType.name === 'bool') return { kind: 'literal', type: 'bool', value: false };
+      if (moveType.name === 'address') return { kind: 'literal', type: 'address', value: '@0x0' };
+      return { kind: 'literal', type: 'number', value: 0, suffix: moveType.name };
+
+    case 'vector':
+      return { kind: 'call', function: 'vector::empty', args: [] };
+
+    case 'struct': {
+      // Try to find the struct definition to generate a zero-initialized struct literal
+      const structName = moveType.name || irType?.structName;
+      const structDef = structName ? context.structs?.get(structName) : undefined;
+      if (structDef && structDef.fields.length > 0) {
+        return {
+          kind: 'struct',
+          name: structName,
+          fields: structDef.fields.map((field: any) => ({
+            name: toSnakeCase(field.name),
+            value: getDefaultForMoveType(
+              field.type?.move || { kind: 'primitive', name: 'u256' },
+              field.type,
+              context,
+            ),
+          })),
+        };
+      }
+      // Fallback if struct def not found
+      return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+    }
+
+    default:
+      // Check if the IR type has a struct name (e.g., mapping value is a custom struct)
+      if (irType?.structName) {
+        const structDef = context.structs?.get(irType.structName);
+        if (structDef && structDef.fields.length > 0) {
+          return {
+            kind: 'struct',
+            name: irType.structName,
+            fields: structDef.fields.map((field: any) => ({
+              name: toSnakeCase(field.name),
+              value: getDefaultForMoveType(
+                field.type?.move || { kind: 'primitive', name: 'u256' },
+                field.type,
+                context,
+              ),
+            })),
+          };
+        }
+      }
+      return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+  }
 }
 
 /**
@@ -1425,14 +1818,17 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
     const stateVar = context.stateVariables.get(expr.base.name);
     if (stateVar?.isMapping) {
       context.usedModules.add('aptos_std::table');
+      // Use table::upsert pattern: add default if key doesn't exist, then borrow_mut
+      // This mirrors Solidity's behavior where writing to mapping[key] auto-initializes
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow_mut',
+          function: 'table::borrow_mut_with_default',
           args: [
             { kind: 'borrow', mutable: true, value: base },
             index,
+            getDefaultForMappingValue(stateVar, context),
           ],
         },
       };
@@ -1456,7 +1852,7 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
     };
   }
 
-  // Vector index access (mutable)
+  // Vector index access (mutable) - cast index to u64
   context.usedModules.add('std::vector');
   return {
     kind: 'dereference',
@@ -1465,7 +1861,7 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
       function: 'vector::borrow_mut',
       args: [
         { kind: 'borrow', mutable: true, value: base },
-        index,
+        castToU64IfNeeded(index),
       ],
     },
   };
@@ -1485,13 +1881,20 @@ function transformConditional(expr: any, context: TranspileContext): MoveExpress
 
 /**
  * Transform tuple
+ * Preserves null elements as underscore-prefixed placeholders for destructuring
  */
 function transformTuple(expr: any, context: TranspileContext): MoveExpression {
+  let placeholderIdx = 0;
   return {
     kind: 'tuple',
-    elements: (expr.elements || [])
-      .filter((e: any) => e !== null)
-      .map((e: any) => transformExpression(e, context)),
+    elements: (expr.elements || []).map((e: any) => {
+      if (e === null) {
+        // Generate a placeholder for ignored tuple elements: _0, _1, _2, etc.
+        return { kind: 'identifier', name: `_${placeholderIdx++}` };
+      }
+      placeholderIdx++;
+      return transformExpression(e, context);
+    }),
   };
 }
 
@@ -1541,6 +1944,43 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
       function: 'evm_compat::address_to_u256',
       args: [value],
     };
+  }
+
+  // For non-standard uint widths (uint24, uint40, uint48, etc.), Move doesn't have
+  // a native type at that width. The type maps to the nearest larger Move type (e.g., u32, u64).
+  // Solidity truncates silently to the target width, so we need a bitmask to emulate truncation.
+  // Standard Move types (u8, u16, u32, u64, u128, u256) use native `as` cast which aborts on overflow.
+  if (targetTypeName && targetTypeName.startsWith('uint')) {
+    const bits = parseInt(targetTypeName.slice(4)) || 256;
+    const standardBits = [8, 16, 32, 64, 128, 256];
+    if (!standardBits.includes(bits)) {
+      // Non-standard width: use bitmask to truncate
+      // uint24(x) → (x & 0xffffff), uint40(x) → (x & 0xffffffffff), etc.
+      const mask = ((1n << BigInt(bits)) - 1n).toString();
+      const suffix = targetType?.name || 'u256';
+      return {
+        kind: 'binary',
+        operator: '&',
+        left: value,
+        right: { kind: 'literal', type: 'number', value: mask, suffix },
+      };
+    }
+  }
+
+  // For non-standard int widths, also use bitmask approach
+  if (targetTypeName && targetTypeName.startsWith('int') && !targetTypeName.startsWith('interface')) {
+    const bits = parseInt(targetTypeName.slice(3)) || 256;
+    const standardBits = [8, 16, 32, 64, 128, 256];
+    if (!standardBits.includes(bits)) {
+      const mask = ((1n << BigInt(bits)) - 1n).toString();
+      const suffix = targetType?.name || 'i256';
+      return {
+        kind: 'binary',
+        operator: '&',
+        left: value,
+        right: { kind: 'literal', type: 'number', value: mask, suffix },
+      };
+    }
   }
 
   // Regular numeric type casts use Move's cast syntax
@@ -1599,18 +2039,29 @@ function transformBlockAccess(expr: any, context: TranspileContext): MoveExpress
   switch (expr.property) {
     case 'timestamp':
       context.usedModules.add('aptos_framework::timestamp');
+      // timestamp::now_seconds() returns u64, but Solidity block.timestamp is uint256
+      // Cast to u256 for compatibility with u256 arithmetic
       return {
-        kind: 'call',
-        function: 'timestamp::now_seconds',
-        args: [],
+        kind: 'cast',
+        value: {
+          kind: 'call',
+          function: 'timestamp::now_seconds',
+          args: [],
+        },
+        targetType: { kind: 'primitive', name: 'u256' },
       };
 
     case 'number':
       context.usedModules.add('aptos_framework::block');
+      // block::get_current_block_height() returns u64, but Solidity block.number is uint256
       return {
-        kind: 'call',
-        function: 'block::get_current_block_height',
-        args: [],
+        kind: 'cast',
+        value: {
+          kind: 'call',
+          function: 'block::get_current_block_height',
+          args: [],
+        },
+        targetType: { kind: 'primitive', name: 'u256' },
       };
 
     default:
@@ -1620,6 +2071,66 @@ function transformBlockAccess(expr: any, context: TranspileContext): MoveExpress
       });
       return { kind: 'literal', type: 'number', value: 0 };
   }
+}
+
+/**
+ * Transform type(T).max, type(T).min patterns
+ * Maps to Move numeric maximum/minimum constants
+ */
+function transformTypeMember(expr: any, context: TranspileContext): MoveExpression {
+  const typeName = String(expr.typeName).toLowerCase();
+  const member = expr.member;
+
+  // Map Solidity types to Move max values
+  const maxValues: Record<string, { value: string; suffix: string }> = {
+    'uint8': { value: '255', suffix: 'u8' },
+    'uint16': { value: '65535', suffix: 'u16' },
+    'uint32': { value: '4294967295', suffix: 'u32' },
+    'uint64': { value: '18446744073709551615', suffix: 'u64' },
+    'uint128': { value: '340282366920938463463374607431768211455', suffix: 'u128' },
+    'uint256': { value: '115792089237316195423570985008687907853269984665640564039457584007913129639935', suffix: 'u256' },
+    'uint': { value: '115792089237316195423570985008687907853269984665640564039457584007913129639935', suffix: 'u256' },
+  };
+
+  if (member === 'max') {
+    const maxInfo = maxValues[typeName];
+    if (maxInfo) {
+      return {
+        kind: 'literal',
+        type: 'number',
+        value: maxInfo.value,
+        suffix: maxInfo.suffix,
+      };
+    }
+    // Fallback for unknown types
+    context.warnings.push({
+      message: `type(${expr.typeName}).max not fully supported, using u256 max`,
+      severity: 'warning',
+    });
+    return {
+      kind: 'literal',
+      type: 'number',
+      value: '115792089237316195423570985008687907853269984665640564039457584007913129639935',
+      suffix: 'u256',
+    };
+  }
+
+  if (member === 'min') {
+    // All unsigned types have min of 0
+    const suffix = maxValues[typeName]?.suffix || 'u256';
+    return {
+      kind: 'literal',
+      type: 'number',
+      value: '0',
+      suffix,
+    };
+  }
+
+  context.warnings.push({
+    message: `type(${expr.typeName}).${member} not supported`,
+    severity: 'warning',
+  });
+  return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
 }
 
 /**
@@ -1633,6 +2144,313 @@ function transformTxAccess(expr: any, context: TranspileContext): MoveExpression
   return { kind: 'literal', type: 'number', value: 0 };
 }
 
+// ============================================================================
+// Yul Assembly to Move IR Transpiler
+// Handles common bit manipulation patterns found in DeFi libraries
+// ============================================================================
+
+/**
+ * Transpile a Yul assembly block to Move IR statements.
+ * Supports: assignments, let declarations, if/for blocks, and common Yul builtins.
+ */
+function transpileAssemblyBlock(operations: any[]): IRStatement[] {
+  const statements: IRStatement[] = [];
+
+  for (const op of operations) {
+    const stmt = transpileAssemblyOperation(op);
+    if (stmt) {
+      if (Array.isArray(stmt)) {
+        statements.push(...stmt);
+      } else {
+        statements.push(stmt);
+      }
+    }
+  }
+
+  return statements;
+}
+
+/**
+ * Transpile a single Yul assembly operation to Move IR.
+ */
+function transpileAssemblyOperation(op: any): IRStatement | IRStatement[] | null {
+  if (!op) return null;
+
+  switch (op.type) {
+    case 'AssemblyAssignment': {
+      // name := expression
+      const nameNode = op.names?.[0];
+      if (!nameNode) return null;
+      const value = transpileYulExpression(op.expression);
+      if (!value) return null;
+
+      // Handle AssemblyMemberAccess targets (e.g., $.slot := value)
+      let target: IRExpression;
+      if (nameNode.type === 'AssemblyMemberAccess') {
+        const objExpr = transpileYulExpression(nameNode.expression);
+        const memberName = typeof nameNode.memberName === 'string'
+          ? nameNode.memberName
+          : nameNode.memberName?.name || 'unknown';
+        target = { kind: 'member_access', object: objExpr || { kind: 'identifier', name: 'unknown' }, member: memberName };
+      } else {
+        const name = typeof nameNode === 'string' ? nameNode : (nameNode.name || 'unknown');
+        target = { kind: 'identifier', name: toSnakeCase(name) };
+      }
+
+      return { kind: 'assignment', target, value };
+    }
+
+    case 'AssemblyLocalDefinition': {
+      // let name := expression
+      const name = op.names?.[0]?.name || op.names?.[0];
+      const value = op.expression ? transpileYulExpression(op.expression) : { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+      if (!name) return null;
+      return {
+        kind: 'variable_declaration',
+        name: toSnakeCase(typeof name === 'string' ? name : name),
+        initialValue: value,
+      };
+    }
+
+    case 'AssemblyIf': {
+      // if condition { body }
+      const condition = transpileYulExpression(op.condition);
+      if (!condition) return null;
+      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations) : [];
+      // In Yul, `if` checks for non-zero. If condition is already boolean
+      // (comparison, unary !, logical &&/||), use it directly; otherwise wrap with != 0
+      const moveCondition = isBooleanExpression(condition) ? condition
+        : { kind: 'binary', operator: '!=', left: condition, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };
+      return {
+        kind: 'if',
+        condition: moveCondition,
+        thenBlock: body,
+      };
+    }
+
+    case 'AssemblyFor': {
+      // for { init } condition { post } { body }
+      const initStmts = op.pre?.operations ? transpileAssemblyBlock(op.pre.operations) : [];
+      const condition = transpileYulExpression(op.condition);
+      const postStmts = op.post?.operations ? transpileAssemblyBlock(op.post.operations) : [];
+      const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations) : [];
+      // Emit as: init; while(condition) { body; post; }
+      const allStmts: IRStatement[] = [...initStmts];
+      allStmts.push({
+        kind: 'while',
+        condition: condition || { kind: 'literal', type: 'bool', value: true },
+        body: [...body, ...postStmts],
+      });
+      return allStmts;
+    }
+
+    case 'AssemblyExpression':
+    case 'AssemblyCall': {
+      // Standalone expression (e.g., revert(0, 0))
+      const expr = transpileYulExpression(op);
+      if (!expr) return null;
+      return { kind: 'expression', expression: expr };
+    }
+
+    case 'AssemblyBlock': {
+      // Nested block
+      return op.operations ? transpileAssemblyBlock(op.operations) : null;
+    }
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * Transpile a Yul expression to Move IR expression.
+ * Maps Yul builtins to Move operators/functions.
+ */
+function transpileYulExpression(expr: any): IRExpression | null {
+  if (!expr) return null;
+
+  switch (expr.type) {
+    case 'AssemblyCall': {
+      const name = expr.functionName;
+      const args = expr.arguments || [];
+
+      // Zero-argument calls are identifiers (Yul quirk: variables are calls with no args)
+      if (args.length === 0) {
+        // Check for known constants
+        if (name === 'gas') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        if (name === 'caller') return { kind: 'identifier', name: 'caller' };
+        if (name === 'callvalue') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        if (name === 'calldatasize') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        if (name === 'returndatasize') return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+        // Default: treat as identifier
+        return { kind: 'identifier', name: toSnakeCase(name) };
+      }
+
+      // One-argument builtins
+      if (args.length === 1) {
+        const a = transpileYulExpression(args[0]);
+        if (!a) return null;
+
+        switch (name) {
+          case 'not':
+            // Bitwise NOT: ~a = a ^ MAX_U256
+            return {
+              kind: 'binary',
+              operator: '^',
+              left: a,
+              right: { kind: 'literal', type: 'number', value: '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', suffix: 'u256' },
+            };
+          case 'iszero': {
+            // If the inner expression is already boolean (comparison, !, &&, ||), negate it
+            if (isBooleanExpression(a)) {
+              return { kind: 'unary', operator: '!', operand: a };
+            }
+            return { kind: 'binary', operator: '==', left: a, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };
+          }
+          case 'mload':
+            // Memory load - no direct Move equivalent, pass through as identifier
+            return a;
+          default:
+            // Unknown unary - emit as function call
+            return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a] };
+        }
+      }
+
+      // Two-argument builtins
+      if (args.length === 2) {
+        const a = transpileYulExpression(args[0]);
+        const b = transpileYulExpression(args[1]);
+        if (!a || !b) return null;
+
+        switch (name) {
+          // Arithmetic — wrap bool operands to u256 (Yul comparisons return 1/0 as u256)
+          case 'add': return { kind: 'binary', operator: '+', left: boolToU256(a), right: boolToU256(b) };
+          case 'sub': return { kind: 'binary', operator: '-', left: boolToU256(a), right: boolToU256(b) };
+          case 'mul': return { kind: 'binary', operator: '*', left: boolToU256(a), right: boolToU256(b) };
+          case 'div': return { kind: 'binary', operator: '/', left: boolToU256(a), right: boolToU256(b) };
+          case 'mod': return { kind: 'binary', operator: '%', left: boolToU256(a), right: boolToU256(b) };
+
+          // Bitwise — wrap bool operands to u256
+          case 'and': return { kind: 'binary', operator: '&', left: boolToU256(a), right: boolToU256(b) };
+          case 'or':  return { kind: 'binary', operator: '|', left: boolToU256(a), right: boolToU256(b) };
+          case 'xor': return { kind: 'binary', operator: '^', left: boolToU256(a), right: boolToU256(b) };
+          case 'shl': {
+            // Yul shl(shift, value) = value << shift
+            // Note: Yul arg order is (shift, value) not (value, shift)
+            // Move shift requires u8 type
+            return {
+              kind: 'binary', operator: '<<',
+              left: b, // value
+              right: { kind: 'type_conversion', targetType: { solidity: 'uint8', move: { kind: 'primitive', name: 'u8' }, isArray: false, isMapping: false }, expression: a },
+            };
+          }
+          case 'shr': {
+            // Yul shr(shift, value) = value >> shift
+            return {
+              kind: 'binary', operator: '>>',
+              left: b, // value
+              right: { kind: 'type_conversion', targetType: { solidity: 'uint8', move: { kind: 'primitive', name: 'u8' }, isArray: false, isMapping: false }, expression: a },
+            };
+          }
+
+          // Comparison
+          case 'lt': return { kind: 'binary', operator: '<', left: a, right: b };
+          case 'gt': return { kind: 'binary', operator: '>', left: a, right: b };
+          case 'eq': return { kind: 'binary', operator: '==', left: a, right: b };
+          case 'slt': return { kind: 'binary', operator: '<', left: a, right: b };
+          case 'sgt': return { kind: 'binary', operator: '>', left: a, right: b };
+
+          // Memory operations - no direct Move equivalent
+          case 'mstore':
+          case 'mstore8':
+            return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+
+          default:
+            // Unknown binary - emit as function call
+            return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a, b] };
+        }
+      }
+
+      // Three-argument builtins
+      if (args.length === 3) {
+        const a = transpileYulExpression(args[0]);
+        const b = transpileYulExpression(args[1]);
+        const c = transpileYulExpression(args[2]);
+        if (!a || !b || !c) return null;
+
+        switch (name) {
+          case 'addmod':
+            // (a + b) % c
+            return { kind: 'binary', operator: '%', left: { kind: 'binary', operator: '+', left: a, right: b }, right: c };
+          case 'mulmod':
+            // (a * b) % c
+            return { kind: 'binary', operator: '%', left: { kind: 'binary', operator: '*', left: a, right: b }, right: c };
+          default:
+            return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: [a, b, c] };
+        }
+      }
+
+      // Multi-argument fallback
+      const transpiled = args.map(transpileYulExpression).filter(Boolean);
+      return { kind: 'function_call', function: { kind: 'identifier', name: toSnakeCase(name) }, args: transpiled as any[] };
+    }
+
+    case 'DecimalNumber':
+      return { kind: 'literal', type: 'number', value: expr.value, suffix: 'u256' };
+
+    case 'HexNumber':
+      return { kind: 'literal', type: 'number', value: expr.value, suffix: 'u256' };
+
+    case 'StringLiteral':
+      return { kind: 'literal', type: 'string', value: expr.value };
+
+    case 'BooleanLiteral':
+      return { kind: 'literal', type: 'bool', value: expr.value };
+
+    case 'Identifier':
+      return { kind: 'identifier', name: toSnakeCase(expr.name) };
+
+    case 'AssemblyMemberAccess': {
+      const obj = transpileYulExpression(expr.expression);
+      const member = typeof expr.memberName === 'string' ? expr.memberName : (expr.memberName?.name || 'unknown');
+      return { kind: 'member_access', object: obj || { kind: 'identifier', name: 'unknown' }, member };
+    }
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * Check if an IR expression produces a boolean value in Move.
+ * Used to avoid wrapping boolean results with `!= 0u256` in assembly conditions.
+ */
+function isBooleanExpression(expr: any): boolean {
+  if (!expr) return false;
+  // Comparison operators produce bool
+  if (expr.kind === 'binary' && ['>', '<', '==', '!=', '>=', '<=', '&&', '||'].includes(expr.operator)) return true;
+  // Unary ! produces bool
+  if (expr.kind === 'unary' && expr.operator === '!') return true;
+  // Boolean literals
+  if (expr.kind === 'literal' && expr.type === 'bool') return true;
+  return false;
+}
+
+/**
+ * Convert a boolean expression to u256 for use in arithmetic context.
+ * In Yul, comparisons return 1 or 0 (u256). In Move, they return bool.
+ * This wraps: bool_expr → if (bool_expr) 1u256 else 0u256
+ */
+function boolToU256(expr: any): any {
+  if (!isBooleanExpression(expr)) return expr;
+  return {
+    kind: 'conditional',
+    condition: expr,
+    trueExpression: { kind: 'literal', type: 'number', value: 1, suffix: 'u256' },
+    falseExpression: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' },
+  };
+}
+
 /**
  * Convert to snake_case
  */
@@ -1640,9 +2458,9 @@ function toSnakeCase(str: string): string {
   if (!str) return '';
 
   // Check if it's already SCREAMING_SNAKE_CASE (all caps with underscores)
+  // Move constants use SCREAMING_SNAKE — preserve as-is
   if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
-    // Preserve constants as-is, just lowercase
-    return str.toLowerCase();
+    return str;
   }
 
   // Convert camelCase/PascalCase to snake_case
@@ -1910,6 +2728,117 @@ function transformERC721Call(
 }
 
 /**
+ * Transform a `using X for Y` library method call.
+ * E.g., with `using SafeMath for uint256`, `amount.add(other)` becomes `(amount + other)`.
+ * Common library patterns (SafeMath, Address, Strings, etc.) are inlined.
+ */
+function transformUsingForCall(
+  obj: MoveExpression,
+  method: string,
+  args: MoveExpression[],
+  context: TranspileContext
+): MoveExpression | undefined {
+  // SafeMath-style math operations: amount.add(x) → amount + x
+  const mathOps: Record<string, string> = {
+    'add': '+',
+    'sub': '-',
+    'mul': '*',
+    'div': '/',
+    'mod': '%',
+  };
+
+  if (mathOps[method] && args.length >= 1) {
+    return {
+      kind: 'binary',
+      operator: mathOps[method] as any,
+      left: obj,
+      right: args[0],
+    };
+  }
+
+  // SafeMath tryAdd/trySub etc. - return (bool, value) tuple
+  const tryMathOps: Record<string, string> = {
+    'tryAdd': '+',
+    'trySub': '-',
+    'tryMul': '*',
+    'tryDiv': '/',
+    'tryMod': '%',
+  };
+
+  if (tryMathOps[method] && args.length >= 1) {
+    // Return (true, result) — Move arithmetic will abort on overflow anyway
+    return {
+      kind: 'tuple',
+      elements: [
+        { kind: 'literal', type: 'bool', value: true },
+        {
+          kind: 'binary',
+          operator: tryMathOps[method] as any,
+          left: obj,
+          right: args[0],
+        },
+      ],
+    };
+  }
+
+  // Address library: addr.isContract() → (not supported, return false)
+  if (method === 'isContract') {
+    context.warnings.push({
+      message: 'address.isContract() not available in Move, using false',
+      severity: 'warning',
+    });
+    return { kind: 'literal', type: 'bool', value: false };
+  }
+
+  // Strings library: uint.toString() → string_utils::to_string
+  if (method === 'toString' || method === 'toHexString') {
+    context.usedModules.add('aptos_std::string_utils');
+    return {
+      kind: 'call',
+      function: 'string_utils::to_string',
+      args: [{ kind: 'borrow', mutable: false, value: obj }],
+    };
+  }
+
+  // If we can't inline it, treat as a direct function call with obj as first arg
+  // This handles custom library functions: obj.customMethod(args) → customMethod(obj, args)
+  return {
+    kind: 'call',
+    function: toSnakeCase(method),
+    args: [obj, ...args],
+  };
+}
+
+/**
+ * Check if a function is an internal/private function that accesses state.
+ * These functions receive state as a parameter to avoid double mutable borrow.
+ */
+function isInternalStateFunction(name: string, context: TranspileContext): boolean {
+  // Libraries have no state, so no function in a library receives state as param
+  if ((context as any).isLibrary) return false;
+
+  // Look up the function in the contract's IR to check visibility
+  const contractFunctions = context.inheritedContracts?.values();
+  if (!contractFunctions) {
+    // Check if it's in the stateVariables context (heuristic: if the function
+    // name matches an internal function we've seen, assume it accesses state)
+    // A more precise approach would store function metadata in context
+    return false;
+  }
+
+  // If we have a functionRegistry in context, use it
+  const registry = (context as any).functionRegistry as Map<string, { visibility: string; accessesState: boolean }> | undefined;
+  if (registry) {
+    const info = registry.get(name);
+    if (info) {
+      return (info.visibility === 'private' || info.visibility === 'internal') && info.accessesState;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Check if an identifier name is a type cast (e.g., address, uint256, bytes32)
  */
 function isTypecastIdentifier(name: string): boolean {
@@ -1953,7 +2882,7 @@ function mapIdentifierToMoveType(name: string): any {
   if (name === 'uint128') return { kind: 'primitive', name: 'u128' };
   if (name.startsWith('uint')) return { kind: 'primitive', name: 'u256' }; // Default larger
 
-  // Int types (Move 2.0 has signed integers)
+  // Int types — Move 2.3+ has signed integers
   if (name === 'int' || name === 'int256') return { kind: 'primitive', name: 'i256' };
   if (name === 'int8') return { kind: 'primitive', name: 'i8' };
   if (name === 'int16') return { kind: 'primitive', name: 'i16' };
@@ -1962,10 +2891,15 @@ function mapIdentifierToMoveType(name: string): any {
   if (name === 'int128') return { kind: 'primitive', name: 'i128' };
   if (name.startsWith('int')) return { kind: 'primitive', name: 'i256' };
 
-  // Bytes types -> vector<u8>
-  if (name.startsWith('bytes')) {
-    return { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } };
-  }
+  // Bytes fixed-size types -> integer types (for DeFi bit packing)
+  if (name === 'bytes1') return { kind: 'primitive', name: 'u8' };
+  if (name === 'bytes2') return { kind: 'primitive', name: 'u16' };
+  if (name === 'bytes4') return { kind: 'primitive', name: 'u32' };
+  if (name === 'bytes8') return { kind: 'primitive', name: 'u64' };
+  if (name === 'bytes16') return { kind: 'primitive', name: 'u128' };
+  if (name.startsWith('bytes') && name !== 'bytes') return { kind: 'primitive', name: 'u256' };
+  // Dynamic bytes -> vector<u8>
+  if (name === 'bytes') return { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } };
 
   return { kind: 'primitive', name: 'u256' }; // Default
 }

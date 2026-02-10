@@ -31,12 +31,25 @@ export function mapSolidityTypeToMove(typeName: TypeName): MoveType {
         typeArgs: [keyType, valueType],
       };
 
-    case 'UserDefinedTypeName':
-      // User-defined types (structs, enums, contracts)
-      return {
-        kind: 'struct',
-        name: typeName.namePath,
-      };
+    case 'UserDefinedTypeName': {
+      // User-defined types (structs, enums, contracts, interfaces)
+      const namePath = typeName.namePath;
+
+      // Interface types (IERC20, ILBPair, etc.) → address
+      // In Move, contract references are just addresses
+      if (namePath.startsWith('I') && namePath.length > 1 && namePath[1] === namePath[1].toUpperCase() && /^I[A-Z]/.test(namePath)) {
+        return MoveTypes.address();
+      }
+
+      // Dotted type access (Library.StructName) → just use StructName
+      if (namePath.includes('.')) {
+        const parts = namePath.split('.');
+        const structName = parts[parts.length - 1];
+        return { kind: 'struct', name: structName };
+      }
+
+      return { kind: 'struct', name: namePath };
+    }
 
     case 'FunctionTypeName':
       // Function types - Move 2.2 supports function values
@@ -73,7 +86,10 @@ function mapElementaryType(name: string): MoveType {
     return MoveTypes.u256();
   }
 
-  // Signed integers (Move 2.3)
+  // Signed integers (Move 2.3+ supports i8 through i256)
+  // NOTE: Move signed integers do NOT support bitwise operations (&, |, ^, <<, >>)
+  // For DeFi bit-packing patterns that use signed types with bitwise ops,
+  // the unsigned equivalent should be used instead
   if (name === 'int' || name === 'int256') return MoveTypes.i256();
   if (name === 'int8') return MoveTypes.i8();
   if (name === 'int16') return MoveTypes.i16();
@@ -102,11 +118,18 @@ function mapElementaryType(name: string): MoveType {
   }
 
   // Fixed-size bytes (bytes1 to bytes32)
+  // bytes32 is commonly used for bit packing in DeFi (e.g., packed uint128 pairs)
+  // Map to u256 since Move supports bitwise operations on integers
+  // bytes1-bytes31 also map to the nearest uint type for arithmetic compatibility
   if (name.startsWith('bytes') && name.length <= 7) {
     const size = parseInt(name.slice(5));
     if (!isNaN(size) && size >= 1 && size <= 32) {
-      // Fixed-size bytes become vector<u8>
-      return MoveTypes.vector(MoveTypes.u8());
+      if (size <= 1) return MoveTypes.u8();
+      if (size <= 2) return MoveTypes.u16();
+      if (size <= 4) return MoveTypes.u32();
+      if (size <= 8) return MoveTypes.u64();
+      if (size <= 16) return MoveTypes.u128();
+      return MoveTypes.u256(); // bytes17-bytes32 → u256
     }
   }
 
@@ -135,6 +158,11 @@ export function createIRType(typeName: TypeName): IRType {
     isArray: typeName.type === 'ArrayTypeName',
     isMapping: typeName.type === 'Mapping',
   };
+
+  // Store struct name for user-defined types (needed for struct constructor detection)
+  if (typeName.type === 'UserDefinedTypeName') {
+    irType.structName = typeName.namePath;
+  }
 
   if (typeName.type === 'ArrayTypeName') {
     if (typeName.length) {

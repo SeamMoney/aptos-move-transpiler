@@ -81,6 +81,18 @@ export function transpile(
     return output;
   }
 
+  // Build IR for all contracts first (needed for inheritance flattening)
+  const allContractsIR = new Map<string, ReturnType<typeof contractToIR>>();
+  for (const contract of contracts) {
+    if (contract.kind === 'interface') continue;
+    try {
+      allContractsIR.set(contract.name, contractToIR(contract));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.warnings.push(`Could not parse ${contract.name} for inheritance: ${message}`);
+    }
+  }
+
   // Transpile each contract
   for (const contract of contracts) {
     // Skip interfaces for now (they don't generate modules)
@@ -141,7 +153,8 @@ export function transpile(
       }
 
       // Convert IR to Move module (standard transpilation)
-      const result = irToMoveModule(ir, moduleAddress);
+      // Pass all contracts for inheritance flattening
+      const result = irToMoveModule(ir, moduleAddress, allContractsIR);
 
       if (!result.success) {
         output.errors.push(...result.errors.map(e => e.message));

@@ -204,7 +204,8 @@ describe('Expression Transformer', () => {
           return a << b;
         }
       `);
-      expect(code).toContain('(a << b)');
+      // Move requires shift right operand to be u8
+      expect(code).toContain('(a << (b as u8))');
     });
 
     it('should transform right shift', () => {
@@ -213,7 +214,8 @@ describe('Expression Transformer', () => {
           return a >> b;
         }
       `);
-      expect(code).toContain('(a >> b)');
+      // Move requires shift right operand to be u8
+      expect(code).toContain('(a >> (b as u8))');
     });
   });
 

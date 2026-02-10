@@ -50,8 +50,26 @@ export function transformFunction(
   const needsState = !isPureFunction && (modifiersNeedState || bodyNeedsMutState || bodyNeedsReadState);
   const needsMutableState = modifiersNeedState || bodyNeedsMutState;
 
-  // Add state borrow FIRST (before modifiers)
-  if (needsState) {
+  // For private/internal functions that access state, accept state as parameter
+  // instead of calling borrow_global_mut (prevents double mutable borrow)
+  const isInternalFunction = fn.visibility === 'private' || fn.visibility === 'internal';
+  const receiveStateAsParam = isInternalFunction && needsState;
+
+  if (receiveStateAsParam) {
+    // Add state parameter instead of borrowing globally
+    const stateType: MoveType = {
+      kind: 'reference',
+      mutable: needsMutableState,
+      innerType: { kind: 'struct', name: `${context.contractName}State` },
+    };
+    params.push({
+      name: 'state',
+      type: stateType,
+    });
+  }
+
+  // Add state borrow FIRST (before modifiers) - only for public/external functions
+  if (needsState && !receiveStateAsParam) {
     fullBody.push({
       kind: 'let',
       pattern: 'state',
@@ -104,6 +122,21 @@ export function transformFunction(
 
   // Add return statement for functions with named return params
   // In Solidity, named return params are implicitly returned
+  // Post-process: add type casts for named return vars assigned from assembly
+  // Assembly operations produce u256, but the return var may be u8/u16/u32/u64/u128/bool
+  if (namedReturnParams.length > 0) {
+    const returnVarTypes = new Map<string, any>();
+    for (const param of namedReturnParams) {
+      const moveType = param.type.move || { kind: 'primitive', name: 'u256' };
+      if (moveType.kind === 'primitive' && moveType.name !== 'u256') {
+        returnVarTypes.set(toSnakeCase(param.name), moveType);
+      }
+    }
+    if (returnVarTypes.size > 0) {
+      addReturnVarCasts(fullBody, returnVarTypes);
+    }
+  }
+
   // In Move, we need explicit return statements
   if (namedReturnParams.length > 0) {
     // Check if the last statement is already a return
@@ -138,7 +171,9 @@ export function transformFunction(
     name: toSnakeCase(fn.name),
     visibility,
     isEntry: shouldBeEntry(fn),
-    isView: fn.stateMutability === 'view' || fn.stateMutability === 'pure',
+    // Only mark as #[view] if the function actually reads state via borrow_global
+    // Pure library functions should NOT be marked #[view]
+    isView: (fn.stateMutability === 'view') && needsState && !(context as any).isLibrary,
     params,
     body: fullBody,
   };
@@ -575,7 +610,28 @@ export function transformConstructor(
       };
     });
 
+  // Add signer_cap field to the struct (resource account pattern)
+  stateFields.push({
+    name: 'signer_cap',
+    value: { kind: 'identifier', name: 'signer_cap' },
+  });
+
   const body: MoveStatement[] = [];
+
+  // Create resource account: let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"seed");
+  context.usedModules.add('aptos_framework::account');
+  body.push({
+    kind: 'let',
+    pattern: ['resource_signer', 'signer_cap'],
+    value: {
+      kind: 'call',
+      function: 'account::create_resource_account',
+      args: [
+        { kind: 'identifier', name: 'deployer' },
+        { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+      ],
+    },
+  });
 
   // Separate constructor body into:
   // 1. Regular statements (before move_to)
@@ -589,14 +645,14 @@ export function transformConstructor(
   // Add regular statements (if any)
   body.push(...regularStatements);
 
-  // Add move_to to create the resource
+  // Add move_to to create the resource (use &resource_signer instead of deployer)
   body.push({
     kind: 'expression',
     expression: {
       kind: 'call',
       function: 'move_to',
       args: [
-        { kind: 'identifier', name: 'deployer' },
+        { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
         {
           kind: 'struct',
           name: stateName,
@@ -644,6 +700,34 @@ export function transformConstructor(
 }
 
 /**
+ * Add type casts to assignments targeting named return variables.
+ * Assembly blocks produce u256 expressions, but return vars may be smaller types.
+ */
+function addReturnVarCasts(stmts: any[], returnVarTypes: Map<string, any>): void {
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i];
+    if (!stmt) continue;
+
+    // Handle assign statements: value = expr → value = (expr as type)
+    if (stmt.kind === 'assign' && stmt.target?.kind === 'identifier') {
+      const targetType = returnVarTypes.get(stmt.target.name);
+      if (targetType && stmt.value?.kind !== 'cast') {
+        stmt.value = { kind: 'cast', value: stmt.value, targetType };
+      }
+    }
+
+    // Recurse into blocks
+    if (stmt.kind === 'block' && stmt.statements) {
+      addReturnVarCasts(stmt.statements, returnVarTypes);
+    }
+    if (stmt.kind === 'if') {
+      if (stmt.thenBlock) addReturnVarCasts(stmt.thenBlock, returnVarTypes);
+      if (stmt.elseBlock) addReturnVarCasts(stmt.elseBlock, returnVarTypes);
+    }
+  }
+}
+
+/**
  * Map Solidity visibility to Move visibility
  */
 function mapVisibility(
@@ -664,6 +748,7 @@ function mapVisibility(
 
 /**
  * Determine if a function should be an entry function
+ * Move entry functions cannot have return values
  */
 function shouldBeEntry(fn: IRFunction): boolean {
   // Entry functions can be called directly from transactions
@@ -673,6 +758,11 @@ function shouldBeEntry(fn: IRFunction): boolean {
   }
 
   if (fn.stateMutability === 'view' || fn.stateMutability === 'pure') {
+    return false;
+  }
+
+  // Move entry functions cannot have return values
+  if (fn.returnParams && fn.returnParams.length > 0) {
     return false;
   }
 
@@ -1216,7 +1306,7 @@ function accessesState(
 
     switch (stmt.kind) {
       case 'variable_declaration':
-        return checkExpression(stmt.value);
+        return checkExpression(stmt.initialValue);
 
       case 'assignment':
         return checkExpression(stmt.target) || checkExpression(stmt.value);
@@ -1226,19 +1316,34 @@ function accessesState(
 
       case 'if':
         return checkExpression(stmt.condition) ||
-               stmt.thenStatements?.some(checkStatement) ||
-               stmt.elseStatements?.some(checkStatement);
+               (stmt.thenBlock || []).some(checkStatement) ||
+               (stmt.elseBlock || []).some(checkStatement);
 
       case 'while':
-      case 'for':
+      case 'do_while':
         return checkExpression(stmt.condition) ||
-               stmt.body?.some(checkStatement);
+               (stmt.body || []).some(checkStatement);
+
+      case 'for':
+        return (stmt.init ? checkStatement(stmt.init) : false) ||
+               checkExpression(stmt.condition) ||
+               checkExpression(stmt.update) ||
+               (stmt.body || []).some(checkStatement);
 
       case 'return':
         return checkExpression(stmt.value);
 
+      case 'emit':
+        return (stmt.args || []).some(checkExpression);
+
+      case 'require':
+        return checkExpression(stmt.condition);
+
       case 'block':
-        return stmt.statements?.some(checkStatement);
+        return (stmt.statements || []).some(checkStatement);
+
+      case 'unchecked':
+        return (stmt.statements || []).some(checkStatement);
 
       default:
         return false;
@@ -1259,6 +1364,12 @@ function determineAcquires(
 
   // Pure functions don't acquire any resources
   if (fn.stateMutability === 'pure') {
+    return acquires;
+  }
+
+  // Private/internal functions receive state as a parameter, so they don't acquire
+  const isInternalFunction = fn.visibility === 'private' || fn.visibility === 'internal';
+  if (isInternalFunction) {
     return acquires;
   }
 
