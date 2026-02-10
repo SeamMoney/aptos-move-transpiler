@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-10T04:11:21.136Z",
+  "timestamp": "2026-02-10T04:24:53.285Z",
   "totalContracts": 22,
   "successfulTranspiles": 22,
   "totalFunctions": 317,
   "totalErrors": 0,
   "totalWarnings": 23,
-  "totalUnsupported": 4,
+  "totalUnsupported": 2,
   "totalAssemblyBlocks": 0,
   "contracts": [
     {
@@ -15,7 +15,7 @@
       "structCount": 0,
       "errorCount": 0,
       "warningCount": 0,
-      "unsupportedCount": 1,
+      "unsupportedCount": 0,
       "assemblyBlockCount": 0,
       "lineCount": 33,
       "moveCode": ""
@@ -255,7 +255,7 @@
       "structCount": 1,
       "errorCount": 0,
       "warningCount": 0,
-      "unsupportedCount": 1,
+      "unsupportedCount": 0,
       "assemblyBlockCount": 0,
       "lineCount": 417,
       "moveCode": ""

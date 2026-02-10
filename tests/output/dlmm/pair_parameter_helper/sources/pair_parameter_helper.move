@@ -192,7 +192,7 @@ module 0x1::pair_parameter_helper {
         let vol_acc: u256 = get_volatility_accumulator(params);
         let reduction_factor: u256 = get_reduction_factor(params);
         let vol_ref: u32;
-        vol_ref = (((vol_acc * reduction_factor) / BASIS_POINT_MAX) as u32);
+        vol_ref = (((vol_acc * reduction_factor) / BASIS_POINT_MAX) & 16777215u32);
         set_volatility_reference(params, vol_ref)
     }
 
@@ -204,7 +204,7 @@ module 0x1::pair_parameter_helper {
         vol_acc = (((get_volatility_reference(params) as u256) + (delta_id * BASIS_POINT_MAX)));
         let max_vol_acc: u256 = get_max_volatility_accumulator(params);
         vol_acc = if ((vol_acc > max_vol_acc)) max_vol_acc else vol_acc;
-        set_volatility_accumulator(params, (vol_acc as u32))
+        set_volatility_accumulator(params, (vol_acc & 16777215u32))
     }
 
     public(package) fun update_references(params: u256, timestamp: u256): u256 {

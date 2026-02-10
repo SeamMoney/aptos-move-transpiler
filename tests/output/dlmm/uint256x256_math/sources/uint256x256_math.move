@@ -43,13 +43,13 @@ module 0x1::uint256x256_math {
         let result = 0u256;
         let (prod0, prod1) = get_mul_prods(x, y);
         if ((prod0 != 0u256)) {
-            result = (prod0 >> offset);
+            result = (prod0 >> (offset as u8));
         };
         if ((prod1 != 0u256)) {
-            if ((prod1 >= (1u256 << offset))) {
+            if ((prod1 >= (1u256 << (offset as u8)))) {
                 abort E_UINT256X256_MATH_MUL_SHIFT_OVERFLOW
             };
-            result += (prod1 << ((256u256 - offset)));
+            result += (prod1 << (((256u256 - offset)) as u8));
         };
         result
     }
@@ -57,7 +57,7 @@ module 0x1::uint256x256_math {
     public(package) fun mul_shift_round_up(x: u256, y: u256, offset: u8): u256 {
         let result = 0u256;
         result = mul_shift_round_down(x, y, offset);
-        if ((((x * y) % (1u256 << offset)) != 0u256)) {
+        if ((((x * y) % (1u256 << (offset as u8))) != 0u256)) {
             result += 1u256;
         };
         result
@@ -67,15 +67,15 @@ module 0x1::uint256x256_math {
         let result = 0u256;
         let prod0: u256;
         let prod1: u256;
-        prod0 = (x << offset);
-        prod1 = (x >> ((256u256 - offset)));
-        get_end_of_div_round_down(x, (1u256 << offset), denominator, prod0, prod1)
+        prod0 = (x << (offset as u8));
+        prod1 = (x >> (((256u256 - offset)) as u8));
+        get_end_of_div_round_down(x, (1u256 << (offset as u8)), denominator, prod0, prod1)
     }
 
     public(package) fun shift_div_round_up(x: u256, offset: u8, denominator: u256): u256 {
         let result = 0u256;
         result = shift_div_round_down(x, offset, denominator);
-        if ((((x * (1u256 << offset)) % denominator) != 0u256)) {
+        if ((((x * (1u256 << (offset as u8))) % denominator) != 0u256)) {
             result += 1u256;
         };
         result

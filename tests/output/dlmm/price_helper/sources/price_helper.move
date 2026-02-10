@@ -40,11 +40,11 @@ module 0x1::price_helper {
     }
 
     public(package) fun get_base(bin_step: u16): u256 {
-        (SCALE + ((((bin_step as u256) << SCALE_OFFSET)) / BASIS_POINT_MAX))
+        (SCALE + ((((bin_step as u256) << (SCALE_OFFSET as u8))) / BASIS_POINT_MAX))
     }
 
     public(package) fun get_exponent(id: u32): i256 {
-        (((id as u256) as i256) - REAL_ID_SHIFT)
+        ((id as i256) - REAL_ID_SHIFT)
     }
 
     public(package) fun convert_decimal_price_to128x128(price: u256): u256 {

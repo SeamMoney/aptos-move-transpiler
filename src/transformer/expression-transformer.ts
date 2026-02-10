@@ -471,10 +471,14 @@ function transformAssignment(
     target = transformExpression(stmt.target, context);
   }
 
-  const value = transformExpression(stmt.value, context);
+  let value = transformExpression(stmt.value, context);
 
   // Handle compound assignment
   if (stmt.operator && stmt.operator !== '=') {
+    // For shift compound assignments, right operand must be u8 in Move
+    if (stmt.operator === '<<=' || stmt.operator === '>>=') {
+      value = castToU8ForShift(value);
+    }
     return {
       kind: 'assign',
       target,
@@ -1194,6 +1198,18 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
     };
   }
 
+  // Shift operators: right operand must be u8 in Move
+  // Also handles compound shift assignments (>>=, <<=) when they appear as binary expressions
+  if (expr.operator === '<<' || expr.operator === '>>' || expr.operator === '<<=' || expr.operator === '>>=') {
+    const castRight = castToU8ForShift(right);
+    return {
+      kind: 'binary',
+      operator: op as any,
+      left,
+      right: castRight,
+    };
+  }
+
   return {
     kind: 'binary',
     operator: op as any,
@@ -1689,6 +1705,31 @@ function castToU64IfNeeded(expr: MoveExpression): MoveExpression {
 }
 
 /**
+ * Cast an expression to u8 for use as a shift amount.
+ * Move requires shift right operands to be u8.
+ */
+function castToU8ForShift(expr: MoveExpression): MoveExpression {
+  // If it's already a u8 literal, no cast needed
+  if (expr.kind === 'literal' && expr.type === 'number' && (expr as any).suffix === 'u8') {
+    return expr;
+  }
+  // If it's a number literal, just change the suffix
+  if (expr.kind === 'literal' && expr.type === 'number') {
+    return { ...expr, suffix: 'u8' } as any;
+  }
+  // If it's already a cast to u8, return as-is
+  if (expr.kind === 'cast' && (expr as any).targetType?.kind === 'primitive' && (expr as any).targetType.name === 'u8') {
+    return expr;
+  }
+  // For identifiers and complex expressions, add a cast to u8
+  return {
+    kind: 'cast',
+    value: expr,
+    targetType: { kind: 'primitive', name: 'u8' },
+  };
+}
+
+/**
  * Get the default value for a mapping's value type.
  * Solidity mappings return 0/false/address(0) for missing keys.
  */
@@ -1903,6 +1944,43 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
       function: 'evm_compat::address_to_u256',
       args: [value],
     };
+  }
+
+  // For non-standard uint widths (uint24, uint40, uint48, etc.), Move doesn't have
+  // a native type at that width. The type maps to the nearest larger Move type (e.g., u32, u64).
+  // Solidity truncates silently to the target width, so we need a bitmask to emulate truncation.
+  // Standard Move types (u8, u16, u32, u64, u128, u256) use native `as` cast which aborts on overflow.
+  if (targetTypeName && targetTypeName.startsWith('uint')) {
+    const bits = parseInt(targetTypeName.slice(4)) || 256;
+    const standardBits = [8, 16, 32, 64, 128, 256];
+    if (!standardBits.includes(bits)) {
+      // Non-standard width: use bitmask to truncate
+      // uint24(x) → (x & 0xffffff), uint40(x) → (x & 0xffffffffff), etc.
+      const mask = ((1n << BigInt(bits)) - 1n).toString();
+      const suffix = targetType?.name || 'u256';
+      return {
+        kind: 'binary',
+        operator: '&',
+        left: value,
+        right: { kind: 'literal', type: 'number', value: mask, suffix },
+      };
+    }
+  }
+
+  // For non-standard int widths, also use bitmask approach
+  if (targetTypeName && targetTypeName.startsWith('int') && !targetTypeName.startsWith('interface')) {
+    const bits = parseInt(targetTypeName.slice(3)) || 256;
+    const standardBits = [8, 16, 32, 64, 128, 256];
+    if (!standardBits.includes(bits)) {
+      const mask = ((1n << BigInt(bits)) - 1n).toString();
+      const suffix = targetType?.name || 'i256';
+      return {
+        kind: 'binary',
+        operator: '&',
+        left: value,
+        right: { kind: 'literal', type: 'number', value: mask, suffix },
+      };
+    }
   }
 
   // Regular numeric type casts use Move's cast syntax

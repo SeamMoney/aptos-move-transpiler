@@ -35,7 +35,7 @@ module 0x1::uint128x128_math {
         if ((x == 0u256)) {
             abort E_UINT128X128_MATH_LOG_UNDERFLOW
         };
-        x >>= 1u256;
+        x >>= 1u8;
         let sign: i256;
         if ((x >= LOG_SCALE)) {
             sign = 1u256;
@@ -43,21 +43,21 @@ module 0x1::uint128x128_math {
             sign = -1u256;
             x = (LOG_SCALE_SQUARED / x);
         };
-        let n: u256 = most_significant_bit(((x >> LOG_SCALE_OFFSET)));
-        result = (((n as i256) << LOG_SCALE_OFFSET) as i256);
-        let y: u256 = (x >> n);
+        let n: u256 = most_significant_bit(((x >> (LOG_SCALE_OFFSET as u8))));
+        result = (((n as i256) << (LOG_SCALE_OFFSET as u8)) as i256);
+        let y: u256 = (x >> (n as u8));
         if ((y != LOG_SCALE)) {
-            let delta: i256 = ((1u256 << ((LOG_SCALE_OFFSET - 1u256))) as i256);
+            let delta: i256 = ((1u256 << (((LOG_SCALE_OFFSET - 1u256)) as u8)) as i256);
             while ((delta > 0u256)) {
-                y = (((y * y)) >> LOG_SCALE_OFFSET);
-                if ((y >= (1u256 << ((LOG_SCALE_OFFSET + 1u256))))) {
+                y = (((y * y)) >> (LOG_SCALE_OFFSET as u8));
+                if ((y >= (1u256 << (((LOG_SCALE_OFFSET + 1u256)) as u8)))) {
                     result += delta;
-                    y >>= 1u256;
+                    y >>= 1u8;
                 };
-                (delta >>= 1u256);
+                (delta >>= 1u8);
             }
         };
-        result = ((((result * sign)) << 1u256) as i256);
+        result = ((((result * sign)) << 1u8) as i256);
         result
     }
 

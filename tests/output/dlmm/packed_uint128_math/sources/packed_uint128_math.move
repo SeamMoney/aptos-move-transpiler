@@ -79,7 +79,7 @@ module 0x1::packed_uint128_math {
     public(package) fun add(x: u256, y: u256): u256 {
         let z = 0u256;
         z = (x + y);
-        if (((z < x) || (((z as u256) as u128) < ((x as u256) as u128)))) {
+        if (((z < x) || ((z as u128) < (x as u128)))) {
             abort E_PACKED_UINT128_MATH_ADD_OVERFLOW
         };
         z
@@ -92,7 +92,7 @@ module 0x1::packed_uint128_math {
     public(package) fun sub(x: u256, y: u256): u256 {
         let z = 0u256;
         z = (x - y);
-        if (((z > x) || (((z as u256) as u128) > ((x as u256) as u128)))) {
+        if (((z > x) || ((z as u128) > (x as u128)))) {
             abort E_PACKED_UINT128_MATH_SUB_UNDERFLOW
         };
         z

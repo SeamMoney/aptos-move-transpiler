@@ -9,7 +9,7 @@ module 0x1::l_b_pair {
     use std::vector;
 
     // Error codes
-    const _M_A_X_T_O_T_A_L_F_E_E: u256 = 0100000000000000000u256;
+    const _M_A_X_T_O_T_A_L_F_E_E: u256 = 100000000000000000u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -365,7 +365,7 @@ module 0x1::l_b_pair {
         if (((!success || (vector::length(&r_data) != 32u256)) || (decode(abi, r_data, (0u256)) != CALLBACK_SUCCESS))) {
             abort E_L_B_PAIR_FLASH_LOAN_CALLBACK_FAILED
         };
-        let balances_after: u256 = received((0u256 as u256), token_x(), token_y());
+        let balances_after: u256 = received(0u256, token_x(), token_y());
         if (lt(balances_after, (reserves_before + total_fees))) {
             abort E_L_B_PAIR_FLASH_LOAN_INSUFFICIENT_AMOUNT
         };

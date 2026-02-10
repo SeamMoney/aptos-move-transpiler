@@ -51,7 +51,7 @@ module 0x1::hooks {
 
     public(package) fun encode(parameters: Parameters): u256 {
         let hooks_parameters = 0u256;
-        hooks_parameters = (((evm_compat::to_address(parameters.hooks) as u256) as u256) as u256);
+        hooks_parameters = ((evm_compat::to_address(parameters.hooks) & 1461501637330902918203684832716283019655932542975u256) as u256);
         if (parameters.before_swap) {
             hooks_parameters |= BEFORE_SWAP_FLAG;
         };
@@ -103,12 +103,12 @@ module 0x1::hooks {
 
     public(package) fun get_hooks(hooks_parameters: u256): address {
         let hooks = @0x0;
-        hooks = (evm_compat::to_address(((hooks_parameters as u256) as u256)) as address);
+        hooks = (evm_compat::to_address(((hooks_parameters as u256) & 1461501637330902918203684832716283019655932542975u256)) as address);
         hooks
     }
 
     public(package) fun set_hooks(hooks_parameters: u256, new_hooks: address): u256 {
-        (((hooks_parameters as u128) as u256) | (((new_hooks as u256) as u256) as u256))
+        ((hooks_parameters as u256) | ((new_hooks & 1461501637330902918203684832716283019655932542975u256) as u256))
     }
 
     public(package) fun get_flags(hooks_parameters: u256): u128 {

@@ -455,7 +455,7 @@ module 0x1::l_b_router {
                 abort E_L_B_ROUTER_ID_OVERFLOWS
             };
             *vector::borrow_mut(&mut deposit_ids, (i as u64)) = (id as u256);
-            *vector::borrow_mut(&mut liquidity_configs, (i as u64)) = liquidity_configurations::encode_params((*vector::borrow(&liq.distribution_x, (i as u64)) as u64), (*vector::borrow(&liq.distribution_y, (i as u64)) as u64), ((id as u256) as u32));
+            *vector::borrow_mut(&mut liquidity_configs, (i as u64)) = liquidity_configurations::encode_params((*vector::borrow(&liq.distribution_x, (i as u64)) as u64), (*vector::borrow(&liq.distribution_y, (i as u64)) as u64), ((id as u256) & 16777215u32));
             i = (i + 1);
         }
         let amounts_received: u256;

@@ -81,7 +81,7 @@ module 0x1::oracle_helper {
         let sample_last_update: u64;
         let start_id: u256 = oracle_id;
         while ((low <= high)) {
-            let mid: u256 = (((low + high)) >> 1u256);
+            let mid: u256 = (((low + high)) >> 1u8);
             oracle_id = ((start_id + mid) % length);
             sample = *vector::borrow(&oracle.samples, (oracle_id as u64));
             sample_last_update = get_sample_last_update(sample);
@@ -120,13 +120,13 @@ module 0x1::oracle_helper {
         let created_at: u64 = get_sample_creation(sample);
         let last_updated_at: u64 = (created_at + get_sample_lifetime(sample));
         if ((safe40((timestamp::now_seconds() as u256)) > last_updated_at)) {
-            let (cumulative_id, cumulative_volatility, cumulative_bin_crossed) = update(sample, (((timestamp::now_seconds() as u256) - last_updated_at) as u64), get_active_id(parameters), get_volatility_accumulator(parameters), get_delta_id(parameters, active_id));
+            let (cumulative_id, cumulative_volatility, cumulative_bin_crossed) = update(sample, (((timestamp::now_seconds() as u256) - last_updated_at) & 1099511627775u64), get_active_id(parameters), get_volatility_accumulator(parameters), get_delta_id(parameters, active_id));
             let length: u16 = get_oracle_length(sample);
             let lifetime: u256 = ((timestamp::now_seconds() as u256) - created_at);
             if ((lifetime > _M_A_X_S_A_M_P_L_E_L_I_F_E_T_I_M_E)) {
                 oracle_id = ((oracle_id % length) + 1u256);
                 lifetime = 0u256;
-                created_at = ((timestamp::now_seconds() as u256) as u64);
+                created_at = ((timestamp::now_seconds() as u256) & 1099511627775u64);
                 parameters = set_oracle_id(parameters, oracle_id);
             };
             sample = sample_math::encode(length, cumulative_id, cumulative_volatility, cumulative_bin_crossed, (lifetime as u8), created_at);
@@ -141,15 +141,15 @@ module 0x1::oracle_helper {
         if ((length >= new_length)) {
             abort E_ORACLE_HELPER_NEW_LENGTH_TOO_SMALL
         };
-        let last_sample: u256 = if ((length == oracle_id)) sample else if ((length == 0u256)) (0u256 as u256) else get_sample(oracle, length);
+        let last_sample: u256 = if ((length == oracle_id)) sample else if ((length == 0u256)) 0u256 else get_sample(oracle, length);
         let active_size: u256 = get_oracle_length(last_sample);
         active_size = if ((oracle_id > active_size)) oracle_id else active_size;
         let i: u256 = length;
         while ((i < new_length)) {
-            *vector::borrow_mut(&mut oracle.samples, (i as u64)) = ((active_size as u256) as u256);
+            *vector::borrow_mut(&mut oracle.samples, (i as u64)) = (active_size as u256);
             i = (i + 1);
         }
-        set_sample(oracle, oracle_id, (((sample ^ ((length as u256) as u256))) | ((new_length as u256) as u256)));
+        set_sample(oracle, oracle_id, (((sample ^ (length as u256))) | (new_length as u256)));
     }
 
     fun check_oracle_id(oracle_id: u16) {

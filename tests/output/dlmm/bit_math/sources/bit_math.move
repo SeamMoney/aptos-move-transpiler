@@ -25,14 +25,14 @@ module 0x1::bit_math {
     public(package) fun closest_bit_right(x: u256, bit: u8): u256 {
         let id = 0u256;
         let shift: u256 = (255u256 - bit);
-        x <<= shift;
+        x <<= (shift as u8);
         if (((x == 0u256))) 115792089237316195423570985008687907853269984665640564039457584007913129639935u256 else (most_significant_bit(x) - shift)
         id
     }
 
     public(package) fun closest_bit_left(x: u256, bit: u8): u256 {
         let id = 0u256;
-        x >>= bit;
+        x >>= (bit as u8);
         if (((x == 0u256))) 115792089237316195423570985008687907853269984665640564039457584007913129639935u256 else (least_significant_bit(x) + bit)
         id
     }

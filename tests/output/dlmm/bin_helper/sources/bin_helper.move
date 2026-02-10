@@ -57,10 +57,10 @@ module 0x1::bin_helper {
         if ((user_liquidity > effective_liquidity)) {
             let delta_liquidity: u256 = (user_liquidity - effective_liquidity);
             if ((delta_liquidity >= SCALE)) {
-                let delta_y: u256 = (delta_liquidity >> SCALE_OFFSET);
+                let delta_y: u256 = (delta_liquidity >> (SCALE_OFFSET as u8));
                 delta_y = if ((delta_y > y)) y else delta_y;
                 y -= delta_y;
-                delta_liquidity -= (delta_y << SCALE_OFFSET);
+                delta_liquidity -= (delta_y << (SCALE_OFFSET as u8));
             };
             if ((delta_liquidity >= price)) {
                 let delta_x: u256 = (delta_liquidity / price);
@@ -90,7 +90,7 @@ module 0x1::bin_helper {
             };
         };
         if ((y > 0u256)) {
-            y <<= SCALE_OFFSET;
+            y <<= (SCALE_OFFSET as u8);
             liquidity += y;
             if ((liquidity < y)) {
                 abort E_BIN_HELPER_LIQUIDITY_OVERFLOW
@@ -100,7 +100,7 @@ module 0x1::bin_helper {
     }
 
     public(package) fun verify_amounts(amounts: u256, active_id: u32, id: u32) {
-        if ((((id < active_id) && (((amounts << 128u256)) > 0u256)) || ((id > active_id) && ((amounts as u256) > 340282366920938463463374607431768211455u128)))) {
+        if ((((id < active_id) && (((amounts << 128u8)) > 0u256)) || ((id > active_id) && ((amounts as u256) > 340282366920938463463374607431768211455u128)))) {
             abort E_BIN_HELPER_COMPOSITION_FACTOR_FLAWED
         };
     }

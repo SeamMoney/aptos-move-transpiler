@@ -9,10 +9,10 @@ module 0x1::l_b_factory {
     use aptos_std::aptos_hash;
 
     // Error codes
-    const LB_HOOKS_MANAGER_ROLE: u256 = /* unsupported expression */;
+    const LB_HOOKS_MANAGER_ROLE: u256 = 48806950478657521762066135284732993674703106329049070289623579635572452485516u256;
     const _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N: u256 = 255u256;
     const _M_I_N_B_I_N_S_T_E_P: u256 = 1u256;
-    const _M_A_X_F_L_A_S_H_L_O_A_N_F_E_E: u256 = 0100000000000000000u256;
+    const _M_A_X_F_L_A_S_H_L_O_A_N_F_E_E: u256 = 100000000000000000u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -261,7 +261,7 @@ module 0x1::l_b_factory {
         if ((bin_step < _M_I_N_B_I_N_S_T_E_P)) {
             abort E_L_B_FACTORY_BIN_STEP_TOO_LOW
         };
-        let preset: u256 = set_static_fee_parameters((0u256 as u256), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
+        let preset: u256 = set_static_fee_parameters(0u256, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
         if (is_open) {
             preset = set_bool(preset, true, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N);
         };
