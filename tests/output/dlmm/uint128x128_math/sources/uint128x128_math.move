@@ -46,7 +46,7 @@ module 0x1::uint128x128_math {
             sign = -1;
             x = (LOG_SCALE_SQUARED / x);
         };
-        let n: u256 = most_significant_bit(((x >> (LOG_SCALE_OFFSET as u8))));
+        let n: u256 = bit_math::most_significant_bit(((x >> (LOG_SCALE_OFFSET as u8))));
         result = (((n as i256) << (LOG_SCALE_OFFSET as u8)) as i256);
         let y: u256 = (x >> (n as u8));
         if ((y != LOG_SCALE)) {

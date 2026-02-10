@@ -29,14 +29,12 @@ module 0x1::bit_math {
         let shift: u256 = (255 - bit);
         x <<= (shift as u8);
         return if (((x == 0))) u256::MAX else (most_significant_bit(x) - shift)
-        return id
     }
 
     public(package) fun closest_bit_left(x: u256, bit: u8): u256 {
         let id = 0u256;
         x >>= (bit as u8);
         return if (((x == 0))) u256::MAX else (least_significant_bit(x) + bit)
-        return id
     }
 
     public(package) fun most_significant_bit(x: u256): u8 {

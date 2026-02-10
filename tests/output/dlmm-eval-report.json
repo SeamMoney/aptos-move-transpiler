@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-02-10T05:05:41.883Z",
+  "timestamp": "2026-02-10T05:49:57.172Z",
   "totalContracts": 22,
   "successfulTranspiles": 22,
   "totalFunctions": 317,
@@ -41,7 +41,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 121,
+      "lineCount": 119,
       "moveCode": ""
     },
     {

@@ -121,7 +121,7 @@ module 0x1::packed_uint128_math {
             return 0
         };
         let BASIS_POINT_MAX: u256 = BASIS_POINT_MAX;
-        if ((multiplier > BASIS_POINT_MAX)) {
+        if (((multiplier as u256) > BASIS_POINT_MAX)) {
             abort E_PACKED_UINT128_MATH_MULTIPLIER_TOO_LARGE
         };
         let (x1, x2) = decode(x);

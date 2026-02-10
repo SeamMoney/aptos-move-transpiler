@@ -191,7 +191,7 @@ module 0x1::safe_cast {
     public(package) fun safe128(x: u256): u128 {
         let y = 0u128;
         y = (x as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS128_BITS
         };
         return y
@@ -200,7 +200,7 @@ module 0x1::safe_cast {
     public(package) fun safe120(x: u256): u128 {
         let y = 0u128;
         y = ((x & 1329227995784915872903807060280344575) as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS120_BITS
         };
         return y
@@ -209,7 +209,7 @@ module 0x1::safe_cast {
     public(package) fun safe112(x: u256): u128 {
         let y = 0u128;
         y = ((x & 5192296858534827628530496329220095) as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS112_BITS
         };
         return y
@@ -218,7 +218,7 @@ module 0x1::safe_cast {
     public(package) fun safe104(x: u256): u128 {
         let y = 0u128;
         y = ((x & 20282409603651670423947251286015) as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS104_BITS
         };
         return y
@@ -227,7 +227,7 @@ module 0x1::safe_cast {
     public(package) fun safe96(x: u256): u128 {
         let y = 0u128;
         y = ((x & 79228162514264337593543950335) as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS96_BITS
         };
         return y
@@ -236,7 +236,7 @@ module 0x1::safe_cast {
     public(package) fun safe88(x: u256): u128 {
         let y = 0u128;
         y = ((x & 309485009821345068724781055) as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS88_BITS
         };
         return y
@@ -245,7 +245,7 @@ module 0x1::safe_cast {
     public(package) fun safe80(x: u256): u128 {
         let y = 0u128;
         y = ((x & 1208925819614629174706175) as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS80_BITS
         };
         return y
@@ -254,7 +254,7 @@ module 0x1::safe_cast {
     public(package) fun safe72(x: u256): u128 {
         let y = 0u128;
         y = ((x & 4722366482869645213695) as u128);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS72_BITS
         };
         return y
@@ -263,7 +263,7 @@ module 0x1::safe_cast {
     public(package) fun safe64(x: u256): u64 {
         let y = 0u64;
         y = (x as u64);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS64_BITS
         };
         return y
@@ -272,7 +272,7 @@ module 0x1::safe_cast {
     public(package) fun safe56(x: u256): u64 {
         let y = 0u64;
         y = ((x & 72057594037927935) as u64);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS56_BITS
         };
         return y
@@ -281,7 +281,7 @@ module 0x1::safe_cast {
     public(package) fun safe48(x: u256): u64 {
         let y = 0u64;
         y = ((x & 281474976710655) as u64);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS48_BITS
         };
         return y
@@ -290,7 +290,7 @@ module 0x1::safe_cast {
     public(package) fun safe40(x: u256): u64 {
         let y = 0u64;
         y = ((x & 1099511627775) as u64);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS40_BITS
         };
         return y
@@ -299,7 +299,7 @@ module 0x1::safe_cast {
     public(package) fun safe32(x: u256): u32 {
         let y = 0u32;
         y = (x as u32);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS32_BITS
         };
         return y
@@ -308,7 +308,7 @@ module 0x1::safe_cast {
     public(package) fun safe24(x: u256): u32 {
         let y = 0u32;
         y = ((x & 16777215) as u32);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS24_BITS
         };
         return y
@@ -317,7 +317,7 @@ module 0x1::safe_cast {
     public(package) fun safe16(x: u256): u16 {
         let y = 0u16;
         y = (x as u16);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS16_BITS
         };
         return y
@@ -326,7 +326,7 @@ module 0x1::safe_cast {
     public(package) fun safe8(x: u256): u8 {
         let y = 0u8;
         y = (x as u8);
-        if ((y != x)) {
+        if (((y as u256) != x)) {
             abort E_SAFE_CAST_EXCEEDS8_BITS
         };
         return y

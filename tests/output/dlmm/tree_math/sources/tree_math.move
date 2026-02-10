@@ -94,7 +94,7 @@ module 0x1::tree_math {
             if ((closest_bit != u256::MAX)) {
                 key2 = ((((key1 as u256) << 8u8) | closest_bit) as u256);
                 leaves = *vector::borrow(&tree.level2, (key2 as u64));
-                return ((((key2 as u256) << 8u8) | most_significant_bit((leaves as u256))) & 16777215)
+                return ((((key2 as u256) << 8u8) | bit_math::most_significant_bit((leaves as u256))) & 16777215)
             };
         };
         bit = (((key1 as u256) & u8::MAX) as u8);
@@ -104,9 +104,9 @@ module 0x1::tree_math {
             if ((closest_bit != u256::MAX)) {
                 key1 = (closest_bit as u256);
                 leaves = *vector::borrow(&tree.level1, (key1 as u64));
-                key2 = ((((key1 as u256) << 8u8) | most_significant_bit((leaves as u256))) as u256);
+                key2 = ((((key1 as u256) << 8u8) | bit_math::most_significant_bit((leaves as u256))) as u256);
                 leaves = *vector::borrow(&tree.level2, (key2 as u64));
-                return ((((key2 as u256) << 8u8) | most_significant_bit((leaves as u256))) & 16777215)
+                return ((((key2 as u256) << 8u8) | bit_math::most_significant_bit((leaves as u256))) & 16777215)
             };
         };
         return 115792089237316195423570985008687907853269984665640564039457584007913129639935u256
@@ -131,7 +131,7 @@ module 0x1::tree_math {
             if ((closest_bit != u256::MAX)) {
                 key2 = ((((key1 as u256) << 8u8) | closest_bit) as u256);
                 leaves = *vector::borrow(&tree.level2, (key2 as u64));
-                return ((((key2 as u256) << 8u8) | least_significant_bit((leaves as u256))) & 16777215)
+                return ((((key2 as u256) << 8u8) | bit_math::least_significant_bit((leaves as u256))) & 16777215)
             };
         };
         bit = (((key1 as u256) & u8::MAX) as u8);
@@ -141,19 +141,19 @@ module 0x1::tree_math {
             if ((closest_bit != u256::MAX)) {
                 key1 = (closest_bit as u256);
                 leaves = *vector::borrow(&tree.level1, (key1 as u64));
-                key2 = ((((key1 as u256) << 8u8) | least_significant_bit((leaves as u256))) as u256);
+                key2 = ((((key1 as u256) << 8u8) | bit_math::least_significant_bit((leaves as u256))) as u256);
                 leaves = *vector::borrow(&tree.level2, (key2 as u64));
-                return ((((key2 as u256) << 8u8) | least_significant_bit((leaves as u256))) & 16777215)
+                return ((((key2 as u256) << 8u8) | bit_math::least_significant_bit((leaves as u256))) & 16777215)
             };
         };
         return 0
     }
 
     fun closest_bit_right(leaves: u256, bit: u8): u256 {
-        return closest_bit_right((leaves as u256), (bit - 1))
+        return bit_math::closest_bit_right((leaves as u256), (bit - 1))
     }
 
     fun closest_bit_left(leaves: u256, bit: u8): u256 {
-        return closest_bit_left((leaves as u256), (bit + 1))
+        return bit_math::closest_bit_left((leaves as u256), (bit + 1))
     }
 }

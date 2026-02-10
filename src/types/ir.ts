@@ -382,6 +382,7 @@ export interface TranspileContext {
   inheritedContracts?: Map<string, IRContract>;  // For inheritance flattening
   paramNameMap?: Map<string, string>;  // Maps Solidity param names to Move snake_case names
   usingFor?: IRUsingFor[];  // using Library for Type declarations
+  libraryFunctions?: Map<string, string>;  // Maps function_name → library_module_name for cross-module calls
 }
 
 export interface TranspileError {

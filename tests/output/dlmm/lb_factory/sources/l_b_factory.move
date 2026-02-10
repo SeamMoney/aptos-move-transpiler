@@ -132,14 +132,14 @@ module 0x1::l_b_factory {
             abort E_L_B_FACTORY_BIN_STEP_HAS_NO_PRESET
         };
         let preset: u256 = (get(state.presets, bin_step) as u256);
-        base_factor = get_base_factor(preset);
-        filter_period = get_filter_period(preset);
-        decay_period = get_decay_period(preset);
-        reduction_factor = get_reduction_factor(preset);
-        variable_fee_control = get_variable_fee_control(preset);
-        protocol_share = get_protocol_share(preset);
-        max_volatility_accumulator = get_max_volatility_accumulator(preset);
-        is_open = (decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N) != 0);
+        base_factor = pair_parameter_helper::get_base_factor(preset);
+        filter_period = pair_parameter_helper::get_filter_period(preset);
+        decay_period = pair_parameter_helper::get_decay_period(preset);
+        reduction_factor = pair_parameter_helper::get_reduction_factor(preset);
+        variable_fee_control = pair_parameter_helper::get_variable_fee_control(preset);
+        protocol_share = pair_parameter_helper::get_protocol_share(preset);
+        max_volatility_accumulator = pair_parameter_helper::get_max_volatility_accumulator(preset);
+        is_open = (encoded::decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N) != 0);
         return (base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, is_open)
     }
 
@@ -180,7 +180,7 @@ module 0x1::l_b_factory {
             let lb_pairs_info: aptos_std::table::Table<u256, LBPairInformation> = *table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b);
             let i: u256 = 0;
             while ((i < length)) {
-                let bin_step: u16 = safe16(at(address_set, i));
+                let bin_step: u16 = safe_cast::safe16(at(address_set, i));
                 *vector::borrow_mut(&mut lb_pairs_available, (i as u64)) = l_b_pair_information(bin_step, *vector::borrow(&lb_pairs_info, (bin_step as u64)).l_b_pair, *vector::borrow(&lb_pairs_info, (bin_step as u64)).created_by_owner, *vector::borrow(&lb_pairs_info, (bin_step as u64)).ignored_for_routing);
                 i = (i + 1);
             }
@@ -236,7 +236,7 @@ module 0x1::l_b_factory {
         push(state.all_l_b_pairs, pair);
         (*table::borrow(&*table::borrow_with_default(&state.available_l_b_pair_bin_steps, token_a, &0u256), token_b) + bin_step);
         event::emit(LBPairCreated { arg0: token_x, arg1: token_y, arg2: bin_step, arg3: pair, arg4: (vector::length(&state.all_l_b_pairs) - 1) });
-        initialize(pair, get_base_factor(preset), get_filter_period(preset), get_decay_period(preset), get_reduction_factor(preset), get_variable_fee_control(preset), get_protocol_share(preset), get_max_volatility_accumulator(preset), active_id);
+        initialize(pair, pair_parameter_helper::get_base_factor(preset), pair_parameter_helper::get_filter_period(preset), pair_parameter_helper::get_decay_period(preset), pair_parameter_helper::get_reduction_factor(preset), pair_parameter_helper::get_variable_fee_control(preset), pair_parameter_helper::get_protocol_share(preset), pair_parameter_helper::get_max_volatility_accumulator(preset), active_id);
         return pair
     }
 
@@ -261,11 +261,11 @@ module 0x1::l_b_factory {
         if ((bin_step < _M_I_N_B_I_N_S_T_E_P)) {
             abort E_L_B_FACTORY_BIN_STEP_TOO_LOW
         };
-        let preset: u256 = set_static_fee_parameters((0 as u256), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
+        let preset: u256 = pair_parameter_helper::set_static_fee_parameters((0 as u256), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
         if (is_open) {
-            preset = set_bool(preset, true, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N);
+            preset = encoded::set_bool(preset, true, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N);
         };
-        set(state.presets, bin_step, (preset as u256));
+        encoded::set(state.presets, bin_step, (preset as u256));
         event::emit(PresetSet { arg0: bin_step, arg1: base_factor, arg2: filter_period, arg3: decay_period, arg4: reduction_factor, arg5: variable_fee_control, arg6: protocol_share, arg7: max_volatility_accumulator });
         event::emit(PresetOpenStateChanged { arg0: bin_step, arg1: is_open });
     }
@@ -277,10 +277,10 @@ module 0x1::l_b_factory {
             abort E_L_B_FACTORY_BIN_STEP_HAS_NO_PRESET
         };
         let preset: u256 = (get(state.presets, bin_step) as u256);
-        if ((decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N) == is_open)) {
+        if ((encoded::decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N) == is_open)) {
             abort E_L_B_FACTORY_PRESET_OPEN_STATE_IS_ALREADY_IN_THE_SAME_STATE
         };
-        set(state.presets, bin_step, (set_bool(preset, is_open, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N) as u256));
+        encoded::set(state.presets, bin_step, (encoded::set_bool(preset, is_open, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N) as u256));
         event::emit(PresetOpenStateChanged { arg0: bin_step, arg1: is_open });
     }
 
@@ -300,7 +300,7 @@ module 0x1::l_b_factory {
         if ((evm_compat::to_address(lb_pair) == @0x0)) {
             abort E_L_B_FACTORY_L_B_PAIR_NOT_CREATED
         };
-        set_static_fee_parameters(lb_pair, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
+        pair_parameter_helper::set_static_fee_parameters(lb_pair, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
     }
 
     public entry fun set_l_b_hooks_parameters_on_pair(account: &signer, token_x: address, token_y: address, bin_step: u16, hooks_parameters: u256, on_hooks_set_data: vector<u8>) {
@@ -357,7 +357,7 @@ module 0x1::l_b_factory {
     }
 
     public(package) fun is_preset_open(preset: u256): bool {
-        return decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N)
+        return encoded::decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N)
     }
 
     public(package) fun set_fee_recipient(fee_recipient: address, state: &mut LBFactoryState) {

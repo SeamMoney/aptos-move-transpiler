@@ -430,6 +430,26 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   // Pass using-for declarations for library method inlining
   context.usingFor = flattenedIR.usingFor;
 
+  // Build library function map: maps function_name → library_module_name
+  // This enables qualified cross-module calls (e.g., packed_uint128_math::decode)
+  const libraryFunctions = new Map<string, string>();
+  if (allContracts && flattenedIR.usingFor) {
+    for (const using of flattenedIR.usingFor) {
+      const library = allContracts.get(using.libraryName);
+      if (library) {
+        const moduleName = toSnakeCase(using.libraryName);
+        for (const fn of library.functions) {
+          const fnName = toSnakeCase(fn.name);
+          // Don't overwrite if already mapped (first library wins, matches Solidity semantics)
+          if (!libraryFunctions.has(fnName)) {
+            libraryFunctions.set(fnName, moduleName);
+          }
+        }
+      }
+    }
+  }
+  context.libraryFunctions = libraryFunctions;
+
   // Build the Move module
   const module: MoveModule = {
     address: moduleAddress,

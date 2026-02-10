@@ -415,7 +415,7 @@ module 0x1::l_b_router {
             safe_transfer_native(to, amount);
         } else {
             amount = if ((amount == u256::MAX)) balance_of(token, @0x1) else amount;
-            safe_transfer(token, to, amount);
+            token_helper::safe_transfer(token, to, amount);
         };
     }
 
@@ -463,13 +463,13 @@ module 0x1::l_b_router {
         let amounts_left: u256;
         (amounts_received, amounts_left, liquidity_minted) = mint(pair, liq.to, liquidity_configs, liq.refund_to);
         let amounts_added: u256 = (amounts_received - amounts_left);
-        amount_x_added = decode_x(amounts_added);
-        amount_y_added = decode_y(amounts_added);
+        amount_x_added = packed_uint128_math::decode_x(amounts_added);
+        amount_y_added = packed_uint128_math::decode_y(amounts_added);
         if (((amount_x_added < liq.amount_x_min) || (amount_y_added < liq.amount_y_min))) {
             abort E_L_B_ROUTER_AMOUNT_SLIPPAGE_CAUGHT
         };
-        amount_x_left = decode_x(amounts_left);
-        amount_y_left = decode_y(amounts_left);
+        amount_x_left = packed_uint128_math::decode_x(amounts_left);
+        amount_y_left = packed_uint128_math::decode_y(amounts_left);
         return (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted)
     }
 
@@ -507,8 +507,8 @@ module 0x1::l_b_router {
         let amounts_burned: vector<u256> = burn(pair, signer::address_of(account), to, ids, amounts);
         let i: u256;
         while ((i < vector::length(&amounts_burned))) {
-            amount_x += decode_x(*vector::borrow(&amounts_burned, (i as u64)));
-            amount_y += decode_y(*vector::borrow(&amounts_burned, (i as u64)));
+            amount_x += packed_uint128_math::decode_x(*vector::borrow(&amounts_burned, (i as u64)));
+            amount_y += packed_uint128_math::decode_y(*vector::borrow(&amounts_burned, (i as u64)));
             i = (i + 1);
         }
         if (((amount_x < amount_x_min) || (amount_y < amount_y_min))) {
@@ -552,7 +552,7 @@ module 0x1::l_b_router {
                     };
                 } else {
                     let swap_for_y: bool = (token_next == get_token_y(i_l_b_pair(pair)));
-                    let (amount_x_out, amount_y_out) = decode(swap(i_l_b_pair(pair), swap_for_y, recipient));
+                    let (amount_x_out, amount_y_out) = packed_uint128_math::decode(swap(i_l_b_pair(pair), swap_for_y, recipient));
                     if (swap_for_y) {
                         amount_out = amount_y_out;
                     } else {
@@ -597,7 +597,7 @@ module 0x1::l_b_router {
                     };
                 } else {
                     let swap_for_y: bool = (token_next == get_token_y(i_l_b_pair(pair)));
-                    let (amount_x_out, amount_y_out) = decode(swap(i_l_b_pair(pair), swap_for_y, recipient));
+                    let (amount_x_out, amount_y_out) = packed_uint128_math::decode(swap(i_l_b_pair(pair), swap_for_y, recipient));
                     if (swap_for_y) {
                         amount_out = amount_y_out;
                     } else {
@@ -694,14 +694,14 @@ module 0x1::l_b_router {
         if ((amount == 0)) {
             return
         };
-        safe_transfer(token, to, amount);
+        token_helper::safe_transfer(token, to, amount);
     }
 
     fun safe_transfer_from(token: address, from: address, to: address, amount: u256) {
         if ((amount == 0)) {
             return
         };
-        safe_transfer_from(token, from, to, amount);
+        token_helper::safe_transfer_from(token, from, to, amount);
     }
 
     fun safe_transfer_native(to: address, amount: u256) {
@@ -719,7 +719,7 @@ module 0x1::l_b_router {
             return
         };
         unknown();
-        safe_transfer(IERC20(state.wnative), to, amount);
+        token_helper::safe_transfer(IERC20(state.wnative), to, amount);
     }
 
     fun w_native_withdraw_and_transfer(to: address, amount: u256) {

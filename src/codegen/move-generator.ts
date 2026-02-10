@@ -236,9 +236,10 @@ function generateFunction(func: MoveFunction, indent: number): string {
   sig += ' {';
   lines.push(sig);
 
-  // Body
+  // Body (stop after return to eliminate dead code)
   for (const stmt of func.body) {
     lines.push(generateStatement(stmt, indent + 4));
+    if (stmt.kind === 'return') break;
   }
 
   lines.push(`${pad}}`);

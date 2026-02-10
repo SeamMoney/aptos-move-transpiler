@@ -563,12 +563,9 @@ function extractAssignmentFromCondition(condition: any, context: TranspileContex
     const preStmt: MoveStatement = { kind: 'assign', target, value };
 
     // The condition becomes: target != right (or whatever the comparison operator is)
-    const newCondition: MoveExpression = {
-      kind: 'binary',
-      operator: condition.operator,
-      left: target,
-      right: transformExpression(condition.right, context),
-    };
+    // Use harmonizeComparison to add casts for cross-type comparisons (e.g., u128 != u256)
+    const right2 = transformExpression(condition.right, context);
+    const newCondition = harmonizeComparison(condition.operator, target, right2, context);
 
     return { preStatements: [preStmt], condition: newCondition };
   }
@@ -585,12 +582,8 @@ function extractAssignmentFromCondition(condition: any, context: TranspileContex
     const value = transformExpression(assign.value || assign.right, context);
     const preStmt: MoveStatement = { kind: 'assign', target, value };
 
-    const newCondition: MoveExpression = {
-      kind: 'binary',
-      operator: condition.operator,
-      left: transformExpression(condition.left, context),
-      right: target,
-    };
+    const left2 = transformExpression(condition.left, context);
+    const newCondition = harmonizeComparison(condition.operator, left2, target, context);
 
     return { preStatements: [preStmt], condition: newCondition };
   }
@@ -1266,6 +1259,13 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
     }
   }
 
+  // Type harmonization for comparisons: Move requires both operands to have the same type.
+  // Upcast the narrower operand to the wider type.
+  // e.g., (y:u128 != x:u256) → ((y as u256) != x)
+  if (['==', '!=', '<', '>', '<=', '>='].includes(op)) {
+    return harmonizeComparison(op, left, right, context);
+  }
+
   return {
     kind: 'binary',
     operator: op as any,
@@ -1282,6 +1282,59 @@ function isBoolVariable(name: string, context: TranspileContext): boolean {
   const varType = context.localVariables?.get(name);
   if (varType && (varType.solidity === 'bool' || varType.move?.name === 'bool')) return true;
   return false;
+}
+
+/**
+ * Get the integer bit width of an expression, using context for type inference.
+ * Returns positive for unsigned (8, 16, 32, 64, 128, 256),
+ * negative for signed (-8, -16, ..., -256), or undefined if unknown.
+ */
+const INT_WIDTHS: Record<string, number> = {
+  'u8': 8, 'u16': 16, 'u32': 32, 'u64': 64, 'u128': 128, 'u256': 256,
+  'i8': -8, 'i16': -16, 'i32': -32, 'i64': -64, 'i128': -128, 'i256': -256,
+};
+
+function getIntegerWidth(expr: any, context: TranspileContext): number | undefined {
+  // Identifier: look up in localVariables
+  if (expr.kind === 'identifier') {
+    const varType = context.localVariables?.get(expr.name);
+    if (varType?.move?.name) return INT_WIDTHS[varType.move.name];
+  }
+  // Cast expression: use the target type
+  if (expr.kind === 'cast' && expr.targetType?.name) {
+    return INT_WIDTHS[expr.targetType.name];
+  }
+  // Function call parameter: check function params
+  if (expr.kind === 'call' && expr.function) {
+    // Can't determine return type without full type inference
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Harmonize types for comparison expressions.
+ * If operands are different-width integers, upcast the narrower one.
+ * Returns a binary expression with the correct types.
+ */
+function harmonizeComparison(op: string, left: any, right: any, context: TranspileContext): any {
+  const leftWidth = getIntegerWidth(left, context);
+  const rightWidth = getIntegerWidth(right, context);
+  if (leftWidth !== undefined && rightWidth !== undefined && leftWidth !== rightWidth) {
+    const leftSigned = leftWidth < 0;
+    const rightSigned = rightWidth < 0;
+    const absLeft = Math.abs(leftWidth);
+    const absRight = Math.abs(rightWidth);
+    if (leftSigned === rightSigned && absLeft !== absRight) {
+      const widerType: any = { kind: 'primitive', name: `${leftSigned ? 'i' : 'u'}${Math.max(absLeft, absRight)}` };
+      if (absLeft < absRight) {
+        return { kind: 'binary', operator: op, left: { kind: 'cast', value: left, targetType: widerType }, right };
+      } else {
+        return { kind: 'binary', operator: op, left, right: { kind: 'cast', value: right, targetType: widerType } };
+      }
+    }
+  }
+  return { kind: 'binary', operator: op, left, right };
 }
 
 /**
@@ -2893,10 +2946,13 @@ function transformUsingForCall(
   }
 
   // If we can't inline it, treat as a direct function call with obj as first arg
-  // This handles custom library functions: obj.customMethod(args) → customMethod(obj, args)
+  // This handles custom library functions: obj.customMethod(args) → library::method(obj, args)
+  const methodSnake = toSnakeCase(method);
+  const libraryModule = context.libraryFunctions?.get(methodSnake);
+
   return {
     kind: 'call',
-    function: toSnakeCase(method),
+    function: libraryModule ? `${libraryModule}::${methodSnake}` : methodSnake,
     args: [obj, ...args],
   };
 }

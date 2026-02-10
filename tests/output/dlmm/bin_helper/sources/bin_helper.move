@@ -32,33 +32,33 @@ module 0x1::bin_helper {
 
     public(package) fun get_amount_out_of_bin(bin_reserves: u256, amount_to_burn: u256, total_supply: u256): u256 {
         let amounts_out = 0u256;
-        let (bin_reserve_x, bin_reserve_y) = decode(bin_reserves);
+        let (bin_reserve_x, bin_reserve_y) = packed_uint128_math::decode(bin_reserves);
         let amount_x_out_from_bin: u128;
         let amount_y_out_from_bin: u128;
         if ((bin_reserve_x > 0)) {
-            amount_x_out_from_bin = safe128((mul_div_round_down(amount_to_burn, bin_reserve_x, total_supply)));
+            amount_x_out_from_bin = safe_cast::safe128((uint256x256_math::mul_div_round_down(amount_to_burn, bin_reserve_x, total_supply)));
         };
         if ((bin_reserve_y > 0)) {
-            amount_y_out_from_bin = safe128((mul_div_round_down(amount_to_burn, bin_reserve_y, total_supply)));
+            amount_y_out_from_bin = safe_cast::safe128((uint256x256_math::mul_div_round_down(amount_to_burn, bin_reserve_y, total_supply)));
         };
-        amounts_out = encode(amount_x_out_from_bin, amount_y_out_from_bin);
+        amounts_out = packed_uint128_math::encode(amount_x_out_from_bin, amount_y_out_from_bin);
         return amounts_out
     }
 
     public(package) fun get_shares_and_effective_amounts_in(bin_reserves: u256, amounts_in: u256, price: u256, total_supply: u256): (u256, u256) {
         let shares = 0u256;
         let effective_amounts_in = 0u256;
-        let (x, y) = decode(amounts_in);
+        let (x, y) = packed_uint128_math::decode(amounts_in);
         let user_liquidity: u256 = get_liquidity(x, y, price);
         if ((user_liquidity == 0)) {
             return (0, 0)
         };
         let bin_liquidity: u256 = get_liquidity(bin_reserves, price);
         if (((bin_liquidity == 0) || (total_supply == 0))) {
-            return (sqrt(user_liquidity), amounts_in)
+            return (uint256x256_math::sqrt(user_liquidity), amounts_in)
         };
-        shares = mul_div_round_down(user_liquidity, total_supply, bin_liquidity);
-        let effective_liquidity: u256 = mul_div_round_up(shares, bin_liquidity, total_supply);
+        shares = uint256x256_math::mul_div_round_down(user_liquidity, total_supply, bin_liquidity);
+        let effective_liquidity: u256 = uint256x256_math::mul_div_round_up(shares, bin_liquidity, total_supply);
         if ((user_liquidity > effective_liquidity)) {
             let delta_liquidity: u256 = (user_liquidity - effective_liquidity);
             if ((delta_liquidity >= SCALE)) {
@@ -72,7 +72,7 @@ module 0x1::bin_helper {
                 delta_x = if ((delta_x > x)) x else delta_x;
                 x -= delta_x;
             };
-            amounts_in = encode((x as u128), (y as u128));
+            amounts_in = packed_uint128_math::encode((x as u128), (y as u128));
         };
         if ((get_liquidity((bin_reserves + amounts_in), price) > MAX_LIQUIDITY_PER_BIN)) {
             abort E_BIN_HELPER_MAX_LIQUIDITY_PER_BIN_EXCEEDED
@@ -82,7 +82,7 @@ module 0x1::bin_helper {
 
     public(package) fun get_liquidity(amounts: u256, price: u256): u256 {
         let liquidity = 0u256;
-        let (x, y) = decode(amounts);
+        let (x, y) = packed_uint128_math::decode(amounts);
         return get_liquidity(x, y, price)
     }
 
@@ -115,35 +115,35 @@ module 0x1::bin_helper {
         if ((shares == 0)) {
             return 0
         };
-        let (amount_x, amount_y) = decode(amounts_in);
-        let (received_amount_x, received_amount_y) = decode(get_amount_out_of_bin((bin_reserves + amounts_in), shares, (total_supply + shares)));
+        let (amount_x, amount_y) = packed_uint128_math::decode(amounts_in);
+        let (received_amount_x, received_amount_y) = packed_uint128_math::decode(get_amount_out_of_bin((bin_reserves + amounts_in), shares, (total_supply + shares)));
         if ((received_amount_x > amount_x)) {
-            let fee_y: u128 = get_composition_fee(((amount_y - received_amount_y)), get_total_fee(parameters, bin_step));
-            fees = encode_second(fee_y);
+            let fee_y: u128 = fee_helper::get_composition_fee(((amount_y - received_amount_y)), pair_parameter_helper::get_total_fee(parameters, bin_step));
+            fees = packed_uint128_math::encode_second(fee_y);
         } else {
             if ((received_amount_y > amount_y)) {
-                let fee_x: u128 = get_composition_fee(((amount_x - received_amount_x)), get_total_fee(parameters, bin_step));
-                fees = encode_first(fee_x);
+                let fee_x: u128 = fee_helper::get_composition_fee(((amount_x - received_amount_x)), pair_parameter_helper::get_total_fee(parameters, bin_step));
+                fees = packed_uint128_math::encode_first(fee_x);
             };
         };
         return fees
     }
 
     public(package) fun is_empty(bin_reserves: u256, is_x: bool): bool {
-        return if (is_x) (decode_x(bin_reserves) == 0) else (decode_y(bin_reserves) == 0)
+        return if (is_x) (packed_uint128_math::decode_x(bin_reserves) == 0) else (packed_uint128_math::decode_y(bin_reserves) == 0)
     }
 
     public(package) fun get_amounts(bin_reserves: u256, parameters: u256, bin_step: u16, swap_for_y: bool, active_id: u32, amounts_in_left: u256): (u256, u256, u256) {
         let amounts_in_with_fees = 0u256;
         let amounts_out_of_bin = 0u256;
         let total_fees = 0u256;
-        let price: u256 = get_price_from_id(active_id, bin_step);
-        let bin_reserve_out: u128 = decode(bin_reserves, !swap_for_y);
-        let max_amount_in: u128 = if (swap_for_y) safe128(shift_div_round_up((bin_reserve_out as u256), SCALE_OFFSET, price)) else safe128(mul_shift_round_up((bin_reserve_out as u256), price, SCALE_OFFSET));
-        let total_fee: u128 = get_total_fee(parameters, bin_step);
-        let max_fee: u128 = get_fee_amount(max_amount_in, total_fee);
+        let price: u256 = price_helper::get_price_from_id(active_id, bin_step);
+        let bin_reserve_out: u128 = packed_uint128_math::decode(bin_reserves, !swap_for_y);
+        let max_amount_in: u128 = if (swap_for_y) safe_cast::safe128(uint256x256_math::shift_div_round_up((bin_reserve_out as u256), SCALE_OFFSET, price)) else safe_cast::safe128(uint256x256_math::mul_shift_round_up((bin_reserve_out as u256), price, SCALE_OFFSET));
+        let total_fee: u128 = pair_parameter_helper::get_total_fee(parameters, bin_step);
+        let max_fee: u128 = fee_helper::get_fee_amount(max_amount_in, total_fee);
         max_amount_in += max_fee;
-        let amount_in128: u128 = decode(amounts_in_left, swap_for_y);
+        let amount_in128: u128 = packed_uint128_math::decode(amounts_in_left, swap_for_y);
         let fee128: u128;
         let amount_out128: u128;
         if ((amount_in128 >= max_amount_in)) {
@@ -151,14 +151,14 @@ module 0x1::bin_helper {
             amount_in128 = max_amount_in;
             amount_out128 = bin_reserve_out;
         } else {
-            fee128 = get_fee_amount_from(amount_in128, total_fee);
+            fee128 = fee_helper::get_fee_amount_from(amount_in128, total_fee);
             let amount_in: u256 = (amount_in128 - fee128);
-            amount_out128 = if (swap_for_y) safe128(mul_shift_round_down((amount_in as u256), price, SCALE_OFFSET)) else safe128(shift_div_round_down((amount_in as u256), SCALE_OFFSET, price));
+            amount_out128 = if (swap_for_y) safe_cast::safe128(uint256x256_math::mul_shift_round_down((amount_in as u256), price, SCALE_OFFSET)) else safe_cast::safe128(uint256x256_math::shift_div_round_down((amount_in as u256), SCALE_OFFSET, price));
             if ((amount_out128 > bin_reserve_out)) {
                 amount_out128 = bin_reserve_out;
             };
         };
-        (amounts_in_with_fees, amounts_out_of_bin, total_fees) = if (swap_for_y) (encode_first(amount_in128), encode_second(amount_out128), encode_first(fee128)) else (encode_second(amount_in128), encode_first(amount_out128), encode_second(fee128));
+        (amounts_in_with_fees, amounts_out_of_bin, total_fees) = if (swap_for_y) (packed_uint128_math::encode_first(amount_in128), packed_uint128_math::encode_second(amount_out128), packed_uint128_math::encode_first(fee128)) else (packed_uint128_math::encode_second(amount_in128), packed_uint128_math::encode_first(amount_out128), packed_uint128_math::encode_second(fee128));
         if ((get_liquidity(((bin_reserves + amounts_in_with_fees) - amounts_out_of_bin), price) > MAX_LIQUIDITY_PER_BIN)) {
             abort E_BIN_HELPER_MAX_LIQUIDITY_PER_BIN_EXCEEDED
         };
@@ -167,45 +167,45 @@ module 0x1::bin_helper {
 
     public(package) fun received(reserves: u256, token_x: address, token_y: address): u256 {
         let amounts = 0u256;
-        amounts = (encode(balance_of(token_x), balance_of(token_y)) - reserves);
+        amounts = (packed_uint128_math::encode(balance_of(token_x), balance_of(token_y)) - reserves);
         return amounts
     }
 
     public(package) fun received_x(reserves: u256, token_x: address): u256 {
-        let reserve_x: u128 = decode_x(reserves);
-        return encode_first(((balance_of(token_x) - reserve_x)))
+        let reserve_x: u128 = packed_uint128_math::decode_x(reserves);
+        return packed_uint128_math::encode_first(((balance_of(token_x) - reserve_x)))
     }
 
     public(package) fun received_y(reserves: u256, token_y: address): u256 {
-        let reserve_y: u128 = decode_y(reserves);
-        return encode_second(((balance_of(token_y) - reserve_y)))
+        let reserve_y: u128 = packed_uint128_math::decode_y(reserves);
+        return packed_uint128_math::encode_second(((balance_of(token_y) - reserve_y)))
     }
 
     public(package) fun transfer(amounts: u256, token_x: address, token_y: address, recipient: address) {
-        let (amount_x, amount_y) = decode(amounts);
+        let (amount_x, amount_y) = packed_uint128_math::decode(amounts);
         if ((amount_x > 0)) {
-            safe_transfer(token_x, recipient, amount_x);
+            token_helper::safe_transfer(token_x, recipient, amount_x);
         };
         if ((amount_y > 0)) {
-            safe_transfer(token_y, recipient, amount_y);
+            token_helper::safe_transfer(token_y, recipient, amount_y);
         };
     }
 
     public(package) fun transfer_x(amounts: u256, token_x: address, recipient: address) {
-        let amount_x: u128 = decode_x(amounts);
+        let amount_x: u128 = packed_uint128_math::decode_x(amounts);
         if ((amount_x > 0)) {
-            safe_transfer(token_x, recipient, amount_x);
+            token_helper::safe_transfer(token_x, recipient, amount_x);
         };
     }
 
     public(package) fun transfer_y(amounts: u256, token_y: address, recipient: address) {
-        let amount_y: u128 = decode_y(amounts);
+        let amount_y: u128 = packed_uint128_math::decode_y(amounts);
         if ((amount_y > 0)) {
-            safe_transfer(token_y, recipient, amount_y);
+            token_helper::safe_transfer(token_y, recipient, amount_y);
         };
     }
 
     fun balance_of(token: address): u128 {
-        return safe128(balance_of(token, @0x1))
+        return safe_cast::safe128(balance_of(token, @0x1))
     }
 }

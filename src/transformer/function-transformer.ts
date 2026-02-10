@@ -28,6 +28,13 @@ export function transformFunction(
   // Transform parameters
   const params = transformParams(fn.params, fn.stateMutability, fn.visibility, context, usesMsgSender);
 
+  // Track function parameters in localVariables for type-aware transformations
+  // (e.g., cross-type comparison upcasting in SafeCast)
+  context.localVariables.clear();
+  for (const param of fn.params) {
+    context.localVariables.set(toSnakeCase(param.name), param.type);
+  }
+
   // Transform return type
   const returnType = transformReturnType(fn.returnParams, context);
 
@@ -139,10 +146,8 @@ export function transformFunction(
 
   // In Move, we need explicit return statements
   if (namedReturnParams.length > 0) {
-    // Check if the last statement is already a return
-    const lastStmt = fullBody[fullBody.length - 1];
-    const hasExplicitReturn = lastStmt?.kind === 'return' ||
-      (lastStmt?.kind === 'expression' && (lastStmt as any).expression?.kind === 'return');
+    // Check if any statement in the body already contains a return
+    const hasExplicitReturn = fullBody.some(containsReturn);
 
     if (!hasExplicitReturn) {
       if (namedReturnParams.length === 1) {
@@ -532,6 +537,30 @@ function getModifierPostStatements(
   }
 
   return statements;
+}
+
+/**
+ * Recursively check if an IR statement contains a return statement.
+ * Used to prevent duplicate returns when named return params are present.
+ */
+function containsReturn(stmt: any): boolean {
+  if (!stmt) return false;
+  if (stmt.kind === 'return') return true;
+  // Check if blocks
+  if (stmt.kind === 'if') {
+    if (stmt.then?.some(containsReturn)) return true;
+    if (stmt.else?.some(containsReturn)) return true;
+    return false;
+  }
+  // Check loop bodies
+  if (stmt.kind === 'while' || stmt.kind === 'for' || stmt.kind === 'loop') {
+    return stmt.body?.some(containsReturn) || false;
+  }
+  // Check block statements
+  if (stmt.kind === 'block') {
+    return stmt.statements?.some(containsReturn) || false;
+  }
+  return false;
 }
 
 /**

@@ -34,43 +34,43 @@ module 0x1::sample_math {
 
     public(package) fun encode(oracle_length: u16, cumulative_id: u64, cumulative_volatility: u64, cumulative_bin_crossed: u64, sample_lifetime: u8, created_at: u64): u256 {
         let sample = 0u256;
-        sample = set(sample, oracle_length, MASK_UINT16, OFFSET_ORACLE_LENGTH);
-        sample = set(sample, cumulative_id, MASK_UINT64, OFFSET_CUMULATIVE_ID);
-        sample = set(sample, cumulative_volatility, MASK_UINT64, OFFSET_CUMULATIVE_VOLATILITY);
-        sample = set(sample, cumulative_bin_crossed, MASK_UINT64, OFFSET_CUMULATIVE_BIN_CROSSED);
-        sample = set(sample, sample_lifetime, MASK_UINT8, OFFSET_SAMPLE_LIFETIME);
-        sample = set(sample, created_at, MASK_UINT40, OFFSET_SAMPLE_CREATION);
+        sample = encoded::set(sample, oracle_length, MASK_UINT16, OFFSET_ORACLE_LENGTH);
+        sample = encoded::set(sample, cumulative_id, MASK_UINT64, OFFSET_CUMULATIVE_ID);
+        sample = encoded::set(sample, cumulative_volatility, MASK_UINT64, OFFSET_CUMULATIVE_VOLATILITY);
+        sample = encoded::set(sample, cumulative_bin_crossed, MASK_UINT64, OFFSET_CUMULATIVE_BIN_CROSSED);
+        sample = encoded::set(sample, sample_lifetime, MASK_UINT8, OFFSET_SAMPLE_LIFETIME);
+        sample = encoded::set(sample, created_at, MASK_UINT40, OFFSET_SAMPLE_CREATION);
         return sample
     }
 
     public(package) fun get_oracle_length(sample: u256): u16 {
         let length = 0u16;
-        return decode_uint16(sample, 0)
+        return encoded::decode_uint16(sample, 0)
     }
 
     public(package) fun get_cumulative_id(sample: u256): u64 {
         let id = 0u64;
-        return decode_uint64(sample, OFFSET_CUMULATIVE_ID)
+        return encoded::decode_uint64(sample, OFFSET_CUMULATIVE_ID)
     }
 
     public(package) fun get_cumulative_volatility(sample: u256): u64 {
         let volatility_accumulator = 0u64;
-        return decode_uint64(sample, OFFSET_CUMULATIVE_VOLATILITY)
+        return encoded::decode_uint64(sample, OFFSET_CUMULATIVE_VOLATILITY)
     }
 
     public(package) fun get_cumulative_bin_crossed(sample: u256): u64 {
         let bin_crossed = 0u64;
-        return decode_uint64(sample, OFFSET_CUMULATIVE_BIN_CROSSED)
+        return encoded::decode_uint64(sample, OFFSET_CUMULATIVE_BIN_CROSSED)
     }
 
     public(package) fun get_sample_lifetime(sample: u256): u8 {
         let lifetime = 0u8;
-        return decode_uint8(sample, OFFSET_SAMPLE_LIFETIME)
+        return encoded::decode_uint8(sample, OFFSET_SAMPLE_LIFETIME)
     }
 
     public(package) fun get_sample_creation(sample: u256): u64 {
         let creation = 0u64;
-        return decode_uint40(sample, OFFSET_SAMPLE_CREATION)
+        return encoded::decode_uint40(sample, OFFSET_SAMPLE_CREATION)
     }
 
     public(package) fun get_sample_last_update(sample: u256): u64 {
