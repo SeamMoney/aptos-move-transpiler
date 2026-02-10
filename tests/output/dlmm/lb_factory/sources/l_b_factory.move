@@ -58,63 +58,63 @@ module 0x1::l_b_factory {
 
     public fun get_min_bin_step(): u256 {
         let min_bin_step = 0u256;
-        _M_I_N_B_I_N_S_T_E_P
+        return _M_I_N_B_I_N_S_T_E_P
     }
 
     #[view]
     public fun get_fee_recipient(): address acquires LBFactoryState {
         let state = borrow_global<LBFactoryState>(@0x1);
         let fee_recipient = @0x0;
-        state.fee_recipient
+        return state.fee_recipient
     }
 
     public fun get_max_flash_loan_fee(): u256 {
         let max_fee = 0u256;
-        _M_A_X_F_L_A_S_H_L_O_A_N_F_E_E
+        return _M_A_X_F_L_A_S_H_L_O_A_N_F_E_E
     }
 
     #[view]
     public fun get_flash_loan_fee(): u256 acquires LBFactoryState {
         let state = borrow_global<LBFactoryState>(@0x1);
         let flash_loan_fee = 0u256;
-        state.flash_loan_fee
+        return state.flash_loan_fee
     }
 
     #[view]
     public fun get_l_b_pair_implementation(): address acquires LBFactoryState {
         let state = borrow_global<LBFactoryState>(@0x1);
         let lb_pair_implementation = @0x0;
-        state.lb_pair_implementation
+        return state.lb_pair_implementation
     }
 
     public fun get_number_of_l_b_pairs(): u256 {
         let lb_pair_number = 0u256;
-        vector::length(&state.all_l_b_pairs)
+        return vector::length(&state.all_l_b_pairs)
     }
 
     public fun get_l_b_pair_at_index(index: u256): address {
         let lb_pair = @0x0;
-        *vector::borrow(&state.all_l_b_pairs, (index as u64))
+        return *vector::borrow(&state.all_l_b_pairs, (index as u64))
     }
 
     public fun get_number_of_quote_assets(): u256 {
         let number_of_quote_assets = 0u256;
-        length(state.quote_asset_whitelist)
+        return length(state.quote_asset_whitelist)
     }
 
     public fun get_quote_asset_at_index(index: u256): address {
         let asset = @0x0;
-        IERC20(at(state.quote_asset_whitelist, index))
+        return IERC20(at(state.quote_asset_whitelist, index))
     }
 
     public fun is_quote_asset(token: address): bool {
         let is_quote = false;
-        contains(state.quote_asset_whitelist, evm_compat::to_address(token))
+        return contains(state.quote_asset_whitelist, evm_compat::to_address(token))
     }
 
     public fun get_l_b_pair_information(token_a: address, token_b: address, bin_step: u256): LBPairInformation {
         let lb_pair_information = 0u256;
-        get_l_b_pair_information(token_a, token_b, bin_step, state)
+        return get_l_b_pair_information(token_a, token_b, bin_step, state)
     }
 
     #[view]
@@ -140,12 +140,12 @@ module 0x1::l_b_factory {
         protocol_share = get_protocol_share(preset);
         max_volatility_accumulator = get_max_volatility_accumulator(preset);
         is_open = (decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N) != 0);
-        (base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, is_open)
+        return (base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, is_open)
     }
 
     public fun get_all_bin_steps(): vector<u256> {
         let bin_step_with_preset = vector::empty();
-        keys(state.presets)
+        return keys(state.presets)
     }
 
     public fun get_open_bin_steps(): vector<u256> {
@@ -167,7 +167,7 @@ module 0x1::l_b_factory {
                 0;
             };
         };
-        open_bin_step
+        return open_bin_step
     }
 
     public fun get_all_l_b_pairs(token_x: address, token_y: address): vector<LBPairInformation> {
@@ -185,7 +185,7 @@ module 0x1::l_b_factory {
                 i = (i + 1);
             }
         };
-        lb_pairs_available
+        return lb_pairs_available
     }
 
     public entry fun set_l_b_pair_implementation(account: &signer, new_l_b_pair_implementation: address) acquires LBFactoryState {
@@ -237,7 +237,7 @@ module 0x1::l_b_factory {
         (*table::borrow(&*table::borrow_with_default(&state.available_l_b_pair_bin_steps, token_a, &0u256), token_b) + bin_step);
         event::emit(LBPairCreated { arg0: token_x, arg1: token_y, arg2: bin_step, arg3: pair, arg4: (vector::length(&state.all_l_b_pairs) - 1) });
         initialize(pair, get_base_factor(preset), get_filter_period(preset), get_decay_period(preset), get_reduction_factor(preset), get_variable_fee_control(preset), get_protocol_share(preset), get_max_volatility_accumulator(preset), active_id);
-        pair
+        return pair
     }
 
     public entry fun set_l_b_pair_ignored(account: &signer, token_x: address, token_y: address, bin_step: u16, ignored: bool) acquires LBFactoryState {
@@ -357,7 +357,7 @@ module 0x1::l_b_factory {
     }
 
     public(package) fun is_preset_open(preset: u256): bool {
-        decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N)
+        return decode_bool(preset, _O_F_F_S_E_T_I_S_P_R_E_S_E_T_O_P_E_N)
     }
 
     public(package) fun set_fee_recipient(fee_recipient: address, state: &mut LBFactoryState) {
@@ -380,14 +380,14 @@ module 0x1::l_b_factory {
 
     fun get_l_b_pair_information(token_a: address, token_b: address, bin_step: u256): LBPairInformation {
         (token_a, token_b) = sort_tokens(token_a, token_b);
-        *table::borrow(&*table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b), bin_step)
+        return *table::borrow(&*table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b), bin_step)
     }
 
     fun sort_tokens(token_a: address, token_b: address): (address, address) {
         if ((token_a > token_b)) {
             (token_a, token_b) = (token_b, token_a);
         };
-        (token_a, token_b)
+        return (token_a, token_b)
     }
 
     public(package) fun set_l_b_hooks_parameters_on_pair(token_x: address, token_y: address, bin_step: u16, hooks_parameters: u256, on_hooks_set_data: vector<u8>) {
@@ -403,15 +403,15 @@ module 0x1::l_b_factory {
 
     public fun has_role(role: u256, account: address): bool {
         if ((role == DEFAULT_ADMIN_ROLE)) {
-            (account == owner())
+            return (account == owner())
         };
-        has_role(role, account)
+        return has_role(role, account)
     }
 
     public(package) fun grant_role(role: u256, account: address): bool {
         if ((role == DEFAULT_ADMIN_ROLE)) {
             abort E_L_B_FACTORY_CANNOT_GRANT_DEFAULT_ADMIN_ROLE
         };
-        grant_role(role, account)
+        return grant_role(role, account)
     }
 }

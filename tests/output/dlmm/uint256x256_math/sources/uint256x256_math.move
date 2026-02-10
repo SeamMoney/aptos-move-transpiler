@@ -27,7 +27,7 @@ module 0x1::uint256x256_math {
     public(package) fun mul_div_round_down(x: u256, y: u256, denominator: u256): u256 {
         let result = 0u256;
         let (prod0, prod1) = get_mul_prods(x, y);
-        get_end_of_div_round_down(x, y, denominator, prod0, prod1)
+        return get_end_of_div_round_down(x, y, denominator, prod0, prod1)
     }
 
     public(package) fun mul_div_round_up(x: u256, y: u256, denominator: u256): u256 {
@@ -36,7 +36,7 @@ module 0x1::uint256x256_math {
         if ((((x * y) % denominator) != 0)) {
             result += 1;
         };
-        result
+        return result
     }
 
     public(package) fun mul_shift_round_down(x: u256, y: u256, offset: u8): u256 {
@@ -51,7 +51,7 @@ module 0x1::uint256x256_math {
             };
             result += (prod1 << (((256 - offset)) as u8));
         };
-        result
+        return result
     }
 
     public(package) fun mul_shift_round_up(x: u256, y: u256, offset: u8): u256 {
@@ -60,7 +60,7 @@ module 0x1::uint256x256_math {
         if ((((x * y) % (1 << (offset as u8))) != 0)) {
             result += 1;
         };
-        result
+        return result
     }
 
     public(package) fun shift_div_round_down(x: u256, offset: u8, denominator: u256): u256 {
@@ -69,7 +69,7 @@ module 0x1::uint256x256_math {
         let prod1: u256;
         prod0 = (x << (offset as u8));
         prod1 = (x >> (((256 - offset)) as u8));
-        get_end_of_div_round_down(x, (1 << (offset as u8)), denominator, prod0, prod1)
+        return get_end_of_div_round_down(x, (1 << (offset as u8)), denominator, prod0, prod1)
     }
 
     public(package) fun shift_div_round_up(x: u256, offset: u8, denominator: u256): u256 {
@@ -78,7 +78,7 @@ module 0x1::uint256x256_math {
         if ((((x * (1 << (offset as u8))) % denominator) != 0)) {
             result += 1;
         };
-        result
+        return result
     }
 
     fun get_mul_prods(x: u256, y: u256): (u256, u256) {
@@ -87,7 +87,7 @@ module 0x1::uint256x256_math {
         let mm = ((x * y) % (0 ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256));
         prod0 = (x * y);
         prod1 = ((mm - prod0) - if ((mm < prod0)) 1 else 0);
-        (prod0, prod1)
+        return (prod0, prod1)
     }
 
     fun get_end_of_div_round_down(x: u256, y: u256, denominator: u256, prod0: u256, prod1: u256): u256 {
@@ -116,13 +116,13 @@ module 0x1::uint256x256_math {
             inverse *= (2 - (denominator * inverse));
             result = (prod0 * inverse);
         };
-        result
+        return result
     }
 
     public(package) fun sqrt(x: u256): u256 {
         let sqrt_x = 0u256;
         if ((x == 0)) {
-            0
+            return 0
         };
         let msb: u256 = bit_math::most_significant_bit(x);
         sqrt_x = (1 << ((msb >> (1 as u8)) as u8));
@@ -134,6 +134,6 @@ module 0x1::uint256x256_math {
         sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
         sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
         x = (x / sqrt_x);
-        if ((sqrt_x < x)) sqrt_x else x
+        return if ((sqrt_x < x)) sqrt_x else x
     }
 }

@@ -53,50 +53,50 @@ module 0x1::l_b_router {
     public fun get_factory(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
         let lb_factory = @0x0;
-        state.factory2_2
+        return state.factory2_2
     }
 
     #[view]
     public fun get_factory_v2_1(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
         let lb_factory = @0x0;
-        state.factory2_1
+        return state.factory2_1
     }
 
     #[view]
     public fun get_legacy_factory(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
         let legacy_l_bfactory = @0x0;
-        state.legacy_factory
+        return state.legacy_factory
     }
 
     #[view]
     public fun get_v1_factory(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
         let factory_v1 = @0x0;
-        state.factory_v1
+        return state.factory_v1
     }
 
     #[view]
     public fun get_legacy_router(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
         let legacy_router = @0x0;
-        state.legacy_router
+        return state.legacy_router
     }
 
     #[view]
     public fun get_w_n_a_t_i_v_e(): address acquires LBRouterState {
         let state = borrow_global<LBRouterState>(@0x1);
         let wnative = @0x0;
-        state.wnative
+        return state.wnative
     }
 
     public fun get_id_from_price(pair: address, price: u256): u32 {
-        get_id_from_price(pair, price)
+        return get_id_from_price(pair, price)
     }
 
     public fun get_price_from_id(pair: address, id: u32): u256 {
-        get_price_from_id(pair, id)
+        return get_price_from_id(pair, id)
     }
 
     public fun get_swap_in(pair: address, amount_out: u128, swap_for_y: bool): (u128, u128, u128) {
@@ -104,7 +104,7 @@ module 0x1::l_b_router {
         let amount_out_left = 0u128;
         let fee = 0u128;
         (amount_in, amount_out_left, fee) = get_swap_in(pair, amount_out, swap_for_y);
-        (amount_in, amount_out_left, fee)
+        return (amount_in, amount_out_left, fee)
     }
 
     public fun get_swap_out(pair: address, amount_in: u128, swap_for_y: bool): (u128, u128, u128) {
@@ -112,13 +112,13 @@ module 0x1::l_b_router {
         let amount_out = 0u128;
         let fee = 0u128;
         (amount_in_left, amount_out, fee) = get_swap_out(pair, amount_in, swap_for_y);
-        (amount_in_left, amount_out, fee)
+        return (amount_in_left, amount_out, fee)
     }
 
     public fun create_l_b_pair(account: &signer, token_x: address, token_y: address, active_id: u32, bin_step: u16): address {
         let pair = @0x0;
         pair = (create_l_b_pair(state.factory2_2, token_x, token_y, active_id, bin_step) as address);
-        pair
+        return pair
     }
 
     public fun add_liquidity(account: &signer, liquidity_parameters: LiquidityParameters): (u256, u256, u256, u256, vector<u256>, vector<u256>) {
@@ -135,7 +135,7 @@ module 0x1::l_b_router {
         safe_transfer_from(liquidity_parameters.token_x, signer::address_of(account), evm_compat::to_address(lb_pair), liquidity_parameters.amount_x);
         safe_transfer_from(liquidity_parameters.token_y, signer::address_of(account), evm_compat::to_address(lb_pair), liquidity_parameters.amount_y);
         (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted) = add_liquidity(liquidity_parameters, lb_pair);
-        (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted)
+        return (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted)
     }
 
     public fun add_liquidity_n_a_t_i_v_e(account: &signer, liquidity_parameters: LiquidityParameters): (u256, u256, u256, u256, vector<u256>, vector<u256>) acquires LBRouterState {
@@ -162,7 +162,7 @@ module 0x1::l_b_router {
             };
         };
         (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted) = add_liquidity(liquidity_parameters, _l_b_pair);
-        (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted)
+        return (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted)
     }
 
     public fun remove_liquidity(account: &signer, token_x: address, token_y: address, bin_step: u16, amount_x_min: u256, amount_y_min: u256, ids: vector<u256>, amounts: vector<u256>, to: address, deadline: u256): (u256, u256) {
@@ -180,7 +180,7 @@ module 0x1::l_b_router {
         if (is_wrong_order) {
             (amount_x, amount_y) = (amount_y, amount_x);
         };
-        (amount_x, amount_y)
+        return (amount_x, amount_y)
     }
 
     public fun remove_liquidity_n_a_t_i_v_e(account: &signer, token: address, bin_step: u16, amount_token_min: u256, amount_n_a_t_i_v_e_min: u256, ids: vector<u256>, amounts: vector<u256>, to: address, deadline: u256): (u256, u256) acquires LBRouterState {
@@ -199,7 +199,7 @@ module 0x1::l_b_router {
         (amount_token, amount_n_a_t_i_v_e) = if (is_n_a_t_i_v_e_token_y) (amount_x, amount_y) else (amount_y, amount_x);
         safe_transfer(token, to, amount_token);
         w_native_withdraw_and_transfer(to, amount_n_a_t_i_v_e);
-        (amount_token, amount_n_a_t_i_v_e)
+        return (amount_token, amount_n_a_t_i_v_e)
     }
 
     public fun swap_exact_tokens_for_tokens(account: &signer, amount_in: u256, amount_out_min: u256, path: Path, to: address, deadline: u256): u256 {
@@ -216,7 +216,7 @@ module 0x1::l_b_router {
         if ((amount_out_min > amount_out)) {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
-        amount_out
+        return amount_out
     }
 
     public fun swap_exact_tokens_for_n_a_t_i_v_e(account: &signer, amount_in: u256, amount_out_min_n_a_t_i_v_e: u256, path: Path, to: address, deadline: u256): u256 acquires LBRouterState {
@@ -238,7 +238,7 @@ module 0x1::l_b_router {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
         w_native_withdraw_and_transfer(to, amount_out);
-        amount_out
+        return amount_out
     }
 
     public fun swap_exact_n_a_t_i_v_e_for_tokens(account: &signer, amount_out_min: u256, path: Path, to: address, deadline: u256): u256 acquires LBRouterState {
@@ -259,7 +259,7 @@ module 0x1::l_b_router {
         if ((amount_out_min > amount_out)) {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
-        amount_out
+        return amount_out
     }
 
     public fun swap_tokens_for_exact_tokens(account: &signer, amount_out: u256, amount_in_max: u256, path: Path, to: address, deadline: u256): vector<u256> {
@@ -280,7 +280,7 @@ module 0x1::l_b_router {
         if ((amount_out_real < amount_out)) {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
-        amounts_in
+        return amounts_in
     }
 
     public fun swap_tokens_for_exact_n_a_t_i_v_e(account: &signer, amount_n_a_t_i_v_e_out: u256, amount_in_max: u256, path: Path, to: address, deadline: u256): vector<u256> acquires LBRouterState {
@@ -306,7 +306,7 @@ module 0x1::l_b_router {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
         w_native_withdraw_and_transfer(to, amount_out_real);
-        amounts_in
+        return amounts_in
     }
 
     public fun swap_n_a_t_i_v_e_for_exact_tokens(account: &signer, amount_out: u256, path: Path, to: address, deadline: u256): vector<u256> acquires LBRouterState {
@@ -334,7 +334,7 @@ module 0x1::l_b_router {
         if ((0u256 > *vector::borrow(&amounts_in, 0u64))) {
             safe_transfer_native(signer::address_of(account), (0u256 - *vector::borrow(&amounts_in, 0u64)));
         };
-        amounts_in
+        return amounts_in
     }
 
     public fun swap_exact_tokens_for_tokens_supporting_fee_on_transfer_tokens(account: &signer, amount_in: u256, amount_out_min: u256, path: Path, to: address, deadline: u256): u256 {
@@ -354,7 +354,7 @@ module 0x1::l_b_router {
         if ((amount_out_min > amount_out)) {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
-        amount_out
+        return amount_out
     }
 
     public fun swap_exact_tokens_for_n_a_t_i_v_e_supporting_fee_on_transfer_tokens(account: &signer, amount_in: u256, amount_out_min_n_a_t_i_v_e: u256, path: Path, to: address, deadline: u256): u256 acquires LBRouterState {
@@ -378,7 +378,7 @@ module 0x1::l_b_router {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
         w_native_withdraw_and_transfer(to, amount_out);
-        amount_out
+        return amount_out
     }
 
     public fun swap_exact_n_a_t_i_v_e_for_tokens_supporting_fee_on_transfer_tokens(account: &signer, amount_out_min: u256, path: Path, to: address, deadline: u256): u256 acquires LBRouterState {
@@ -402,7 +402,7 @@ module 0x1::l_b_router {
         if ((amount_out_min > amount_out)) {
             abort E_L_B_ROUTER_INSUFFICIENT_AMOUNT_OUT
         };
-        amount_out
+        return amount_out
     }
 
     public entry fun sweep(account: &signer, token: address, to: address, amount: u256) {
@@ -456,7 +456,7 @@ module 0x1::l_b_router {
                 abort E_L_B_ROUTER_ID_OVERFLOWS
             };
             *vector::borrow_mut(&mut deposit_ids, (i as u64)) = (id as u256);
-            *vector::borrow_mut(&mut liquidity_configs, (i as u64)) = liquidity_configurations::encode_params((*vector::borrow(&liq.distribution_x, (i as u64)) as u64), (*vector::borrow(&liq.distribution_y, (i as u64)) as u64), ((id as u256) & 16777215u32));
+            *vector::borrow_mut(&mut liquidity_configs, (i as u64)) = liquidity_configurations::encode_params((*vector::borrow(&liq.distribution_x, (i as u64)) as u64), (*vector::borrow(&liq.distribution_y, (i as u64)) as u64), ((id as u256) & 16777215));
             i = (i + 1);
         }
         let amounts_received: u256;
@@ -470,7 +470,7 @@ module 0x1::l_b_router {
         };
         amount_x_left = decode_x(amounts_left);
         amount_y_left = decode_y(amounts_left);
-        (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted)
+        return (amount_x_added, amount_y_added, amount_x_left, amount_y_left, deposit_ids, liquidity_minted)
     }
 
     fun get_amounts_in(versions: vector<Version>, pairs: vector<address>, token_path: vector<address>, amount_out: u256): vector<u256> {
@@ -498,7 +498,7 @@ module 0x1::l_b_router {
             };
             i = (i - 1);
         }
-        amounts_in
+        return amounts_in
     }
 
     fun remove_liquidity(account: &signer, pair: address, amount_x_min: u256, amount_y_min: u256, ids: vector<u256>, amounts: vector<u256>, to: address): (u256, u256) {
@@ -514,7 +514,7 @@ module 0x1::l_b_router {
         if (((amount_x < amount_x_min) || (amount_y < amount_y_min))) {
             abort E_L_B_ROUTER_AMOUNT_SLIPPAGE_CAUGHT
         };
-        (amount_x, amount_y)
+        return (amount_x, amount_y)
     }
 
     fun swap_exact_tokens_for_tokens(amount_in: u256, pairs: vector<address>, versions: vector<Version>, token_path: vector<address>, to: address): u256 {
@@ -562,7 +562,7 @@ module 0x1::l_b_router {
             };
             i = (i + 1);
         }
-        amount_out
+        return amount_out
     }
 
     fun swap_tokens_for_exact_tokens(pairs: vector<address>, versions: vector<Version>, token_path: vector<address>, amounts_in: vector<u256>, to: address): u256 {
@@ -607,7 +607,7 @@ module 0x1::l_b_router {
             };
             i = (i + 1);
         }
-        amount_out
+        return amount_out
     }
 
     fun swap_supporting_fee_on_transfer_tokens(pairs: vector<address>, versions: vector<Version>, token_path: vector<address>, to: address) {
@@ -659,7 +659,7 @@ module 0x1::l_b_router {
         if ((lb_pair == @0x0)) {
             abort E_L_B_ROUTER_PAIR_NOT_CREATED
         };
-        lb_pair
+        return lb_pair
     }
 
     fun get_pair(token_x: address, token_y: address, bin_step: u256, version: Version): address {
@@ -672,7 +672,7 @@ module 0x1::l_b_router {
         } else {
             pair = (evm_compat::to_address(get_l_b_pair_information(token_x, token_y, bin_step, version)) as address);
         };
-        pair
+        return pair
     }
 
     fun get_pairs(pair_bin_steps: vector<u256>, versions: vector<Version>, token_path: vector<address>): vector<address> {
@@ -687,7 +687,7 @@ module 0x1::l_b_router {
             *vector::borrow_mut(&mut pairs, (i as u64)) = get_pair(token, token_next, *vector::borrow(&pair_bin_steps, (i as u64)), *vector::borrow(&versions, (i as u64)));
             i = (i + 1);
         }
-        pairs
+        return pairs
     }
 
     fun safe_transfer(token: address, to: address, amount: u256) {

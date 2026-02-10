@@ -1,6 +1,11 @@
 module 0x1::fee_helper {
 
     // Error codes
+    const PRECISION: u256 = 1000000000000000000u256;
+    const SQUARED_PRECISION: u256 = 1000000000000000000000000000000000000u256;
+    const MAX_PROTOCOL_SHARE: u256 = 2_500u256;
+    const BASIS_POINT_MAX: u256 = 10_000u256;
+    const MAX_FEE: u256 = 100000000000000000u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -26,26 +31,26 @@ module 0x1::fee_helper {
 
     public(package) fun get_fee_amount_from(amount_with_fees: u128, total_fee: u128): u128 {
         verify_fee(fee);
-        (((((((amount_with_fees as u256) * total_fee) + PRECISION) - 1)) / PRECISION) as u128)
+        return (((((((amount_with_fees as u256) * total_fee) + PRECISION) - 1)) / PRECISION) as u128)
     }
 
     public(package) fun get_fee_amount(amount: u128, total_fee: u128): u128 {
         verify_fee(fee);
         let denominator: u256 = (PRECISION - total_fee);
-        (((((((amount as u256) * total_fee) + denominator) - 1)) / denominator) as u128)
+        return (((((((amount as u256) * total_fee) + denominator) - 1)) / denominator) as u128)
     }
 
     public(package) fun get_composition_fee(amount_with_fees: u128, total_fee: u128): u128 {
         verify_fee(fee);
         let denominator: u256 = SQUARED_PRECISION;
-        (((((amount_with_fees as u256) * total_fee) * (((total_fee as u256) + PRECISION))) / denominator) as u128)
+        return (((((amount_with_fees as u256) * total_fee) * (((total_fee as u256) + PRECISION))) / denominator) as u128)
     }
 
     public(package) fun get_protocol_fee_amount(fee_amount: u128, protocol_share: u128): u128 {
         if ((protocol_share > MAX_PROTOCOL_SHARE)) {
             abort E_FEE_HELPER_PROTOCOL_SHARE_TOO_LARGE
         };
-        ((((fee_amount as u256) * protocol_share) / BASIS_POINT_MAX) as u128)
+        return ((((fee_amount as u256) * protocol_share) / BASIS_POINT_MAX) as u128)
     }
 
     fun verify_fee(fee: u128) {

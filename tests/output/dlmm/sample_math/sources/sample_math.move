@@ -7,6 +7,10 @@ module 0x1::sample_math {
     const OFFSET_CUMULATIVE_BIN_CROSSED: u256 = 144u256;
     const OFFSET_SAMPLE_LIFETIME: u256 = 208u256;
     const OFFSET_SAMPLE_CREATION: u256 = 216u256;
+    const MASK_UINT16: u256 = 0xffffu256;
+    const MASK_UINT64: u256 = 0xffffffffffffffffu256;
+    const MASK_UINT8: u256 = 0xffu256;
+    const MASK_UINT40: u256 = 0xffffffffffu256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -36,43 +40,43 @@ module 0x1::sample_math {
         sample = set(sample, cumulative_bin_crossed, MASK_UINT64, OFFSET_CUMULATIVE_BIN_CROSSED);
         sample = set(sample, sample_lifetime, MASK_UINT8, OFFSET_SAMPLE_LIFETIME);
         sample = set(sample, created_at, MASK_UINT40, OFFSET_SAMPLE_CREATION);
-        sample
+        return sample
     }
 
     public(package) fun get_oracle_length(sample: u256): u16 {
         let length = 0u16;
-        decode_uint16(sample, 0)
+        return decode_uint16(sample, 0)
     }
 
     public(package) fun get_cumulative_id(sample: u256): u64 {
         let id = 0u64;
-        decode_uint64(sample, OFFSET_CUMULATIVE_ID)
+        return decode_uint64(sample, OFFSET_CUMULATIVE_ID)
     }
 
     public(package) fun get_cumulative_volatility(sample: u256): u64 {
         let volatility_accumulator = 0u64;
-        decode_uint64(sample, OFFSET_CUMULATIVE_VOLATILITY)
+        return decode_uint64(sample, OFFSET_CUMULATIVE_VOLATILITY)
     }
 
     public(package) fun get_cumulative_bin_crossed(sample: u256): u64 {
         let bin_crossed = 0u64;
-        decode_uint64(sample, OFFSET_CUMULATIVE_BIN_CROSSED)
+        return decode_uint64(sample, OFFSET_CUMULATIVE_BIN_CROSSED)
     }
 
     public(package) fun get_sample_lifetime(sample: u256): u8 {
         let lifetime = 0u8;
-        decode_uint8(sample, OFFSET_SAMPLE_LIFETIME)
+        return decode_uint8(sample, OFFSET_SAMPLE_LIFETIME)
     }
 
     public(package) fun get_sample_creation(sample: u256): u64 {
         let creation = 0u64;
-        decode_uint40(sample, OFFSET_SAMPLE_CREATION)
+        return decode_uint40(sample, OFFSET_SAMPLE_CREATION)
     }
 
     public(package) fun get_sample_last_update(sample: u256): u64 {
         let last_update = 0u64;
         last_update = ((get_sample_creation(sample) + get_sample_lifetime(sample)) as u64);
-        last_update
+        return last_update
     }
 
     public(package) fun get_weighted_average(sample1: u256, sample2: u256, weight1: u64, weight2: u64): (u64, u64, u64) {
@@ -83,19 +87,19 @@ module 0x1::sample_math {
         let c_volatility1: u256 = get_cumulative_volatility(sample1);
         let c_bin_crossed1: u256 = get_cumulative_bin_crossed(sample1);
         if ((weight2 == 0)) {
-            ((c_id1 as u64), (c_volatility1 as u64), (c_bin_crossed1 as u64))
+            return ((c_id1 as u64), (c_volatility1 as u64), (c_bin_crossed1 as u64))
         };
         let c_id2: u256 = get_cumulative_id(sample2);
         let c_volatility2: u256 = get_cumulative_volatility(sample2);
         let c_bin_crossed2: u256 = get_cumulative_bin_crossed(sample2);
         if ((weight1 == 0)) {
-            ((c_id2 as u64), (c_volatility2 as u64), (c_bin_crossed2 as u64))
+            return ((c_id2 as u64), (c_volatility2 as u64), (c_bin_crossed2 as u64))
         };
         let total_weight: u256 = ((weight1 as u256) + weight2);
         weighted_average_id = (((((c_id1 * weight1) + (c_id2 * weight2))) / total_weight) as u64);
         weighted_average_volatility = (((((c_volatility1 * weight1) + (c_volatility2 * weight2))) / total_weight) as u64);
         weighted_average_bin_crossed = (((((c_bin_crossed1 * weight1) + (c_bin_crossed2 * weight2))) / total_weight) as u64);
-        (weighted_average_id, weighted_average_volatility, weighted_average_bin_crossed)
+        return (weighted_average_id, weighted_average_volatility, weighted_average_bin_crossed)
     }
 
     public(package) fun update(sample: u256, delta_time: u64, active_id: u32, volatility_accumulator: u32, bin_crossed: u32): (u64, u64, u64) {
@@ -108,6 +112,6 @@ module 0x1::sample_math {
         cumulative_id += (get_cumulative_id(sample) as u64);
         cumulative_volatility += (get_cumulative_volatility(sample) as u64);
         cumulative_bin_crossed += (get_cumulative_bin_crossed(sample) as u64);
-        (cumulative_id, cumulative_volatility, cumulative_bin_crossed)
+        return (cumulative_id, cumulative_volatility, cumulative_bin_crossed)
     }
 }

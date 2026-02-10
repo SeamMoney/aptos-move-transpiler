@@ -49,6 +49,34 @@ function readFixture(...pathParts: string[]): string {
   return readFileSync(join(FIXTURES_DIR, ...pathParts), 'utf-8');
 }
 
+// Common library sources for cross-file context resolution
+let contextSources: string[] = [];
+
+function loadContextSources(): string[] {
+  if (contextSources.length > 0) return contextSources;
+  const libs = [
+    ['libraries', 'Constants.sol'],
+    ['libraries', 'math', 'Encoded.sol'],
+    ['libraries', 'math', 'BitMath.sol'],
+    ['libraries', 'math', 'SafeCast.sol'],
+    ['libraries', 'math', 'PackedUint128Math.sol'],
+    ['libraries', 'math', 'Uint128x128Math.sol'],
+    ['libraries', 'math', 'Uint256x256Math.sol'],
+    ['libraries', 'math', 'SampleMath.sol'],
+    ['libraries', 'FeeHelper.sol'],
+    ['libraries', 'PriceHelper.sol'],
+    ['libraries', 'BinHelper.sol'],
+    ['libraries', 'PairParameterHelper.sol'],
+    ['libraries', 'OracleHelper.sol'],
+    ['libraries', 'Hooks.sol'],
+    ['libraries', 'TokenHelper.sol'],
+  ];
+  for (const pathParts of libs) {
+    try { contextSources.push(readFixture(...pathParts)); } catch { /* not all libs may exist */ }
+  }
+  return contextSources;
+}
+
 function transpileContract(
   source: string,
   name: string,
@@ -72,6 +100,7 @@ function transpileContract(
       moduleAddress: '0x1',
       generateToml: true,
       packageName: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      contextSources: loadContextSources(),
       ...options,
     });
 

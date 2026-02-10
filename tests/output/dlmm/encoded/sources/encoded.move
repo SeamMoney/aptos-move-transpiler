@@ -36,77 +36,77 @@ module 0x1::encoded {
         let new_encoded = 0u256;
         new_encoded = (encoded & ((mask << (offset as u8)) ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256));
         new_encoded = (new_encoded | ((value & mask) << (offset as u8)));
-        new_encoded
+        return new_encoded
     }
 
     public(package) fun set_bool(encoded: u256, boolean: bool, offset: u256): u256 {
         let new_encoded = 0u256;
-        set(encoded, if (boolean) 1 else 0, MASK_UINT1, offset)
+        return set(encoded, if (boolean) 1 else 0, MASK_UINT1, offset)
     }
 
     public(package) fun decode(encoded: u256, mask: u256, offset: u256): u256 {
         let value = 0u256;
         value = ((encoded >> (offset as u8)) & mask);
-        value
+        return value
     }
 
     public(package) fun decode_bool(encoded: u256, offset: u256): bool {
         let boolean = false;
         boolean = (((encoded >> (offset as u8)) & MASK_UINT1) != 0);
-        boolean
+        return boolean
     }
 
     public(package) fun decode_uint8(encoded: u256, offset: u256): u8 {
         let value = 0u8;
         value = (((encoded >> (offset as u8)) & MASK_UINT8) as u8);
-        value
+        return value
     }
 
     public(package) fun decode_uint12(encoded: u256, offset: u256): u16 {
         let value = 0u16;
         value = (((encoded >> (offset as u8)) & MASK_UINT12) as u16);
-        value
+        return value
     }
 
     public(package) fun decode_uint14(encoded: u256, offset: u256): u16 {
         let value = 0u16;
         value = (((encoded >> (offset as u8)) & MASK_UINT14) as u16);
-        value
+        return value
     }
 
     public(package) fun decode_uint16(encoded: u256, offset: u256): u16 {
         let value = 0u16;
         value = (((encoded >> (offset as u8)) & MASK_UINT16) as u16);
-        value
+        return value
     }
 
     public(package) fun decode_uint20(encoded: u256, offset: u256): u32 {
         let value = 0u32;
         value = (((encoded >> (offset as u8)) & MASK_UINT20) as u32);
-        value
+        return value
     }
 
     public(package) fun decode_uint24(encoded: u256, offset: u256): u32 {
         let value = 0u32;
         value = (((encoded >> (offset as u8)) & MASK_UINT24) as u32);
-        value
+        return value
     }
 
     public(package) fun decode_uint40(encoded: u256, offset: u256): u64 {
         let value = 0u64;
         value = (((encoded >> (offset as u8)) & MASK_UINT40) as u64);
-        value
+        return value
     }
 
     public(package) fun decode_uint64(encoded: u256, offset: u256): u64 {
         let value = 0u64;
         value = (((encoded >> (offset as u8)) & MASK_UINT64) as u64);
-        value
+        return value
     }
 
     public(package) fun decode_uint128(encoded: u256, offset: u256): u128 {
         let value = 0u128;
         value = (((encoded >> (offset as u8)) & MASK_UINT128) as u128);
-        value
+        return value
     }
 }

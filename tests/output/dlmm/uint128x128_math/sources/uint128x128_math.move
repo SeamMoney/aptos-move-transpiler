@@ -6,6 +6,7 @@ module 0x1::uint128x128_math {
     const LOG_SCALE_OFFSET: u256 = 127u256;
     const LOG_SCALE: u256 = 170141183460469231731687303715884105728u256;
     const LOG_SCALE_SQUARED: u256 = 28948022309329048855892746252171976963317496166410141009864396001978282409984u256;
+    const SCALE: u256 = 340282366920938463463374607431768211456u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -32,7 +33,7 @@ module 0x1::uint128x128_math {
     public(package) fun log2(x: u256): i256 {
         let result = 0i256;
         if ((x == 1)) {
-            -128
+            return -128
         };
         if ((x == 0)) {
             abort E_UINT128X128_MATH_LOG_UNDERFLOW
@@ -60,7 +61,7 @@ module 0x1::uint128x128_math {
             }
         };
         result = ((((result * sign)) << 1u8) as i256);
-        result
+        return result
     }
 
     public(package) fun pow(x: u256, y: i256): u256 {
@@ -68,19 +69,19 @@ module 0x1::uint128x128_math {
         let invert: bool;
         let abs_y: u256;
         if ((y == 0)) {
-            SCALE
+            return SCALE
         };
         abs_y = y;
         if ((abs_y < 0)) {
             abs_y = (0 - abs_y);
-            invert = (invert == 0);
+            invert = !invert;
         };
         if ((abs_y < 0x100000u256)) {
             result = SCALE;
             let squared = x;
             if ((x > 0xffffffffffffffffffffffffffffffffu256)) {
                 squared = ((0 ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256) / squared);
-                invert = (invert == 0);
+                invert = !invert;
             };
             if (((abs_y & 0x1u256) != 0)) {
                 result = ((result * squared) >> (128 as u8));
@@ -165,6 +166,6 @@ module 0x1::uint128x128_math {
         if ((result == 0)) {
             abort E_UINT128X128_MATH_POW_UNDERFLOW
         };
-        if (invert) (u256::MAX / result) else result
+        return if (invert) (u256::MAX / result) else result
     }
 }

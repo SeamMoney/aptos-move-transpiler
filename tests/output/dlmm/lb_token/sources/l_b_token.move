@@ -42,19 +42,19 @@ module 0x1::l_b_token {
     }
 
     public fun name(): vector<u8> {
-        string::utf8(b"Liquidity Book Token")
+        return string::utf8(b"Liquidity Book Token")
     }
 
     public fun symbol(): vector<u8> {
-        string::utf8(b"LBT")
+        return string::utf8(b"LBT")
     }
 
     public fun total_supply(id: u256): u256 {
-        *table::borrow_with_default(&state.total_supplies, id, &0u256)
+        return *table::borrow_with_default(&state.total_supplies, id, &0u256)
     }
 
     public fun balance_of(account: address, id: u256): u256 {
-        *table::borrow(&*table::borrow_with_default(&state.balances, account, &0u256), id)
+        return *table::borrow(&*table::borrow_with_default(&state.balances, account, &0u256), id)
     }
 
     public fun balance_of_batch(accounts: vector<address>, ids: vector<u256>): vector<u256> {
@@ -66,11 +66,11 @@ module 0x1::l_b_token {
             *vector::borrow_mut(&mut batch_balances, (i as u64)) = balance_of(*vector::borrow(&accounts, (i as u64)), *vector::borrow(&ids, (i as u64)));
             i = (i + 1);
         }
-        batch_balances
+        return batch_balances
     }
 
     public fun is_approved_for_all(owner: address, spender: address): bool {
-        is_approved_for_all(owner, spender, state)
+        return is_approved_for_all(owner, spender, state)
     }
 
     public entry fun approve_for_all(account: &signer, spender: address, approved: bool) {
@@ -85,7 +85,7 @@ module 0x1::l_b_token {
     }
 
     public(package) fun is_approved_for_all(owner: address, spender: address): bool {
-        ((owner == spender) || *table::borrow(&*table::borrow_with_default(&state.spender_approvals, owner, &0u256), spender))
+        return ((owner == spender) || *table::borrow(&*table::borrow_with_default(&state.spender_approvals, owner, &0u256), spender))
     }
 
     public(package) fun mint(account: address, id: u256, amount: u256, state: &mut LBTokenState) {

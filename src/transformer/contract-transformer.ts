@@ -507,6 +507,43 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     module.functions.push(moveFn);
   }
 
+  // Copy imported constants from other modules (Move constants are module-private)
+  // Constants.SCALE in Solidity → need to copy SCALE definition into this module
+  const importedConstants = (context as any).importedConstants as Map<string, { source: string; name: string }> | undefined;
+  if (importedConstants && importedConstants.size > 0 && context.inheritedContracts) {
+    // Pre-build evaluated constants from source contracts so cross-references resolve
+    // e.g., SCALE = 1 << SCALE_OFFSET needs SCALE_OFFSET to be evaluated first
+    const sourceConstantsCache = new Map<string, Map<string, { type: any; value: any }>>();
+    for (const [, { source }] of importedConstants) {
+      if (sourceConstantsCache.has(source)) continue;
+      const sourceContract = context.inheritedContracts.get(source);
+      if (!sourceContract) continue;
+      const srcConstants = new Map<string, { type: any; value: any }>();
+      for (const v of sourceContract.stateVariables) {
+        if (v.mutability !== 'constant') continue;
+        const mt = v.type.move || { kind: 'primitive', name: 'u256' };
+        const val = v.initialValue ? transformConstantValue(v.initialValue, mt, srcConstants) : getDefaultConstantValue(mt);
+        srcConstants.set(v.name, { type: mt, value: val });
+      }
+      sourceConstantsCache.set(source, srcConstants);
+    }
+
+    for (const [constName, { source }] of importedConstants) {
+      // Skip if already defined in this module
+      if (context.constants?.has(constName) || context.constants?.has(toScreamingSnakeCase(constName))) continue;
+      const srcConstants = sourceConstantsCache.get(source);
+      if (srcConstants) {
+        const entry = srcConstants.get(constName);
+        if (entry) {
+          const name = toScreamingSnakeCase(constName);
+          if (!context.constants) context.constants = new Map();
+          context.constants.set(constName, entry);
+          module.constants.push({ name, type: entry.type, value: entry.value });
+        }
+      }
+    }
+  }
+
   // Add error constants AFTER function transformation
   // so dynamically discovered error codes from require messages are included
   const errorConstants = generateErrorConstants(flattenedIR, context);

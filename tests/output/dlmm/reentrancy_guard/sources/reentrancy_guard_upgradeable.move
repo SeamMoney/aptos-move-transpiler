@@ -46,7 +46,7 @@ module 0x1::reentrancy_guard_upgradeable {
     fun get_reentrancy_guard_storage(): ReentrancyGuardStorage {
         let $ = 0u256;
         $.slot = reentrancy_guard_storage_location;
-        $
+        return $
     }
 
     public(package) fun __reentrancy_guard_init(state: &mut ReentrancyGuardUpgradeableState) {
@@ -76,6 +76,6 @@ module 0x1::reentrancy_guard_upgradeable {
     #[view]
     public(package) fun reentrancy_guard_entered(state: &ReentrancyGuardUpgradeableState): bool {
         let $: ReentrancyGuardStorage = get_reentrancy_guard_storage();
-        ($.status == ENTERED)
+        return ($.status == ENTERED)
     }
 }
