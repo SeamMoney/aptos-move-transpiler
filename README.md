@@ -6,7 +6,13 @@ A TypeScript-based transpiler that converts Solidity smart contracts to Aptos Mo
 
 - Converts Solidity source code to human-readable Move v2
 - Supports Move v2 features: enums, signed integers, receiver-style calls, index notation
-- Type mapping from Solidity to Move types
+- **Expression-level type inference** — tracks types through binary ops, casts, function calls, and identifiers to produce type-safe Move code
+- **Inheritance flattening** — merges parent contract state, functions, modifiers, and events into a single Move module
+- **Cross-contract transpilation** — `contextSources` option resolves cross-file library calls and constants
+- **OpenZeppelin library support** — SafeMath inlining, EnumerableSet/EnumerableMap → Table/vector, ReentrancyGuard patterns
+- **EVM pattern translation** — `abi.encode` → `bcs::to_bytes`, inline assembly → stubs, `type(uint24).max` → computed constants
+- **Auto `acquires` detection** — scans function bodies for `borrow_global` usage and emits correct resource annotations
+- **Auto `use` declarations** — discovers `module::function` references and generates `use` imports
 - Event and storage pattern conversion
 - EVM compatibility module for common operations
 - CLI tool for easy conversion
@@ -83,11 +89,16 @@ if (result.success) {
 |----------|---------|
 | `uint8-uint256` | `u8-u256` |
 | `int8-int256` | `i8-i256` |
+| `uint24`, `uint40`, etc. | nearest larger Move type (`u32`, `u64`, etc.) |
 | `bool` | `bool` |
 | `address` | `address` |
 | `bytes`, `string` | `vector<u8>` |
 | `mapping(K => V)` | `Table<K, V>` |
 | `T[]` | `vector<T>` |
+| `EnumerableMap.UintToUintMap` | `Table<u256, u256>` |
+| `EnumerableSet.AddressSet` | `vector<address>` |
+| `EnumerableSet.UintSet` | `vector<u256>` |
+| `IERC20`, `ILBPair`, etc. | `address` |
 
 ## Pattern Mappings
 
@@ -100,6 +111,12 @@ if (result.success) {
 | Constructor | `init_module` / `initialize` |
 | `public` functions | `public entry fun` |
 | `view` functions | `#[view] public fun` |
+| `type(uint24).max` | `16777215` (computed `2^N - 1`) |
+| `type(uint256).max` | `u256::MAX` (Move 2.3 builtin) |
+| `abi.encode(x)` | `bcs::to_bytes(&x)` |
+| `x.add(y)` (SafeMath) | `x + y` |
+| `set.contains(x)` | `vector::contains(&set, &x)` |
+| `map.get(k)` | `*table::borrow(&map, k)` |
 
 ## Example
 
@@ -163,11 +180,22 @@ module 0x1::simple_storage {
 }
 ```
 
+## DeFi Protocol Support
+
+The transpiler has been validated against the **DLMM (Liquidity Book) protocol** — a complex DeFi protocol with 22 contracts including math libraries, token standards, factory/router/pair patterns, and OpenZeppelin dependencies. All 22 contracts transpile successfully with zero errors.
+
+```bash
+# Transpile a multi-contract DeFi protocol
+npx sol2move convert contracts/LBPair.sol -o output \
+  --context contracts/libraries/*.sol contracts/LBToken.sol
+```
+
 ## Limitations
 
 - **No dynamic dispatch**: Move is statically typed
 - **Storage model differs**: Move uses resources at addresses
 - **No delegatecall**: Must use capability pattern
+- **Inline assembly**: Translated to stubs (EVM opcodes have no Move equivalent)
 - **Hash function**: keccak256 maps to aptos_hash::keccak256
 - **tx.origin, tx.gasprice**: Not supported in Move
 
@@ -177,15 +205,27 @@ module 0x1::simple_storage {
 sol2move/
 ├── src/
 │   ├── index.ts              # CLI entry point
-│   ├── transpiler.ts         # Main transpiler
+│   ├── transpiler.ts         # Main transpiler (3-stage pipeline)
 │   ├── parser/               # Solidity parsing
-│   ├── types/                # Type definitions
-│   ├── mapper/               # Type mapping
-│   ├── transformer/          # AST transformation
-│   ├── codegen/              # Move code generation
+│   ├── types/
+│   │   ├── ir.ts             # Intermediate representation types
+│   │   └── move-ast.ts       # Move AST types (with inferredType)
+│   ├── mapper/
+│   │   └── type-mapper.ts    # Solidity → Move type mapping
+│   ├── transformer/
+│   │   ├── contract-transformer.ts    # Module assembly, inheritance flattening
+│   │   ├── function-transformer.ts    # Function bodies, state access, modifiers
+│   │   ├── expression-transformer.ts  # Expressions, library calls, type inference
+│   │   └── type-inference.ts          # Centralized type inference utilities
+│   ├── codegen/
+│   │   └── move-generator.ts # Move source code generation
 │   └── stdlib/               # EVM compatibility module
-├── examples/                 # Example contracts
-└── tests/                    # Test suite
+├── tests/
+│   ├── unit/                 # Unit tests (95 tests)
+│   ├── integration/          # Integration tests (40 tests)
+│   ├── eval/                 # Protocol eval tests (22 DLMM tests)
+│   └── fixtures/             # Solidity source fixtures
+└── examples/                 # Example contracts
 ```
 
 ## Development
@@ -201,7 +241,10 @@ npm run dev convert examples/simple-storage/SimpleStorage.sol
 npm run build
 
 # Run tests
-npm test
+npx vitest run
+
+# Run DLMM protocol evaluation
+npx vitest run tests/eval/dlmm-eval.test.ts
 ```
 
 ## License
