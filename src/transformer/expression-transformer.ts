@@ -1380,7 +1380,7 @@ function isZeroLiteral(expr: any): boolean {
 function isBoolVariable(name: string, context: TranspileContext): boolean {
   // Check localVariables
   const varType = context.localVariables?.get(name);
-  if (varType && (varType.solidity === 'bool' || varType.move?.name === 'bool')) return true;
+  if (varType && (varType.solidity === 'bool' || (varType.move?.kind === 'primitive' && varType.move.name === 'bool'))) return true;
   // Check stateVariables
   const stateVar = context.stateVariables?.get(name);
   if (stateVar?.type?.solidity === 'bool' || stateVar?.type?.move?.kind === 'primitive' && (stateVar?.type?.move as any)?.name === 'bool') return true;
@@ -1407,7 +1407,7 @@ function getIntegerWidth(expr: any, context: TranspileContext): number | undefin
   // Identifier: look up in localVariables
   if (expr.kind === 'identifier') {
     const varType = context.localVariables?.get(expr.name);
-    if (varType?.move?.name) return INT_WIDTHS[varType.move.name];
+    if (varType?.move?.kind === 'primitive' && varType.move.name) return INT_WIDTHS[varType.move.name];
   }
   // Cast expression: use the target type
   if (expr.kind === 'cast' && expr.targetType?.name) {
@@ -2161,7 +2161,7 @@ function isTableType(expr: MoveExpression, context: TranspileContext): boolean {
     if (localType?.isMapping) return true;
   }
   // Check if it's a field_access on state (e.g., state.presets)
-  if (expr.kind === 'field_access' || expr.kind === 'member_access') {
+  if (expr.kind === 'field_access' || (expr as any).kind === 'member_access') {
     const fieldExpr = expr as any;
     if (fieldExpr.object?.kind === 'identifier' && fieldExpr.object.name === 'state') {
       const fieldName = fieldExpr.member || fieldExpr.field;
@@ -2732,18 +2732,18 @@ function transpileAssemblyOperation(op: any, context?: TranspileContext): IRStat
         target = { kind: 'identifier', name: toSnakeCase(name) };
       }
 
-      return { kind: 'assignment', target, value };
+      return { kind: 'assignment', operator: '=' as const, target, value };
     }
 
     case 'AssemblyLocalDefinition': {
       // let name := expression
       const name = op.names?.[0]?.name || op.names?.[0];
-      const value = op.expression ? transpileYulExpression(op.expression, context) : { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+      const value = op.expression ? transpileYulExpression(op.expression, context) : { kind: 'literal' as const, type: 'number' as const, value: 0, suffix: 'u256' };
       if (!name) return null;
       return {
         kind: 'variable_declaration',
         name: toSnakeCase(typeof name === 'string' ? name : name),
-        initialValue: value,
+        initialValue: value ?? undefined,
       };
     }
 
@@ -2754,8 +2754,8 @@ function transpileAssemblyOperation(op: any, context?: TranspileContext): IRStat
       const body = op.body?.operations ? transpileAssemblyBlock(op.body.operations, context) : [];
       // In Yul, `if` checks for non-zero. If condition is already boolean
       // (comparison, unary !, logical &&/||), use it directly; otherwise wrap with != 0
-      const moveCondition = isBooleanExpression(condition) ? condition
-        : { kind: 'binary', operator: '!=', left: condition, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };
+      const moveCondition: IRExpression = isBooleanExpression(condition) ? condition
+        : { kind: 'binary' as const, operator: '!=', left: condition, right: { kind: 'literal' as const, type: 'number' as const, value: 0, suffix: 'u256' } };
       return {
         kind: 'if',
         condition: moveCondition,
@@ -2838,13 +2838,13 @@ function transpileYulExpression(expr: any, context?: TranspileContext): IRExpres
           case 'iszero': {
             // If the inner expression is already boolean (comparison, !, &&, ||), negate it
             if (isBooleanExpression(a)) {
-              return { kind: 'unary', operator: '!', operand: a };
+              return { kind: 'unary', operator: '!', operand: a, prefix: true };
             }
             // Check if identifier refers to a bool variable in the Solidity scope
             if (a.kind === 'identifier' && context?.localVariables) {
               const varType = context.localVariables.get(a.name) || context.localVariables.get(toSnakeCase(a.name));
-              if (varType && (varType.solidity === 'bool' || varType.move?.name === 'bool')) {
-                return { kind: 'unary', operator: '!', operand: a };
+              if (varType && (varType.solidity === 'bool' || (varType.move?.kind === 'primitive' && varType.move.name === 'bool'))) {
+                return { kind: 'unary', operator: '!', operand: a, prefix: true };
               }
             }
             return { kind: 'binary', operator: '==', left: a, right: { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } };

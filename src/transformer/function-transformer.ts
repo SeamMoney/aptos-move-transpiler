@@ -333,7 +333,7 @@ function transformModifier(
       const errorName = `E_MODIFIER_${toScreamingSnakeCase(name)}`;
       if (!context.errorCodes) context.errorCodes = new Map();
       if (!context.errorCodes.has(errorName)) {
-        context.errorCodes.set(errorName, { message: `Modifier ${name} check` });
+        context.errorCodes.set(errorName, { message: `Modifier ${name} check`, code: context.errorCodes.size + 1 });
       }
       return [{
         kind: 'expression',

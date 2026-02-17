@@ -38,7 +38,7 @@ module 0x1::l_b_token {
 
     fun init_module(deployer: &signer) {
         let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"l_b_token");
-        move_to(&resource_signer, LBTokenState { _balances: 0, _totalSupplies: 0, _spenderApprovals: 0, signer_cap: signer_cap });
+        move_to(&resource_signer, LBTokenState { balances: 0, total_supplies: 0, spender_approvals: 0, signer_cap: signer_cap });
     }
 
     public fun name(): vector<u8> {
@@ -49,11 +49,15 @@ module 0x1::l_b_token {
         return string::utf8(b"LBT")
     }
 
-    public fun total_supply(id: u256): u256 {
+    #[view]
+    public fun total_supply(id: u256): u256 acquires LBTokenState {
+        let state = borrow_global<LBTokenState>(@0x1);
         return *table::borrow_with_default(&state.total_supplies, id, &0u256)
     }
 
-    public fun balance_of(account: address, id: u256): u256 {
+    #[view]
+    public fun balance_of(account: address, id: u256): u256 acquires LBTokenState {
+        let state = borrow_global<LBTokenState>(@0x1);
         return *table::borrow(&*table::borrow_with_default(&state.balances, account, &0u256), id)
     }
 
@@ -84,7 +88,8 @@ module 0x1::l_b_token {
         batch_transfer_from(from, to, ids, amounts, state);
     }
 
-    public(package) fun is_approved_for_all(owner: address, spender: address): bool {
+    #[view]
+    public(package) fun is_approved_for_all(owner: address, spender: address, state: &LBTokenState): bool {
         return ((owner == spender) || *table::borrow(&*table::borrow_with_default(&state.spender_approvals, owner, &0u256), spender))
     }
 
@@ -93,14 +98,14 @@ module 0x1::l_b_token {
         *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.balances, account, 0u256), id) += amount;
     }
 
-    public(package) fun burn(account: address, id: u256, amount: u256) {
+    public(package) fun burn(account: address, id: u256, amount: u256, state: &LBTokenState) {
         let account_balances: aptos_std::table::Table<u256, u256> = *table::borrow_with_default(&state.balances, account, &0u256);
-        let balance: u256 = *vector::borrow(&account_balances, (id as u64));
+        let balance: u256 = *table::borrow_with_default(&account_balances, id, &0u256);
         if ((balance < amount)) {
             abort E_L_B_TOKEN_BURN_EXCEEDS_BALANCE
         };
         *table::borrow_mut_with_default(&mut state.total_supplies, id, 0u256) -= amount;
-        *vector::borrow_mut(&mut account_balances, (id as u64)) = (balance - amount);
+        *table::borrow_mut_with_default(&mut account_balances, id, 0u256) = (balance - amount);
     }
 
     public(package) fun batch_transfer_from(account: &signer, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &mut LBTokenState) {
@@ -112,12 +117,12 @@ module 0x1::l_b_token {
         while ((i < (vector::length(&ids) as u256))) {
             let id: u256 = *vector::borrow(&ids, (i as u64));
             let amount: u256 = *vector::borrow(&amounts, (i as u64));
-            let from_balance: u256 = *vector::borrow(&from_balances, (id as u64));
+            let from_balance: u256 = *table::borrow_with_default(&from_balances, id, &0u256);
             if ((from_balance < amount)) {
                 abort E_L_B_TOKEN_TRANSFER_EXCEEDS_BALANCE
             };
-            *vector::borrow_mut(&mut from_balances, (id as u64)) = (from_balance - amount);
-            *vector::borrow_mut(&mut to_balances, (id as u64)) += amount;
+            *table::borrow_mut_with_default(&mut from_balances, id, 0u256) = (from_balance - amount);
+            *table::borrow_mut_with_default(&mut to_balances, id, 0u256) += amount;
             i = (i + 1);
         }
         event::emit(TransferBatch { arg0: signer::address_of(account), arg1: from, arg2: to, arg3: ids, arg4: amounts });

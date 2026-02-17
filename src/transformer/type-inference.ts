@@ -10,8 +10,8 @@ import type {
   MovePrimitiveType,
   MoveExpression,
   MoveCastExpression,
-} from '../types/move-ast';
-import type { TranspileContext, IRType } from '../types/ir';
+} from '../types/move-ast.js';
+import type { TranspileContext, IRType } from '../types/ir.js';
 
 // Integer type width map: positive = unsigned, negative = signed
 const INT_WIDTH_MAP: Record<string, number> = {
@@ -273,7 +273,7 @@ export function typesEqual(a: MoveType, b: MoveType): boolean {
     if (a.name !== b.name || a.module !== b.module) return false;
     if ((a.typeArgs?.length ?? 0) !== (b.typeArgs?.length ?? 0)) return false;
     if (a.typeArgs && b.typeArgs) {
-      return a.typeArgs.every((t, i) => typesEqual(t, b.typeArgs![i]));
+      return a.typeArgs.every((t: MoveType, i: number) => typesEqual(t, b.typeArgs![i]));
     }
     return true;
   }

@@ -1,5 +1,6 @@
 module 0x1::liquidity_configurations {
 
+    use aptos_std::table;
     use 0x1::encoded;
     use 0x1::packed_uint128_math;
 
@@ -34,9 +35,9 @@ module 0x1::liquidity_configurations {
 
     public(package) fun encode_params(distribution_x: u64, distribution_y: u64, id: u32): u256 {
         let config = 0u256;
-        config = encoded::set(config, distribution_x, MASK_UINT64, OFFSET_DISTRIBUTION_X);
-        config = encoded::set(config, distribution_y, MASK_UINT64, OFFSET_DISTRIBUTION_Y);
-        config = encoded::set(config, id, MASK_UINT24, OFFSET_ID);
+        config = table::upsert(&mut config, distribution_x, MASK_UINT64, OFFSET_DISTRIBUTION_X);
+        config = table::upsert(&mut config, distribution_y, MASK_UINT64, OFFSET_DISTRIBUTION_Y);
+        config = table::upsert(&mut config, id, MASK_UINT24, OFFSET_ID);
         return config
     }
 
@@ -47,7 +48,7 @@ module 0x1::liquidity_configurations {
         distribution_x = (encoded::decode_uint64(config, OFFSET_DISTRIBUTION_X) as u64);
         distribution_y = (encoded::decode_uint64(config, OFFSET_DISTRIBUTION_Y) as u64);
         id = (encoded::decode_uint24(config, OFFSET_ID) as u32);
-        if (((((config as u256) > 115792089237316195423570985008687907853269984665640564039457584007913129639935u256) || (distribution_x > PRECISION)) || (distribution_y > PRECISION))) {
+        if (((((config as u256) > 5708990770823839524233143877797980545530986495) || (distribution_x > PRECISION)) || (distribution_y > PRECISION))) {
             abort E_LIQUIDITY_CONFIGURATIONS_INVALID_CONFIG
         };
         return (distribution_x, distribution_y, id)

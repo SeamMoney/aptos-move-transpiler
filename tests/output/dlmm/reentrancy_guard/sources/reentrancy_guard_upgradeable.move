@@ -29,6 +29,7 @@ module 0x1::reentrancy_guard_upgradeable {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
     const E_REENTRANCY_GUARD_REENTRANT_CALL: u64 = 256u64;
+    const E_MODIFIER_ONLY_INITIALIZING: u64 = 257u64;
 
     struct ReentrancyGuardUpgradeableState has key {
         signer_cap: account::SignerCapability

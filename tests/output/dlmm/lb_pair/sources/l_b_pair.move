@@ -22,6 +22,7 @@ module 0x1::l_b_pair {
 
     // Error codes
     const _M_A_X_T_O_T_A_L_F_E_E: u256 = 100000000000000000u256;
+    const MAX_SAMPLE_LIFETIME: u256 = 120u256;
     const SCALE_OFFSET: u8 = 128u8;
     const CALLBACK_SUCCESS: u256 = 35999145600493609714228594312006990784747406012369540695634741508663724398019u256;
     const PRECISION: u256 = 1000000000000000000u256;
@@ -45,6 +46,9 @@ module 0x1::l_b_pair {
     const E_OVERFLOW: u64 = 17u64;
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
+    const E_MODIFIER_INITIALIZER: u64 = 256u64;
+    const E_MODIFIER_NOT_ADDRESS_ZERO_OR_THIS: u64 = 257u64;
+    const E_MODIFIER_CHECK_APPROVAL: u64 = 258u64;
 
     struct LBPairState has key {
         implementation: address,
@@ -67,7 +71,7 @@ module 0x1::l_b_pair {
 
     public entry fun initialize(account: &signer, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, active_id: u32) acquires LBPairState {
         let state = borrow_global_mut<LBPairState>(@0x1);
-        only_factory();
+        only_factory(state);
         assert!(true, E_MODIFIER_INITIALIZER);
         __reentrancy_guard_init();
         set_static_fee_parameters(pair_parameter_helper::update_id_reference(pair_parameter_helper::set_active_id(state.parameters, active_id)), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, state);
@@ -94,20 +98,26 @@ module 0x1::l_b_pair {
         return bin_step()
     }
 
-    public fun get_reserves(): (u128, u128) {
+    #[view]
+    public fun get_reserves(): (u128, u128) acquires LBPairState {
+        let state = borrow_global<LBPairState>(@0x1);
         let reserve_x = 0u128;
         let reserve_y = 0u128;
         (reserve_x, reserve_y) = packed_uint128_math::decode((state.reserves - state.protocol_fees));
         return (reserve_x, reserve_y)
     }
 
-    public fun get_active_id(): u32 {
+    #[view]
+    public fun get_active_id(): u32 acquires LBPairState {
+        let state = borrow_global<LBPairState>(@0x1);
         let active_id = 0u32;
         active_id = (pair_parameter_helper::get_active_id(state.parameters) as u32);
         return active_id
     }
 
-    public fun get_bin(id: u32): (u128, u128) {
+    #[view]
+    public fun get_bin(id: u32): (u128, u128) acquires LBPairState {
+        let state = borrow_global<LBPairState>(@0x1);
         let bin_reserve_x = 0u128;
         let bin_reserve_y = 0u128;
         (bin_reserve_x, bin_reserve_y) = packed_uint128_math::decode(*table::borrow_with_default(&state.bins, id, &0u256));
@@ -116,11 +126,13 @@ module 0x1::l_b_pair {
 
     public fun get_next_non_empty_bin(swap_for_y: bool, id: u32): u32 {
         let next_id = 0u32;
-        next_id = (get_next_non_empty_bin(swap_for_y, id) as u32);
+        next_id = (get_next_non_empty_bin(swap_for_y, id, state) as u32);
         return next_id
     }
 
-    public fun get_protocol_fees(): (u128, u128) {
+    #[view]
+    public fun get_protocol_fees(): (u128, u128) acquires LBPairState {
+        let state = borrow_global<LBPairState>(@0x1);
         let protocol_fee_x = 0u128;
         let protocol_fee_y = 0u128;
         (protocol_fee_x, protocol_fee_y) = packed_uint128_math::decode(state.protocol_fees);
@@ -178,7 +190,7 @@ module 0x1::l_b_pair {
         let last_updated = 0u64;
         let first_timestamp = 0u64;
         let parameters: u256 = state.parameters;
-        sample_lifetime = (oracle_helper._m_a_x__s_a_m_p_l_e__l_i_f_e_t_i_m_e as u8);
+        sample_lifetime = (MAX_SAMPLE_LIFETIME as u8);
         let oracle_id: u16 = pair_parameter_helper::get_oracle_id(parameters);
         if ((oracle_id > 0)) {
             let sample: u256;
@@ -257,8 +269,8 @@ module 0x1::l_b_pair {
             if ((amount_out_left == 0)) {
                 break;
             } else {
-                let next_id: u32 = get_next_non_empty_bin(swap_for_y, id);
-                if (((next_id == 0) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
+                let next_id: u32 = get_next_non_empty_bin(swap_for_y, id, state);
+                if (((next_id == 0) || (next_id == 16777215))) {
                     break;
                 };
                 id = next_id;
@@ -292,8 +304,8 @@ module 0x1::l_b_pair {
             if ((amounts_in_left == 0)) {
                 break;
             } else {
-                let next_id: u32 = get_next_non_empty_bin(swap_for_y, id);
-                if (((next_id == 0) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
+                let next_id: u32 = get_next_non_empty_bin(swap_for_y, id, state);
+                if (((next_id == 0) || (next_id == 16777215))) {
                     break;
                 };
                 id = next_id;
@@ -341,8 +353,8 @@ module 0x1::l_b_pair {
             if ((amounts_left == 0)) {
                 break;
             } else {
-                let next_id: u32 = get_next_non_empty_bin(swap_for_y_, active_id);
-                if (((next_id == 0) || (next_id == 115792089237316195423570985008687907853269984665640564039457584007913129639935u256))) {
+                let next_id: u32 = get_next_non_empty_bin(swap_for_y_, active_id, state);
+                if (((next_id == 0) || (next_id == 16777215))) {
                     abort E_L_B_PAIR_OUT_OF_LIQUIDITY
                 };
                 active_id = next_id;
@@ -373,7 +385,7 @@ module 0x1::l_b_pair {
         };
         let hooks_parameters: u256 = state.hooks_parameters;
         let reserves_before: u256 = state.reserves;
-        let total_fees: u256 = get_flash_loan_fees(amounts);
+        let total_fees: u256 = get_flash_loan_fees(amounts, state);
         hooks::before_flash_loan(hooks_parameters, signer::address_of(account), evm_compat::to_address(receiver), amounts);
         bin_helper::transfer(amounts, token_x(), token_y(), evm_compat::to_address(receiver));
         let (success, r_data) = call(evm_compat::to_address(receiver), vector::empty<u8>());
@@ -449,7 +461,7 @@ module 0x1::l_b_pair {
             };
             bin_reserves = (bin_reserves - amounts_out_from_bin);
             if ((supply == amount_to_burn)) {
-                remove(state.tree, id);
+                vector::remove_value(&mut state.tree, &id);
             };
             *table::borrow_mut_with_default(&mut state.bins, id, 0u256) = bin_reserves;
             *vector::borrow_mut(&mut amounts, (i as u64)) = amounts_out_from_bin;
@@ -505,7 +517,7 @@ module 0x1::l_b_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
-        only_factory();
+        only_factory(state);
         set_static_fee_parameters(state.parameters, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, state);
         state.reentrancy_status = 1u8;
     }
@@ -514,7 +526,7 @@ module 0x1::l_b_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
-        only_factory();
+        only_factory(state);
         state.hooks_parameters = hooks_parameters;
         let hooks: address = i_l_b_hooks(hooks::get_hooks(hooks_parameters));
         event::emit(HooksParametersSet { arg0: signer::address_of(account), arg1: hooks_parameters });
@@ -529,7 +541,7 @@ module 0x1::l_b_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
-        only_factory();
+        only_factory(state);
         let parameters: u256 = state.parameters;
         state.parameters = pair_parameter_helper::update_volatility_reference(pair_parameter_helper::update_id_reference(parameters));
         event::emit(ForcedDecay { arg0: signer::address_of(account), arg1: pair_parameter_helper::get_id_reference(parameters), arg2: pair_parameter_helper::get_volatility_reference(parameters) });
@@ -562,13 +574,15 @@ module 0x1::l_b_pair {
         return if (swap_for_y) find_first_right(state.tree, id) else find_first_left(state.tree, id)
     }
 
-    fun only_factory(account: address) {
+    #[view]
+    fun only_factory(account: address, state: &LBPairState) {
         if ((account != evm_compat::to_address(state.factory))) {
             abort E_L_B_PAIR_ONLY_FACTORY
         };
     }
 
-    fun get_flash_loan_fees(amounts: u256): u256 {
+    #[view]
+    fun get_flash_loan_fees(amounts: u256, state: &LBPairState): u256 {
         let fee: u128 = (get_flash_loan_fee(state.factory) as u128);
         let (x, y) = packed_uint128_math::decode(amounts);
         let precision_sub_one: u256 = (PRECISION - 1);

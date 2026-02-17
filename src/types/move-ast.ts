@@ -250,7 +250,7 @@ export interface MoveBinaryExpression {
 
 export interface MoveUnaryExpression {
   kind: 'unary';
-  operator: '!' | '-';
+  operator: '!' | '-' | '~';
   operand: MoveExpression;
   inferredType?: MoveType;
 }

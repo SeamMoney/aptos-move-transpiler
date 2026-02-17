@@ -276,13 +276,15 @@ export type IRExpression =
   | IRTypeConversion
   | IRMsgAccess
   | IRBlockAccess
-  | IRTxAccess;
+  | IRTxAccess
+  | IRTypeMember;
 
 export interface IRLiteral {
   kind: 'literal';
   type: 'number' | 'string' | 'bool' | 'hex' | 'address';
   value: string | number | boolean;
   subdenomination?: string; // ether, wei, gwei, etc.
+  suffix?: string; // Move type suffix for assembly literals (e.g., 'u256')
 }
 
 export interface IRIdentifier {
@@ -366,6 +368,12 @@ export interface IRBlockAccess {
 export interface IRTxAccess {
   kind: 'tx_access';
   property: 'origin' | 'gasprice';
+}
+
+export interface IRTypeMember {
+  kind: 'type_member';
+  typeName: string;
+  member: string;
 }
 
 // Transpilation context

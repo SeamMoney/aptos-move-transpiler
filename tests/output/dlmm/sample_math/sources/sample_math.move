@@ -1,5 +1,6 @@
 module 0x1::sample_math {
 
+    use aptos_std::table;
     use 0x1::encoded;
 
     // Error codes
@@ -36,12 +37,12 @@ module 0x1::sample_math {
 
     public(package) fun encode(oracle_length: u16, cumulative_id: u64, cumulative_volatility: u64, cumulative_bin_crossed: u64, sample_lifetime: u8, created_at: u64): u256 {
         let sample = 0u256;
-        sample = encoded::set(sample, oracle_length, MASK_UINT16, OFFSET_ORACLE_LENGTH);
-        sample = encoded::set(sample, cumulative_id, MASK_UINT64, OFFSET_CUMULATIVE_ID);
-        sample = encoded::set(sample, cumulative_volatility, MASK_UINT64, OFFSET_CUMULATIVE_VOLATILITY);
-        sample = encoded::set(sample, cumulative_bin_crossed, MASK_UINT64, OFFSET_CUMULATIVE_BIN_CROSSED);
-        sample = encoded::set(sample, sample_lifetime, MASK_UINT8, OFFSET_SAMPLE_LIFETIME);
-        sample = encoded::set(sample, created_at, MASK_UINT40, OFFSET_SAMPLE_CREATION);
+        sample = table::upsert(&mut sample, oracle_length, MASK_UINT16, OFFSET_ORACLE_LENGTH);
+        sample = table::upsert(&mut sample, cumulative_id, MASK_UINT64, OFFSET_CUMULATIVE_ID);
+        sample = table::upsert(&mut sample, cumulative_volatility, MASK_UINT64, OFFSET_CUMULATIVE_VOLATILITY);
+        sample = table::upsert(&mut sample, cumulative_bin_crossed, MASK_UINT64, OFFSET_CUMULATIVE_BIN_CROSSED);
+        sample = table::upsert(&mut sample, sample_lifetime, MASK_UINT8, OFFSET_SAMPLE_LIFETIME);
+        sample = table::upsert(&mut sample, created_at, MASK_UINT40, OFFSET_SAMPLE_CREATION);
         return sample
     }
 

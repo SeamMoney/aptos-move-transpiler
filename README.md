@@ -1,6 +1,6 @@
 # Sol2Move - Solidity to Aptos Move v2 Transpiler
 
-A TypeScript-based transpiler that converts Solidity smart contracts to Aptos Move v2 source code.
+A TypeScript-based transpiler that converts Solidity smart contracts to Aptos Move v2 source code, with built-in Move parsing and validation.
 
 ## Features
 
@@ -9,30 +9,113 @@ A TypeScript-based transpiler that converts Solidity smart contracts to Aptos Mo
 - **Expression-level type inference** — tracks types through binary ops, casts, function calls, and identifiers to produce type-safe Move code
 - **Inheritance flattening** — merges parent contract state, functions, modifiers, and events into a single Move module
 - **Cross-contract transpilation** — `contextSources` option resolves cross-file library calls and constants
-- **OpenZeppelin library support** — SafeMath inlining, EnumerableSet/EnumerableMap → Table/vector, ReentrancyGuard patterns
-- **EVM pattern translation** — `abi.encode` → `bcs::to_bytes`, inline assembly → stubs, `type(uint24).max` → computed constants
-- **Auto `acquires` detection** — scans function bodies for `borrow_global` usage and emits correct resource annotations
-- **Auto `use` declarations** — discovers `module::function` references and generates `use` imports
-- Event and storage pattern conversion
-- EVM compatibility module for common operations
+- **OpenZeppelin library support** — SafeMath inlining, EnumerableSet/EnumerableMap, ReentrancyGuard patterns
+- **EVM pattern translation** — `abi.encode` to `bcs::to_bytes`, inline assembly stubs, `type(uint24).max` computed constants
+- **Move parser/validator** — tree-sitter-based Move code parsing and syntax validation (optional dependency)
+- **Unified SDK** — single `Sol2Move` class exposing all capabilities
 - CLI tool for easy conversion
 
 ## Installation
 
 ```bash
-npm install
-npm run build
+npm install sol2move
 ```
 
-## Usage
+To enable Move parsing and validation (optional — requires a C compiler for native addon):
 
-### CLI Commands
+```bash
+npm install tree-sitter tree-sitter-move-on-aptos@github:aptos-labs/tree-sitter-move-on-aptos
+```
+
+On macOS, if the native build fails, set the C++ include path:
+
+```bash
+CXXFLAGS="-isysroot $(xcrun --show-sdk-path) -I$(xcrun --show-sdk-path)/usr/include/c++/v1" npm install
+```
+
+## SDK Usage
+
+The `Sol2Move` class is the primary interface — one import, all capabilities.
+
+```typescript
+import { Sol2Move } from 'sol2move';
+
+const sdk = new Sol2Move({
+  moduleAddress: '0x1',
+  packageName: 'my_dapp',
+});
+
+// ─── Analyze Solidity ───────────────────────────────────
+const analysis = sdk.analyzeSolidity(soliditySource);
+// { valid, contracts: [{ name, kind, functions, events, stateVariables }], errors }
+
+// ─── Validate Solidity ──────────────────────────────────
+const check = sdk.validateSolidity(soliditySource);
+// { valid, contracts: ['Counter', 'Token'], errors }
+
+// ─── Transpile Solidity → Move ──────────────────────────
+const result = sdk.transpile(soliditySource);
+// { success, modules: [{ name, code, ast }], moveToml, errors, warnings }
+
+if (result.success) {
+  for (const mod of result.modules) {
+    console.log(mod.name);  // Module name
+    console.log(mod.code);  // Generated Move source
+  }
+}
+
+// ─── Parse Move code ────────────────────────────────────
+const parsed = await sdk.parseMove(moveSource);
+// { success, tree (navigable syntax tree), errors }
+
+if (parsed.success) {
+  const mod = parsed.tree.children[0];
+  console.log(mod.fieldChild('name')?.text);  // "0x1::my_module"
+}
+
+// ─── Validate Move code ────────────────────────────────
+const validation = await sdk.validateMove(moveSource);
+// { valid, errors, structure: { modules, functions, structs } }
+
+// ─── Generate Move from AST ────────────────────────────
+const code = sdk.generateMove(result.modules[0].ast);
+
+// ─── Full pipeline: transpile + validate ────────────────
+const full = await sdk.transpileAndValidate(soliditySource);
+// { transpile: TranspileOutput, moveValidation: ModuleValidation[], allValid }
+
+if (full.allValid) {
+  console.log('All generated modules are syntactically valid');
+}
+```
+
+### Individual Functions
+
+All functions are also available as standalone exports:
+
+```typescript
+import {
+  transpile,
+  validate,
+  analyze,
+  parseMoveCode,
+  validateMoveCode,
+  isMoveParserAvailable,
+} from 'sol2move';
+
+// Transpile
+const result = transpile(soliditySource, { moduleAddress: '0x1' });
+
+// Check if Move parser is available
+if (await isMoveParserAvailable()) {
+  const validation = await validateMoveCode(result.modules[0].code);
+}
+```
+
+## CLI Commands
 
 ```bash
 # Convert a Solidity file to Move
-npm run dev convert examples/simple-storage/SimpleStorage.sol -o output
-
-# Or after building:
 npx sol2move convert contract.sol -o output
 
 # Validate Solidity file
@@ -52,35 +135,8 @@ Options:
   -a, --address <addr>   Module address (default: "0x1")
   -n, --name <name>      Package name
   --no-toml              Skip generating Move.toml
-```
-
-### Programmatic Usage
-
-```typescript
-import { transpile } from 'sol2move';
-
-const soliditySource = `
-contract SimpleStorage {
-    uint256 private value;
-
-    function setValue(uint256 _value) public {
-        value = _value;
-    }
-
-    function getValue() public view returns (uint256) {
-        return value;
-    }
-}
-`;
-
-const result = transpile(soliditySource, {
-  moduleAddress: '0x1',
-  packageName: 'my_contract',
-});
-
-if (result.success) {
-  console.log(result.modules[0].code);
-}
+  --fungible-asset       Use Fungible Asset standard for ERC-20 tokens
+  --digital-asset        Use Digital Asset standard for ERC-721 tokens
 ```
 
 ## Type Mappings
@@ -146,7 +202,6 @@ module 0x1::simple_storage {
     use std::signer;
     use aptos_framework::event;
 
-    // Error codes
     const E_NOT_AUTHORIZED: u64 = 1;
     const E_INVALID_ARGUMENT: u64 = 2;
 
@@ -190,23 +245,21 @@ npx sol2move convert contracts/LBPair.sol -o output \
   --context contracts/libraries/*.sol contracts/LBToken.sol
 ```
 
-## Limitations
-
-- **No dynamic dispatch**: Move is statically typed
-- **Storage model differs**: Move uses resources at addresses
-- **No delegatecall**: Must use capability pattern
-- **Inline assembly**: Translated to stubs (EVM opcodes have no Move equivalent)
-- **Hash function**: keccak256 maps to aptos_hash::keccak256
-- **tx.origin, tx.gasprice**: Not supported in Move
-
 ## Project Structure
 
 ```
 sol2move/
 ├── src/
-│   ├── index.ts              # CLI entry point
+│   ├── index.ts              # CLI + package exports
+│   ├── sdk.ts                # Unified Sol2Move SDK class
 │   ├── transpiler.ts         # Main transpiler (3-stage pipeline)
-│   ├── parser/               # Solidity parsing
+│   ├── parser/
+│   │   ├── solidity-parser.ts    # Solidity parsing
+│   │   └── move-parser/         # Move parsing (tree-sitter)
+│   │       ├── index.ts         # Public API: parseMoveCode, validateMoveCode
+│   │       ├── loader.ts        # Lazy tree-sitter loader
+│   │       ├── node-converter.ts # Tree-sitter → MoveParseNode
+│   │       └── types.ts         # Type abstractions
 │   ├── types/
 │   │   ├── ir.ts             # Intermediate representation types
 │   │   └── move-ast.ts       # Move AST types (with inferredType)
@@ -217,16 +270,24 @@ sol2move/
 │   │   ├── function-transformer.ts    # Function bodies, state access, modifiers
 │   │   ├── expression-transformer.ts  # Expressions, library calls, type inference
 │   │   └── type-inference.ts          # Centralized type inference utilities
-│   ├── codegen/
-│   │   └── move-generator.ts # Move source code generation
-│   └── stdlib/               # EVM compatibility module
+│   └── codegen/
+│       └── move-generator.ts # Move source code generation
 ├── tests/
-│   ├── unit/                 # Unit tests (95 tests)
-│   ├── integration/          # Integration tests (40 tests)
-│   ├── eval/                 # Protocol eval tests (22 DLMM tests)
-│   └── fixtures/             # Solidity source fixtures
-└── examples/                 # Example contracts
+│   ├── unit/                 # Unit tests (116 tests)
+│   ├── integration/          # Integration tests (78 tests)
+│   └── eval/                 # Protocol eval tests (22 DLMM tests)
+└── dist/                     # Compiled output (npm package)
 ```
+
+## Limitations
+
+- **No dynamic dispatch**: Move is statically typed
+- **Storage model differs**: Move uses resources at addresses
+- **No delegatecall**: Must use capability pattern
+- **Inline assembly**: Translated to stubs (EVM opcodes have no Move equivalent)
+- **Hash function**: keccak256 maps to aptos_hash::keccak256
+- **tx.origin, tx.gasprice**: Not supported in Move
+- **Move parser**: Requires optional native dependencies (tree-sitter). All other features work without it.
 
 ## Development
 

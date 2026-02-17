@@ -1,5 +1,6 @@
 module 0x1::pair_parameter_helper {
 
+    use aptos_std::table;
     use 0x1::encoded;
     use 0x1::safe_cast;
 
@@ -150,26 +151,26 @@ module 0x1::pair_parameter_helper {
     }
 
     public(package) fun set_oracle_id(params: u256, oracle_id: u16): u256 {
-        return encoded::set(params, oracle_id, MASK_UINT16, OFFSET_ORACLE_ID)
+        return table::upsert(&mut params, oracle_id, MASK_UINT16, OFFSET_ORACLE_ID)
     }
 
     public(package) fun set_volatility_reference(params: u256, vol_ref: u32): u256 {
         if ((vol_ref > MASK_UINT20)) {
             abort E_PAIR_PARAMETERS_HELPER_INVALID_PARAMETER
         };
-        return encoded::set(params, vol_ref, MASK_UINT20, OFFSET_VOL_REF)
+        return table::upsert(&mut params, vol_ref, MASK_UINT20, OFFSET_VOL_REF)
     }
 
     public(package) fun set_volatility_accumulator(params: u256, vol_acc: u32): u256 {
         if ((vol_acc > MASK_UINT20)) {
             abort E_PAIR_PARAMETERS_HELPER_INVALID_PARAMETER
         };
-        return encoded::set(params, vol_acc, MASK_UINT20, OFFSET_VOL_ACC)
+        return table::upsert(&mut params, vol_acc, MASK_UINT20, OFFSET_VOL_ACC)
     }
 
     public(package) fun set_active_id(params: u256, active_id: u32): u256 {
         let _new_params = 0u256;
-        return encoded::set(params, active_id, MASK_UINT24, OFFSET_ACTIVE_ID)
+        return table::upsert(&mut params, active_id, MASK_UINT24, OFFSET_ACTIVE_ID)
     }
 
     public(package) fun set_static_fee_parameters(params: u256, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32): u256 {
@@ -177,26 +178,26 @@ module 0x1::pair_parameter_helper {
         if ((((((filter_period > decay_period) || (decay_period > MASK_UINT12)) || (reduction_factor > BASIS_POINT_MAX)) || (protocol_share > MAX_PROTOCOL_SHARE)) || (max_volatility_accumulator > MASK_UINT20))) {
             abort E_PAIR_PARAMETERS_HELPER_INVALID_PARAMETER
         };
-        new_params = encoded::set(new_params, base_factor, MASK_UINT16, OFFSET_BASE_FACTOR);
-        new_params = encoded::set(new_params, filter_period, MASK_UINT12, OFFSET_FILTER_PERIOD);
-        new_params = encoded::set(new_params, decay_period, MASK_UINT12, OFFSET_DECAY_PERIOD);
-        new_params = encoded::set(new_params, reduction_factor, MASK_UINT14, OFFSET_REDUCTION_FACTOR);
-        new_params = encoded::set(new_params, variable_fee_control, MASK_UINT24, OFFSET_VAR_FEE_CONTROL);
-        new_params = encoded::set(new_params, protocol_share, MASK_UINT14, OFFSET_PROTOCOL_SHARE);
-        new_params = encoded::set(new_params, max_volatility_accumulator, MASK_UINT20, OFFSET_MAX_VOL_ACC);
-        return encoded::set(params, (new_params as u256), MASK_STATIC_PARAMETER, 0)
+        new_params = table::upsert(&mut new_params, base_factor, MASK_UINT16, OFFSET_BASE_FACTOR);
+        new_params = table::upsert(&mut new_params, filter_period, MASK_UINT12, OFFSET_FILTER_PERIOD);
+        new_params = table::upsert(&mut new_params, decay_period, MASK_UINT12, OFFSET_DECAY_PERIOD);
+        new_params = table::upsert(&mut new_params, reduction_factor, MASK_UINT14, OFFSET_REDUCTION_FACTOR);
+        new_params = table::upsert(&mut new_params, variable_fee_control, MASK_UINT24, OFFSET_VAR_FEE_CONTROL);
+        new_params = table::upsert(&mut new_params, protocol_share, MASK_UINT14, OFFSET_PROTOCOL_SHARE);
+        new_params = table::upsert(&mut new_params, max_volatility_accumulator, MASK_UINT20, OFFSET_MAX_VOL_ACC);
+        return table::upsert(&mut params, (new_params as u256), MASK_STATIC_PARAMETER, 0)
     }
 
     public(package) fun update_id_reference(params: u256): u256 {
         let _new_params = 0u256;
         let active_id: u32 = get_active_id(params);
-        return encoded::set(params, active_id, MASK_UINT24, OFFSET_ID_REF)
+        return table::upsert(&mut params, active_id, MASK_UINT24, OFFSET_ID_REF)
     }
 
     public(package) fun update_time_of_last_update(params: u256, timestamp: u256): u256 {
         let _new_params = 0u256;
         let current_time: u64 = safe_cast::safe40(timestamp);
-        return encoded::set(params, current_time, MASK_UINT40, OFFSET_TIME_LAST_UPDATE)
+        return table::upsert(&mut params, current_time, MASK_UINT40, OFFSET_TIME_LAST_UPDATE)
     }
 
     public(package) fun update_volatility_reference(params: u256): u256 {

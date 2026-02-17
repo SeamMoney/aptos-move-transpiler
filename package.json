@@ -1,19 +1,36 @@
 {
   "name": "sol2move",
   "version": "1.0.0",
-  "description": "Solidity to Aptos Move v2 transpiler",
+  "description": "Solidity to Aptos Move v2 transpiler with Move parsing and validation",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./sdk": {
+      "import": "./dist/sdk.js",
+      "types": "./dist/sdk.d.ts"
+    }
+  },
   "bin": {
-    "sol2move": "./dist/index.js"
+    "sol2move": "./dist/cli.js"
   },
   "type": "module",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
     "test": "vitest",
     "lint": "eslint src --ext .ts",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "solidity",
@@ -21,10 +38,16 @@
     "aptos",
     "transpiler",
     "ethereum",
-    "blockchain"
+    "blockchain",
+    "tree-sitter",
+    "parser"
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SeamMoney/aptos-move-transpiler"
+  },
   "dependencies": {
     "@solidity-parser/parser": "^0.18.0",
     "chalk": "^5.3.0",
@@ -38,5 +61,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "optionalDependencies": {
+    "tree-sitter": "0.25.0",
+    "tree-sitter-move-on-aptos": "github:aptos-labs/tree-sitter-move-on-aptos"
   }
 }

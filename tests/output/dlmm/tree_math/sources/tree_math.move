@@ -110,7 +110,7 @@ module 0x1::tree_math {
                 return ((((key2 as u256) << 8u8) | bit_math::most_significant_bit((leaves as u256))) & 16777215)
             };
         };
-        return 115792089237316195423570985008687907853269984665640564039457584007913129639935u256
+        return 16777215
     }
 
     public(package) fun find_first_left(tree: TreeUint24, id: u32): u32 {

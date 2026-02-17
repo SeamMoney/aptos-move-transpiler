@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-10T21:35:11.579Z",
+  "timestamp": "2026-02-17T22:09:19.145Z",
   "totalContracts": 22,
   "successfulTranspiles": 22,
   "totalFunctions": 317,
   "totalErrors": 0,
-  "totalWarnings": 23,
+  "totalWarnings": 15,
   "totalUnsupported": 3,
   "totalAssemblyBlocks": 1,
   "contracts": [
@@ -101,7 +101,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 119,
+      "lineCount": 120,
       "moveCode": ""
     },
     {
@@ -110,7 +110,7 @@
       "functionCount": 7,
       "structCount": 1,
       "errorCount": 0,
-      "warningCount": 1,
+      "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
       "lineCount": 160,
@@ -122,10 +122,10 @@
       "functionCount": 3,
       "structCount": 0,
       "errorCount": 0,
-      "warningCount": 1,
+      "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 63,
+      "lineCount": 64,
       "moveCode": ""
     },
     {
@@ -173,7 +173,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 234,
+      "lineCount": 235,
       "moveCode": ""
     },
     {
@@ -221,7 +221,7 @@
       "warningCount": 2,
       "unsupportedCount": 1,
       "assemblyBlockCount": 1,
-      "lineCount": 81,
+      "lineCount": 82,
       "moveCode": ""
     },
     {
@@ -233,7 +233,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 146,
+      "lineCount": 151,
       "moveCode": ""
     },
     {
@@ -242,10 +242,10 @@
       "functionCount": 39,
       "structCount": 1,
       "errorCount": 0,
-      "warningCount": 6,
+      "warningCount": 3,
       "unsupportedCount": 1,
       "assemblyBlockCount": 0,
-      "lineCount": 652,
+      "lineCount": 666,
       "moveCode": ""
     },
     {
@@ -257,7 +257,7 @@
       "warningCount": 0,
       "unsupportedCount": 0,
       "assemblyBlockCount": 0,
-      "lineCount": 424,
+      "lineCount": 441,
       "moveCode": ""
     },
     {
@@ -266,10 +266,10 @@
       "functionCount": 42,
       "structCount": 1,
       "errorCount": 0,
-      "warningCount": 13,
+      "warningCount": 10,
       "unsupportedCount": 1,
       "assemblyBlockCount": 0,
-      "lineCount": 735,
+      "lineCount": 739,
       "moveCode": ""
     }
   ]
