@@ -53,3 +53,14 @@ export type {
   CompileCheckOptions,
   CompileDiagnostic,
 } from './compiler/move-compiler.js';
+
+// MSL spec generation
+export {
+  generateSpecs,
+  renderSpecs,
+} from './codegen/spec-generator.js';
+export type {
+  MoveSpecBlock,
+  MoveSpecCondition,
+  MoveSpecPragma,
+} from './types/move-ast.js';

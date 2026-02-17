@@ -10,6 +10,7 @@ import { generateFungibleAssetModule, isERC20Contract, extractERC20Config } from
 import { generateDigitalAssetModule, isERC721Contract, extractERC721Config } from './codegen/digital-asset-generator.js';
 import { formatMoveCode, isFormatterAvailable } from './formatter/move-formatter.js';
 import type { FormatOptions } from './formatter/move-formatter.js';
+import { generateSpecs } from './codegen/spec-generator.js';
 import type { TranspileResult } from './types/ir.js';
 import type { MoveModule } from './types/move-ast.js';
 
@@ -32,6 +33,10 @@ export interface TranspileOptions {
   format?: boolean;
   /** Options for the Move code formatter (only used when format=true). */
   formatOptions?: FormatOptions;
+  /** Generate Move Specification Language (MSL) spec blocks alongside code.
+   *  Specs include aborts_if conditions from require(), modifies declarations,
+   *  and resource existence checks. */
+  generateSpecs?: boolean;
 }
 
 export interface TranspileOutput {
@@ -62,6 +67,7 @@ export function transpile(
     contextSources = [],
     format = false,
     formatOptions = {},
+    generateSpecs: shouldGenerateSpecs = false,
   } = options;
 
   const output: TranspileOutput = {
@@ -204,7 +210,12 @@ export function transpile(
       }
 
       if (result.module) {
-        // Generate Move code
+        // Generate MSL specs if requested
+        if (shouldGenerateSpecs) {
+          generateSpecs(result.module);
+        }
+
+        // Generate Move code (includes spec blocks if they were generated)
         let code = generateMoveCode(result.module);
 
         // Post-process with movefmt if requested

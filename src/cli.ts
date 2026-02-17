@@ -32,6 +32,7 @@ program
   .option('--digital-asset', 'Use Digital Asset standard for ERC-721 tokens')
   .option('--format', 'Format output with aptos move fmt (requires Aptos CLI)')
   .option('--compile-check', 'Verify output compiles with aptos move compile (requires Aptos CLI)')
+  .option('--specs', 'Generate Move Specification Language (MSL) spec blocks')
   .action(async (file: string, options: any) => {
     try {
       if (!existsSync(file)) {
@@ -51,6 +52,7 @@ program
         useFungibleAsset: options.fungibleAsset || false,
         useDigitalAsset: options.digitalAsset || false,
         format: options.format || false,
+        generateSpecs: options.specs || false,
       });
 
       if (!result.success) {

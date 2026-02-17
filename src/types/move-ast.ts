@@ -58,6 +58,45 @@ export interface MoveModule {
   enums: MoveEnum[];
   constants: MoveConstant[];
   functions: MoveFunction[];
+  specs?: MoveSpecBlock[];
+}
+
+// ─── Move Specification Language (MSL) ───────────────────────────────
+
+/** A spec block for a function, struct, or module. */
+export interface MoveSpecBlock {
+  /** What this spec targets: function name, struct name, or 'module' */
+  target: string;
+  /** The type of spec target */
+  targetKind: 'function' | 'struct' | 'module';
+  /** Pragma directives */
+  pragmas?: MoveSpecPragma[];
+  /** Abort conditions: aborts_if expressions */
+  abortsIf?: MoveSpecCondition[];
+  /** Post-conditions: ensures expressions */
+  ensures?: MoveSpecCondition[];
+  /** Pre-conditions: requires expressions */
+  requires?: MoveSpecCondition[];
+  /** Resources this function may modify */
+  modifies?: string[];
+  /** Struct invariants */
+  invariants?: MoveSpecCondition[];
+}
+
+/** A single spec condition (aborts_if, ensures, requires, invariant). */
+export interface MoveSpecCondition {
+  /** The condition expression as a Move source string */
+  expression: string;
+  /** Optional abort code (for aborts_if ... with CODE) */
+  abortCode?: string;
+  /** Comment explaining the condition's origin */
+  comment?: string;
+}
+
+/** A pragma directive in a spec block. */
+export interface MoveSpecPragma {
+  name: string;
+  value?: string;
 }
 
 // Use declarations

@@ -54,6 +54,8 @@ import type {
   CompileCheckOptions,
   CompileDiagnostic,
 } from './compiler/move-compiler.js';
+import { generateSpecs, renderSpecs } from './codegen/spec-generator.js';
+import type { MoveSpecBlock, MoveSpecCondition } from './types/move-ast.js';
 
 // Re-export types that consumers will interact with
 export type { TranspileOptions, TranspileOutput } from './transpiler.js';
@@ -71,6 +73,10 @@ export type {
   CompileCheckOptions,
   CompileDiagnostic,
 } from './compiler/move-compiler.js';
+export type {
+  MoveSpecBlock,
+  MoveSpecCondition,
+} from './types/move-ast.js';
 
 /**
  * Result of analyzing Solidity source code.
@@ -349,6 +355,38 @@ export class Sol2Move {
       ...options,
     };
     return compileCheckModules(modules, mergedOptions);
+  }
+
+  // ─── Specification Generation ───────────────────────────────────
+
+  /**
+   * Generate Move Specification Language (MSL) spec blocks for a Move module AST.
+   *
+   * Extracts formal specifications from the module's code:
+   * - `aborts_if` conditions from `assert!()` / `require()`
+   * - `modifies` declarations from mutable state access
+   * - `aborts_if !exists<T>()` from resource acquisition
+   * - Struct invariants for numeric field bounds
+   *
+   * @example
+   * ```ts
+   * const result = sdk.transpile(soliditySource, { generateSpecs: true });
+   * // Specs are included in the generated code
+   *
+   * // Or generate specs separately for an existing AST:
+   * const specs = sdk.generateSpecs(result.modules[0].ast);
+   * ```
+   */
+  generateSpecs(ast: MoveModule): MoveSpecBlock[] {
+    return generateSpecs(ast);
+  }
+
+  /**
+   * Render MSL spec blocks to Move source code lines.
+   * Useful for custom code generation workflows.
+   */
+  renderSpecs(specs: MoveSpecBlock[]): string[] {
+    return renderSpecs(specs);
   }
 
   // ─── Pipeline ─────────────────────────────────────────────────

@@ -18,6 +18,7 @@ import type {
   MoveFunctionParam,
   MoveTypeParameter,
 } from '../types/move-ast.js';
+import { renderSpecs } from './spec-generator.js';
 
 /**
  * Generate Move source code from a module AST
@@ -69,6 +70,13 @@ export function generateMoveCode(module: MoveModule): string {
   for (const func of module.functions) {
     lines.push('');
     lines.push(generateFunction(func, 4));
+  }
+
+  // Spec blocks (MSL)
+  if (module.specs && module.specs.length > 0) {
+    lines.push('');
+    lines.push('    // ─── Specifications (MSL) ───────────────────────────────────');
+    lines.push(...renderSpecs(module.specs, 4));
   }
 
   lines.push('}');
