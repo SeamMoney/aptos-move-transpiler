@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, basename } from 'path';
 import chalk from 'chalk';
 import { transpile, validate, analyze } from './transpiler.js';
+import { compileCheckModules, isCompilerAvailable } from './compiler/move-compiler.js';
 
 const program = new Command();
 
@@ -30,6 +31,7 @@ program
   .option('--fungible-asset', 'Use Fungible Asset standard for ERC-20 tokens')
   .option('--digital-asset', 'Use Digital Asset standard for ERC-721 tokens')
   .option('--format', 'Format output with aptos move fmt (requires Aptos CLI)')
+  .option('--compile-check', 'Verify output compiles with aptos move compile (requires Aptos CLI)')
   .action(async (file: string, options: any) => {
     try {
       if (!existsSync(file)) {
@@ -85,6 +87,38 @@ program
       }
 
       console.log(chalk.green(`\nSuccessfully transpiled ${result.modules.length} module(s)`));
+
+      // Compile-check if requested
+      if (options.compileCheck) {
+        if (!isCompilerAvailable()) {
+          console.log(chalk.yellow('\nSkipping compile check: Aptos CLI not found'));
+        } else {
+          console.log(chalk.blue('\nRunning compile check...'));
+          const compileResult = compileCheckModules(
+            result.modules.map(m => ({ name: m.name, code: m.code })),
+            {
+              moduleAddress: options.address,
+              packageName,
+            }
+          );
+
+          if (compileResult.success) {
+            console.log(chalk.green('Compile check passed'));
+            if (compileResult.warnings.length > 0) {
+              compileResult.warnings.forEach(w =>
+                console.log(chalk.yellow(`  Warning: ${w.message}`))
+              );
+            }
+          } else {
+            console.log(chalk.red('Compile check failed:'));
+            compileResult.errors.forEach(e => {
+              const loc = e.line ? ` (${e.source || ''}:${e.line}:${e.column || ''})` : '';
+              console.error(chalk.red(`  ${e.message}${loc}`));
+            });
+          }
+        }
+      }
+
       console.log(chalk.blue(`\nTo compile: cd ${outDir} && aptos move compile`));
 
     } catch (error) {

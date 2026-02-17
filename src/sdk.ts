@@ -44,6 +44,16 @@ import {
   formatMoveModules,
 } from './formatter/move-formatter.js';
 import type { FormatResult, FormatOptions } from './formatter/move-formatter.js';
+import {
+  compileCheck,
+  compileCheckModules,
+  isCompilerAvailable,
+} from './compiler/move-compiler.js';
+import type {
+  CompileCheckResult,
+  CompileCheckOptions,
+  CompileDiagnostic,
+} from './compiler/move-compiler.js';
 
 // Re-export types that consumers will interact with
 export type { TranspileOptions, TranspileOutput } from './transpiler.js';
@@ -56,6 +66,11 @@ export type {
 } from './parser/move-parser/index.js';
 export type { MoveModule } from './types/move-ast.js';
 export type { FormatResult, FormatOptions } from './formatter/move-formatter.js';
+export type {
+  CompileCheckResult,
+  CompileCheckOptions,
+  CompileDiagnostic,
+} from './compiler/move-compiler.js';
 
 /**
  * Result of analyzing Solidity source code.
@@ -263,6 +278,77 @@ export class Sol2Move {
    */
   formatMove(source: string, options?: FormatOptions): FormatResult {
     return formatMoveCode(source, options);
+  }
+
+  // ─── Compiler ──────────────────────────────────────────────────
+
+  /**
+   * Check if the Move compiler (`aptos move compile`) is available.
+   * Result is cached after the first call.
+   */
+  isCompilerAvailable(): boolean {
+    return isCompilerAvailable();
+  }
+
+  /**
+   * Compile-check a single Move module using `aptos move compile`.
+   *
+   * Creates a temporary Move package, runs the full compiler, and returns
+   * structured diagnostics (errors, warnings, source locations).
+   *
+   * This is the deepest validation tier — catches type errors, unresolved
+   * references, missing dependencies, and other semantic issues that
+   * tree-sitter parsing cannot detect.
+   *
+   * @example
+   * ```ts
+   * const result = sdk.compileCheck(moveSource, 'my_module');
+   * if (result.success) {
+   *   console.log('Module compiles successfully');
+   * } else {
+   *   for (const err of result.errors) {
+   *     console.log(`${err.source}:${err.line}: ${err.message}`);
+   *   }
+   * }
+   * ```
+   */
+  compileCheck(
+    code: string,
+    moduleName: string,
+    options?: CompileCheckOptions
+  ): CompileCheckResult {
+    const mergedOptions: CompileCheckOptions = {
+      moduleAddress: this.options.moduleAddress,
+      packageName: this.options.packageName,
+      ...options,
+    };
+    return compileCheck(code, moduleName, mergedOptions);
+  }
+
+  /**
+   * Compile-check multiple Move modules together as a single package.
+   *
+   * Use this when modules depend on each other — they'll be compiled
+   * together so cross-module references resolve correctly.
+   *
+   * @example
+   * ```ts
+   * const result = sdk.compileCheckModules([
+   *   { name: 'math_lib', code: mathSource },
+   *   { name: 'token', code: tokenSource },
+   * ]);
+   * ```
+   */
+  compileCheckModules(
+    modules: { name: string; code: string }[],
+    options?: CompileCheckOptions
+  ): CompileCheckResult {
+    const mergedOptions: CompileCheckOptions = {
+      moduleAddress: this.options.moduleAddress,
+      packageName: this.options.packageName,
+      ...options,
+    };
+    return compileCheckModules(modules, mergedOptions);
   }
 
   // ─── Pipeline ─────────────────────────────────────────────────

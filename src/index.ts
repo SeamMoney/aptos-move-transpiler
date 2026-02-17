@@ -41,3 +41,15 @@ export type {
   FormatResult,
   FormatOptions,
 } from './formatter/move-formatter.js';
+
+// Move compiler validation (requires Aptos CLI)
+export {
+  compileCheck,
+  compileCheckModules,
+  isCompilerAvailable,
+} from './compiler/move-compiler.js';
+export type {
+  CompileCheckResult,
+  CompileCheckOptions,
+  CompileDiagnostic,
+} from './compiler/move-compiler.js';
