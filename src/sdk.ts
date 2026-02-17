@@ -38,6 +38,12 @@ import type {
   MoveValidationResult,
   MoveParseError,
 } from './parser/move-parser/index.js';
+import {
+  formatMoveCode,
+  isFormatterAvailable,
+  formatMoveModules,
+} from './formatter/move-formatter.js';
+import type { FormatResult, FormatOptions } from './formatter/move-formatter.js';
 
 // Re-export types that consumers will interact with
 export type { TranspileOptions, TranspileOutput } from './transpiler.js';
@@ -49,6 +55,7 @@ export type {
   MoveSourcePosition,
 } from './parser/move-parser/index.js';
 export type { MoveModule } from './types/move-ast.js';
+export type { FormatResult, FormatOptions } from './formatter/move-formatter.js';
 
 /**
  * Result of analyzing Solidity source code.
@@ -228,6 +235,34 @@ export class Sol2Move {
    */
   generateMove(ast: MoveModule): string {
     return generateMoveCode(ast);
+  }
+
+  // ─── Formatter ──────────────────────────────────────────────────
+
+  /**
+   * Check if the Move code formatter (`aptos move fmt`) is available.
+   * Result is cached after the first call.
+   */
+  isFormatterAvailable(): boolean {
+    return isFormatterAvailable();
+  }
+
+  /**
+   * Format Move source code using `aptos move fmt` (movefmt).
+   *
+   * Requires the Aptos CLI to be installed. If unavailable, returns the
+   * original code with `formatted: false`.
+   *
+   * @example
+   * ```ts
+   * const result = sdk.formatMove(moveSource);
+   * if (result.formatted) {
+   *   console.log(result.code); // Formatted Move code
+   * }
+   * ```
+   */
+  formatMove(source: string, options?: FormatOptions): FormatResult {
+    return formatMoveCode(source, options);
   }
 
   // ─── Pipeline ─────────────────────────────────────────────────

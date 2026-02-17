@@ -30,3 +30,14 @@ export type {
   MoveParseNode,
   MoveSourcePosition,
 } from './parser/move-parser/index.js';
+
+// Move formatter (requires Aptos CLI)
+export {
+  formatMoveCode,
+  isFormatterAvailable,
+  formatMoveModules,
+} from './formatter/move-formatter.js';
+export type {
+  FormatResult,
+  FormatOptions,
+} from './formatter/move-formatter.js';

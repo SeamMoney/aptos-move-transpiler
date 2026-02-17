@@ -29,6 +29,7 @@ program
   .option('--no-toml', 'Skip generating Move.toml')
   .option('--fungible-asset', 'Use Fungible Asset standard for ERC-20 tokens')
   .option('--digital-asset', 'Use Digital Asset standard for ERC-721 tokens')
+  .option('--format', 'Format output with aptos move fmt (requires Aptos CLI)')
   .action(async (file: string, options: any) => {
     try {
       if (!existsSync(file)) {
@@ -47,6 +48,7 @@ program
         packageName,
         useFungibleAsset: options.fungibleAsset || false,
         useDigitalAsset: options.digitalAsset || false,
+        format: options.format || false,
       });
 
       if (!result.success) {

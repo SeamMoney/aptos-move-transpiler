@@ -8,6 +8,8 @@ import { contractToIR, irToMoveModule } from './transformer/contract-transformer
 import { generateMoveCode, generateMoveToml } from './codegen/move-generator.js';
 import { generateFungibleAssetModule, isERC20Contract, extractERC20Config } from './codegen/fungible-asset-generator.js';
 import { generateDigitalAssetModule, isERC721Contract, extractERC721Config } from './codegen/digital-asset-generator.js';
+import { formatMoveCode, isFormatterAvailable } from './formatter/move-formatter.js';
+import type { FormatOptions } from './formatter/move-formatter.js';
 import type { TranspileResult } from './types/ir.js';
 import type { MoveModule } from './types/move-ast.js';
 
@@ -25,6 +27,11 @@ export interface TranspileOptions {
   /** Additional Solidity sources for cross-file context (imports, libraries).
    *  These are parsed for reference but don't generate output modules. */
   contextSources?: string[];
+  /** Post-process generated Move code with `aptos move fmt`.
+   *  Requires the Aptos CLI to be installed. Falls back gracefully if unavailable. */
+  format?: boolean;
+  /** Options for the Move code formatter (only used when format=true). */
+  formatOptions?: FormatOptions;
 }
 
 export interface TranspileOutput {
@@ -53,6 +60,8 @@ export function transpile(
     useFungibleAsset = false,
     useDigitalAsset = false,
     contextSources = [],
+    format = false,
+    formatOptions = {},
   } = options;
 
   const output: TranspileOutput = {
@@ -138,8 +147,13 @@ export function transpile(
           ir.functions
         );
 
-        const code = generateFungibleAssetModule(faConfig);
+        let code = generateFungibleAssetModule(faConfig);
         const moduleName = toSnakeCase(contract.name);
+
+        if (format) {
+          const fmtResult = formatMoveCode(code, formatOptions);
+          if (fmtResult.formatted) code = fmtResult.code;
+        }
 
         output.modules.push({
           name: moduleName,
@@ -161,8 +175,13 @@ export function transpile(
           ir.functions
         );
 
-        const code = generateDigitalAssetModule(daConfig);
+        let code = generateDigitalAssetModule(daConfig);
         const moduleName = toSnakeCase(contract.name);
+
+        if (format) {
+          const fmtResult = formatMoveCode(code, formatOptions);
+          if (fmtResult.formatted) code = fmtResult.code;
+        }
 
         output.modules.push({
           name: moduleName,
@@ -186,7 +205,13 @@ export function transpile(
 
       if (result.module) {
         // Generate Move code
-        const code = generateMoveCode(result.module);
+        let code = generateMoveCode(result.module);
+
+        // Post-process with movefmt if requested
+        if (format) {
+          const fmtResult = formatMoveCode(code, formatOptions);
+          if (fmtResult.formatted) code = fmtResult.code;
+        }
 
         output.modules.push({
           name: result.module.name,
