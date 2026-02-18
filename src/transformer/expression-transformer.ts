@@ -495,6 +495,70 @@ function transformAssignment(
 
   let value = transformExpression(stmt.value, context);
 
+  // Handle event-trackable variables: emit events instead of state writes
+  if (context.resourcePlan && context.optimizationLevel !== 'low' &&
+      (stmt.operator === '+=' || stmt.operator === '-=')) {
+    const evTargetName = extractTargetVarName(stmt.target);
+    if (evTargetName && context.resourcePlan.eventTrackables?.has(evTargetName)) {
+      const config = context.resourcePlan.eventTrackables.get(evTargetName)!;
+      return {
+        kind: 'expression',
+        expression: {
+          kind: 'call',
+          function: 'event::emit',
+          module: 'aptos_framework::event',
+          args: [{
+            kind: 'struct',
+            name: config.eventName,
+            fields: [{ name: 'amount', value }],
+          }],
+        },
+      };
+    }
+  }
+
+  // Handle aggregator transforms for medium/high optimization.
+  // Compound assignments (+=, -=) on aggregatable variables become
+  // aggregator_v2::add() / aggregator_v2::sub() calls.
+  if (context.resourcePlan && context.optimizationLevel !== 'low' &&
+      (stmt.operator === '+=' || stmt.operator === '-=')) {
+    const targetVarName = extractTargetVarName(stmt.target);
+    if (targetVarName) {
+      const analysis = findVariableAnalysis(context, targetVarName);
+      if (analysis && analysis.category === 'aggregatable') {
+        // Transform: state.total_supply += amount  →  aggregator_v2::add(&mut counters.total_supply, amount)
+        const groupName = context.resourcePlan.varToGroup.get(targetVarName);
+        const localObj = groupName ? groupNameToLocalVar(groupName) : 'state';
+        const fieldName = toSnakeCase(targetVarName);
+        const fieldRef: MoveExpression = {
+          kind: 'field_access',
+          object: { kind: 'identifier', name: localObj },
+          field: fieldName,
+        };
+        const fnName = stmt.operator === '+=' ? 'add' : 'sub';
+        // Aggregator<u128> requires u128 values; cast if original type is wider (u256)
+        const moveType = analysis.variable.type?.move;
+        const needsCast = moveType && moveType.kind === 'primitive' &&
+          (moveType.name === 'u256' || moveType.name === 'u64');
+        const castValue: MoveExpression = needsCast
+          ? { kind: 'cast', value, targetType: { kind: 'primitive', name: 'u128' } }
+          : value;
+        return {
+          kind: 'expression',
+          expression: {
+            kind: 'call',
+            module: 'aggregator_v2',
+            function: fnName,
+            args: [
+              { kind: 'borrow', mutable: true, value: fieldRef },
+              castValue,
+            ],
+          },
+        };
+      }
+    }
+  }
+
   // Handle compound assignment
   if (stmt.operator && stmt.operator !== '=') {
     // For shift compound assignments, right operand must be u8 in Move
@@ -1225,13 +1289,78 @@ function transformIdentifier(expr: any, context: TranspileContext): MoveExpressi
   // Check if it's a state variable (but not a constant)
   const stateVar = context.stateVariables.get(expr.name);
   if (stateVar && stateVar.mutability !== 'constant') {
-    const result: MoveExpression = {
+    // Determine which local variable holds this state (multi-resource routing)
+    let objectName = 'state';
+    if (context.resourcePlan && context.optimizationLevel !== 'low') {
+      const groupName = context.resourcePlan.varToGroup.get(expr.name);
+      if (groupName) {
+        objectName = groupNameToLocalVar(groupName);
+      }
+    }
+
+    const fieldAccess: MoveExpression = {
       kind: 'field_access',
-      object: { kind: 'identifier', name: 'state' },
+      object: { kind: 'identifier', name: objectName },
       field: name,
     };
-    if (stateVar.type?.move) setExprInferredType(result, stateVar.type.move);
-    return result;
+
+    // For event-trackable variables: return 0 (value tracked off-chain via events)
+    if (context.resourcePlan && context.optimizationLevel !== 'low' &&
+        context.resourcePlan.eventTrackables?.has(expr.name)) {
+      const config = context.resourcePlan.eventTrackables.get(expr.name)!;
+      const zeroExpr: MoveExpression = { kind: 'literal', type: 'number', value: 0 };
+      if (stateVar.type?.move) setExprInferredType(zeroExpr, stateVar.type.move);
+      return zeroExpr;
+    }
+
+    // For aggregatable variables at medium+, wrap read in aggregator_v2::read() or snapshot pattern
+    if (context.resourcePlan && context.optimizationLevel !== 'low') {
+      const analysis = findVariableAnalysis(context, expr.name);
+      if (analysis && analysis.category === 'aggregatable') {
+        const borrowRef: MoveExpression = { kind: 'borrow', mutable: false, value: fieldAccess };
+
+        // Use snapshot pattern when function both reads and writes aggregatable vars
+        // (avoids sequential dependency with concurrent writes per AIP-47)
+        const useSnapshot = context.currentFunction &&
+          context.resourcePlan.snapshotEligibleFunctions?.has(context.currentFunction);
+
+        let readExpr: MoveExpression;
+        if (useSnapshot) {
+          // aggregator_v2::read_snapshot(&aggregator_v2::snapshot(&group.field))
+          const snapshotCall: MoveExpression = {
+            kind: 'call',
+            module: 'aggregator_v2',
+            function: 'snapshot',
+            args: [borrowRef],
+          };
+          readExpr = {
+            kind: 'call',
+            module: 'aggregator_v2',
+            function: 'read_snapshot',
+            args: [{ kind: 'borrow', mutable: false, value: snapshotCall }],
+          };
+        } else {
+          readExpr = {
+            kind: 'call',
+            module: 'aggregator_v2',
+            function: 'read',
+            args: [borrowRef],
+          };
+        }
+
+        // Aggregator<u128> returns u128; cast back to original type if needed (e.g., u256)
+        const moveType = analysis.variable.type?.move;
+        if (moveType && moveType.kind === 'primitive' &&
+            (moveType.name === 'u256' || moveType.name === 'u64')) {
+          readExpr = { kind: 'cast', value: readExpr, targetType: moveType };
+        }
+        if (stateVar.type?.move) setExprInferredType(readExpr, stateVar.type.move);
+        return readExpr;
+      }
+    }
+
+    if (stateVar.type?.move) setExprInferredType(fieldAccess, stateVar.type.move);
+    return fieldAccess;
   }
 
   // Look up type from local variables
@@ -1248,6 +1377,13 @@ function transformIdentifier(expr: any, context: TranspileContext): MoveExpressi
  * Based on e2m's BinaryOp::calc patterns from reverse engineering
  */
 function transformBinary(expr: any, context: TranspileContext): MoveExpression {
+  // Try aggregator is_at_least() optimization for comparisons (medium+)
+  // Must check BEFORE transforming operands to detect raw aggregatable identifiers
+  if (context.resourcePlan && context.optimizationLevel !== 'low') {
+    const isAtLeastResult = tryTransformAggregatorComparison(expr, context);
+    if (isAtLeastResult) return isAtLeastResult;
+  }
+
   const left = transformExpression(expr.left, context);
   const right = transformExpression(expr.right, context);
 
@@ -2067,6 +2203,38 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
   const base = transformExpression(expr.base, context);
   const index = transformExpression(expr.index, context);
 
+  // Per-user resource reads (high optimization): mapping[addr] → per-user resource field
+  if (expr.base?.kind === 'identifier' && context.optimizationLevel === 'high') {
+    const perUser = findPerUserField(context, expr.base.name);
+    if (perUser) {
+      context.usedModules.add('std::signer');
+      // Generate: if (exists<UserState>(addr)) { borrow_global<UserState>(addr).field } else { default }
+      const addrExpr = index; // The index is the address
+      const existsCall: MoveExpression = {
+        kind: 'call',
+        function: `exists<${perUser.structName}>`,
+        args: [addrExpr],
+      };
+      const borrowField: MoveExpression = {
+        kind: 'field_access',
+        object: {
+          kind: 'call',
+          function: 'borrow_global',
+          typeArgs: [{ kind: 'struct', name: perUser.structName }],
+          args: [addrExpr],
+        },
+        field: perUser.fieldName,
+      };
+      const defaultExpr: MoveExpression = { kind: 'literal', type: 'number', value: 0 };
+      return {
+        kind: 'if_expr',
+        condition: existsCall,
+        thenExpr: borrowField,
+        elseExpr: defaultExpr,
+      };
+    }
+  }
+
   // Check if base is a state variable mapping
   if (expr.base?.kind === 'identifier') {
     const stateVar = context.stateVariables.get(expr.base.name);
@@ -2305,6 +2473,27 @@ function getDefaultForMoveType(moveType: any, irType: any, context: TranspileCon
 export function transformIndexAccessMutable(expr: any, context: TranspileContext): MoveExpression {
   const base = transformExpression(expr.base, context);
   const index = transformExpression(expr.index, context);
+
+  // Per-user resource writes (high optimization): mapping[msg.sender] → per-user resource field
+  if (expr.base?.kind === 'identifier' && context.optimizationLevel === 'high') {
+    const perUser = findPerUserField(context, expr.base.name);
+    if (perUser) {
+      context.usedModules.add('std::signer');
+      // ensure_user_state(account) already called at function start
+      // Generate: borrow_global_mut<UserState>(signer::address_of(account)).field
+      const addrExpr = index; // The index is the address (typically signer::address_of(account))
+      return {
+        kind: 'field_access',
+        object: {
+          kind: 'call',
+          function: 'borrow_global_mut',
+          typeArgs: [{ kind: 'struct', name: perUser.structName }],
+          args: [addrExpr],
+        },
+        field: perUser.fieldName,
+      };
+    }
+  }
 
   // Check if base is a state variable mapping
   if (expr.base?.kind === 'identifier') {
@@ -3021,6 +3210,169 @@ function boolToU256(expr: any): any {
 /**
  * Convert to snake_case
  */
+/**
+ * Extract the original Solidity variable name from an assignment target IR expression.
+ * Used for aggregator detection in the assignment transformer.
+ */
+function extractTargetVarName(target: any): string | null {
+  if (!target) return null;
+  if (target.kind === 'identifier') return target.name;
+  if (target.kind === 'index_access') return extractTargetVarName(target.base);
+  if (target.kind === 'member_access') return extractTargetVarName(target.object);
+  return null;
+}
+
+/**
+ * Convert a resource group name to a local variable name.
+ * E.g., 'VaultAdminConfig' → 'admin_config', 'VaultCounters' → 'counters'
+ */
+function groupNameToLocalVar(groupName: string): string {
+  const suffixes = ['AdminConfig', 'Counters', 'UserData', 'State'];
+  for (const suffix of suffixes) {
+    if (groupName.endsWith(suffix)) {
+      return toSnakeCase(suffix);
+    }
+  }
+  return toSnakeCase(groupName);
+}
+
+/**
+ * Try to transform a binary comparison on an aggregatable variable to
+ * aggregator_v2::is_at_least(). This avoids materializing the full value
+ * and eliminates sequential dependencies per AIP-47.
+ *
+ * Supported patterns:
+ *   aggVar > 0    → is_at_least(&agg, 1)
+ *   aggVar >= N   → is_at_least(&agg, N)
+ *   aggVar > N    → is_at_least(&agg, N + 1)  (literal N only)
+ *   aggVar != 0   → is_at_least(&agg, 1)
+ *   0 < aggVar    → is_at_least(&agg, 1)  (reversed operands)
+ *
+ * Returns null if the pattern doesn't match.
+ */
+function tryTransformAggregatorComparison(
+  expr: any,
+  context: TranspileContext
+): MoveExpression | null {
+  const op = expr.operator;
+  if (!['>', '>=', '!=', '<'].includes(op)) return null;
+
+  // Determine which operand is the aggregatable variable and which is the threshold
+  let aggSide: 'left' | 'right' | null = null;
+  let aggVarName: string | null = null;
+  let thresholdExpr: any = null;
+  let effectiveOp = op;
+
+  // Check left operand
+  if (expr.left?.kind === 'identifier') {
+    const analysis = findVariableAnalysis(context, expr.left.name);
+    if (analysis && analysis.category === 'aggregatable') {
+      aggSide = 'left';
+      aggVarName = expr.left.name;
+      thresholdExpr = expr.right;
+    }
+  }
+  // Check right operand (reversed: 0 < aggVar)
+  if (!aggSide && expr.right?.kind === 'identifier') {
+    const analysis = findVariableAnalysis(context, expr.right.name);
+    if (analysis && analysis.category === 'aggregatable') {
+      aggSide = 'right';
+      aggVarName = expr.right.name;
+      thresholdExpr = expr.left;
+      // Flip operator: 0 < aggVar → aggVar > 0, N <= aggVar → aggVar >= N
+      if (op === '<') effectiveOp = '>';
+      else if (op === '<=') effectiveOp = '>=';
+      else if (op === '>') effectiveOp = '<';
+      else if (op === '>=') effectiveOp = '<=';
+    }
+  }
+
+  if (!aggSide || !aggVarName) return null;
+
+  // Only handle > , >= , != (from agg's perspective). < and <= need exact value.
+  if (effectiveOp !== '>' && effectiveOp !== '>=' && effectiveOp !== '!=') return null;
+
+  // Determine the threshold value for is_at_least
+  const isZero = thresholdExpr?.kind === 'literal' && thresholdExpr?.type === 'number' &&
+    (thresholdExpr.value === 0 || thresholdExpr.value === '0');
+
+  // != only optimizable when compared to 0
+  if (effectiveOp === '!=' && !isZero) return null;
+
+  // Build the field access for the aggregator
+  const analysis = findVariableAnalysis(context, aggVarName)!;
+  const groupName = context.resourcePlan!.varToGroup.get(aggVarName);
+  const objectName = groupName ? groupNameToLocalVar(groupName) : 'state';
+  const fieldAccess: MoveExpression = {
+    kind: 'field_access',
+    object: { kind: 'identifier', name: objectName },
+    field: toSnakeCase(aggVarName),
+  };
+  const borrowRef: MoveExpression = { kind: 'borrow', mutable: false, value: fieldAccess };
+
+  let thresholdMoveExpr: MoveExpression;
+
+  if (effectiveOp === '!=' || (effectiveOp === '>' && isZero)) {
+    // aggVar > 0 or aggVar != 0 → is_at_least(&agg, 1)
+    thresholdMoveExpr = { kind: 'literal', type: 'number', value: 1, suffix: 'u128' };
+  } else if (effectiveOp === '>=') {
+    // aggVar >= N → is_at_least(&agg, N)
+    thresholdMoveExpr = transformExpression(thresholdExpr, context);
+    // Cast to u128 if needed
+    const moveType = analysis.variable.type?.move;
+    if (moveType && moveType.kind === 'primitive' &&
+        (moveType.name === 'u256' || moveType.name === 'u64')) {
+      thresholdMoveExpr = { kind: 'cast', value: thresholdMoveExpr, targetType: { kind: 'primitive', name: 'u128' } };
+    }
+  } else if (effectiveOp === '>') {
+    // aggVar > N → is_at_least(&agg, N + 1) — only for literal N
+    if (thresholdExpr?.kind !== 'literal' || thresholdExpr?.type !== 'number') return null;
+    const nVal = typeof thresholdExpr.value === 'string' ? parseInt(thresholdExpr.value) : thresholdExpr.value;
+    thresholdMoveExpr = { kind: 'literal', type: 'number', value: nVal + 1, suffix: 'u128' };
+  } else {
+    return null;
+  }
+
+  return {
+    kind: 'call',
+    module: 'aggregator_v2',
+    function: 'is_at_least',
+    args: [borrowRef, thresholdMoveExpr],
+    inferredType: { kind: 'primitive', name: 'bool' },
+  };
+}
+
+/**
+ * Find a variable's StateVariableAnalysis from the resource plan.
+ * Returns the analysis if found, null otherwise.
+ */
+function findVariableAnalysis(
+  context: TranspileContext,
+  varName: string
+): { category: string; variable: { name: string; type?: any } } | null {
+  if (!context.resourcePlan) return null;
+  for (const group of context.resourcePlan.groups) {
+    for (const va of group.variables) {
+      if (va.variable.name === varName) {
+        return { category: va.category, variable: va.variable };
+      }
+    }
+  }
+  return null;
+}
+
+/** Find per-user resource field config for a variable, if applicable. */
+function findPerUserField(
+  context: TranspileContext,
+  varName: string
+): { structName: string; fieldName: string; type: any } | null {
+  const pur = context.resourcePlan?.perUserResources;
+  if (!pur) return null;
+  const field = pur.fields.find(f => f.varName === varName);
+  if (!field) return null;
+  return { structName: pur.structName, fieldName: field.fieldName, type: field.type };
+}
+
 function toSnakeCase(str: string): string {
   if (!str) return '';
 

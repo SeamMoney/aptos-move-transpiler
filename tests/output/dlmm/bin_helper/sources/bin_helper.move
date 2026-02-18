@@ -70,13 +70,13 @@ module 0x1::bin_helper {
             let delta_liquidity: u256 = (user_liquidity - effective_liquidity);
             if ((delta_liquidity >= SCALE)) {
                 let delta_y: u256 = (delta_liquidity >> (SCALE_OFFSET as u8));
-                delta_y = if ((delta_y > y)) y else delta_y;
+                delta_y = (if ((delta_y > y)) y else delta_y);
                 y -= delta_y;
                 delta_liquidity -= (delta_y << (SCALE_OFFSET as u8));
             };
             if ((delta_liquidity >= price)) {
                 let delta_x: u256 = (delta_liquidity / price);
-                delta_x = if ((delta_x > x)) x else delta_x;
+                delta_x = (if ((delta_x > x)) x else delta_x);
                 x -= delta_x;
             };
             amounts_in = packed_uint128_math::encode((x as u128), (y as u128));
@@ -137,7 +137,7 @@ module 0x1::bin_helper {
     }
 
     public(package) fun is_empty(bin_reserves: u256, is_x: bool): bool {
-        return if (is_x) (packed_uint128_math::decode_x(bin_reserves) == 0) else (packed_uint128_math::decode_y(bin_reserves) == 0)
+        return (if (is_x) (packed_uint128_math::decode_x(bin_reserves) == 0) else (packed_uint128_math::decode_y(bin_reserves) == 0))
     }
 
     public(package) fun get_amounts(bin_reserves: u256, parameters: u256, bin_step: u16, swap_for_y: bool, active_id: u32, amounts_in_left: u256): (u256, u256, u256) {
@@ -146,7 +146,7 @@ module 0x1::bin_helper {
         let total_fees = 0u256;
         let price: u256 = price_helper::get_price_from_id(active_id, bin_step);
         let bin_reserve_out: u128 = packed_uint128_math::decode(bin_reserves, !swap_for_y);
-        let max_amount_in: u128 = if (swap_for_y) safe_cast::safe128(uint256x256_math::shift_div_round_up((bin_reserve_out as u256), SCALE_OFFSET, price)) else safe_cast::safe128(uint256x256_math::mul_shift_round_up((bin_reserve_out as u256), price, SCALE_OFFSET));
+        let max_amount_in: u128 = (if (swap_for_y) safe_cast::safe128(uint256x256_math::shift_div_round_up((bin_reserve_out as u256), SCALE_OFFSET, price)) else safe_cast::safe128(uint256x256_math::mul_shift_round_up((bin_reserve_out as u256), price, SCALE_OFFSET)));
         let total_fee: u128 = pair_parameter_helper::get_total_fee(parameters, bin_step);
         let max_fee: u128 = fee_helper::get_fee_amount(max_amount_in, total_fee);
         max_amount_in += max_fee;
@@ -160,12 +160,12 @@ module 0x1::bin_helper {
         } else {
             fee128 = fee_helper::get_fee_amount_from(amount_in128, total_fee);
             let amount_in: u256 = (amount_in128 - fee128);
-            amount_out128 = if (swap_for_y) safe_cast::safe128(uint256x256_math::mul_shift_round_down((amount_in as u256), price, SCALE_OFFSET)) else safe_cast::safe128(uint256x256_math::shift_div_round_down((amount_in as u256), SCALE_OFFSET, price));
+            amount_out128 = (if (swap_for_y) safe_cast::safe128(uint256x256_math::mul_shift_round_down((amount_in as u256), price, SCALE_OFFSET)) else safe_cast::safe128(uint256x256_math::shift_div_round_down((amount_in as u256), SCALE_OFFSET, price)));
             if ((amount_out128 > bin_reserve_out)) {
                 amount_out128 = bin_reserve_out;
             };
         };
-        (amounts_in_with_fees, amounts_out_of_bin, total_fees) = if (swap_for_y) (packed_uint128_math::encode_first(amount_in128), packed_uint128_math::encode_second(amount_out128), packed_uint128_math::encode_first(fee128)) else (packed_uint128_math::encode_second(amount_in128), packed_uint128_math::encode_first(amount_out128), packed_uint128_math::encode_second(fee128));
+        (amounts_in_with_fees, amounts_out_of_bin, total_fees) = (if (swap_for_y) (packed_uint128_math::encode_first(amount_in128), packed_uint128_math::encode_second(amount_out128), packed_uint128_math::encode_first(fee128)) else (packed_uint128_math::encode_second(amount_in128), packed_uint128_math::encode_first(amount_out128), packed_uint128_math::encode_second(fee128)));
         if ((get_liquidity(((bin_reserves + amounts_in_with_fees) - amounts_out_of_bin), price) > MAX_LIQUIDITY_PER_BIN)) {
             abort E_BIN_HELPER_MAX_LIQUIDITY_PER_BIN_EXCEEDED
         };

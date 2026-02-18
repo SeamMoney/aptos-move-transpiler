@@ -257,9 +257,9 @@ module 0x1::l_b_pair {
             let bin_reserves: u128 = packed_uint128_math::decode(*table::borrow_with_default(&state.bins, id, &0u256), !swap_for_y);
             if ((bin_reserves > 0)) {
                 let price: u256 = price_helper::get_price_from_id(id, bin_step);
-                let amount_out_of_bin: u128 = if ((bin_reserves > amount_out_left)) amount_out_left else bin_reserves;
+                let amount_out_of_bin: u128 = (if ((bin_reserves > amount_out_left)) amount_out_left else bin_reserves);
                 parameters = pair_parameter_helper::update_volatility_accumulator(parameters, id);
-                let amount_in_without_fee: u128 = (if (swap_for_y) uint256x256_math::shift_div_round_up((amount_out_of_bin as u256), SCALE_OFFSET, price) else uint256x256_math::mul_shift_round_up((amount_out_of_bin as u256), price, SCALE_OFFSET) as u128);
+                let amount_in_without_fee: u128 = ((if (swap_for_y) uint256x256_math::shift_div_round_up((amount_out_of_bin as u256), SCALE_OFFSET, price) else uint256x256_math::mul_shift_round_up((amount_out_of_bin as u256), price, SCALE_OFFSET)) as u128);
                 let total_fee: u128 = pair_parameter_helper::get_total_fee(parameters, bin_step);
                 let fee_amount: u128 = fee_helper::get_fee_amount(amount_in_without_fee, total_fee);
                 amount_in += (amount_in_without_fee + fee_amount);
@@ -322,7 +322,7 @@ module 0x1::l_b_pair {
         let hooks_parameters: u256 = state.hooks_parameters;
         let reserves: u256 = state.reserves;
         let protocol_fees: u256 = state.protocol_fees;
-        let amounts_left: u256 = if (swap_for_y) bin_helper::received_x(reserves, token_x()) else bin_helper::received_y(reserves, token_y());
+        let amounts_left: u256 = (if (swap_for_y) bin_helper::received_x(reserves, token_x()) else bin_helper::received_y(reserves, token_y()));
         if ((amounts_left == 0)) {
             abort E_L_B_PAIR_INSUFFICIENT_AMOUNT_IN
         };
@@ -487,7 +487,7 @@ module 0x1::l_b_pair {
         };
         let protocol_fees: u256 = state.protocol_fees;
         let (x, y) = packed_uint128_math::decode(protocol_fees);
-        let ones: u256 = packed_uint128_math::encode((if ((x > 0)) 1 else 0 as u128), (if ((y > 0)) 1 else 0 as u128));
+        let ones: u256 = packed_uint128_math::encode(((if ((x > 0)) 1 else 0) as u128), ((if ((y > 0)) 1 else 0) as u128));
         collected_protocol_fees = (protocol_fees - ones);
         if ((collected_protocol_fees != 0)) {
             state.protocol_fees = ones;
@@ -571,7 +571,7 @@ module 0x1::l_b_pair {
     }
 
     public(package) fun get_next_non_empty_bin(swap_for_y: bool, id: u32): u32 {
-        return if (swap_for_y) find_first_right(state.tree, id) else find_first_left(state.tree, id)
+        return (if (swap_for_y) find_first_right(state.tree, id) else find_first_left(state.tree, id))
     }
 
     #[view]

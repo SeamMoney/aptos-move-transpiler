@@ -200,7 +200,7 @@ module 0x1::l_b_router {
             (amount_token_min, amount_n_a_t_i_v_e_min) = (amount_n_a_t_i_v_e_min, amount_token_min);
         };
         let (amount_x, amount_y) = remove_liquidity(lb_pair, amount_token_min, amount_n_a_t_i_v_e_min, ids, amounts, @0x1);
-        (amount_token, amount_n_a_t_i_v_e) = if (is_n_a_t_i_v_e_token_y) (amount_x, amount_y) else (amount_y, amount_x);
+        (amount_token, amount_n_a_t_i_v_e) = (if (is_n_a_t_i_v_e_token_y) (amount_x, amount_y) else (amount_y, amount_x));
         safe_transfer(token, to, amount_token);
         w_native_withdraw_and_transfer(to, amount_n_a_t_i_v_e, state);
         return (amount_token, amount_n_a_t_i_v_e)
@@ -415,10 +415,10 @@ module 0x1::l_b_router {
             abort E_L_B_ROUTER_NOT_FACTORY_OWNER
         };
         if ((evm_compat::to_address(token) == @0x0)) {
-            amount = if ((amount == u256::MAX)) @0x1.balance else amount;
+            amount = (if ((amount == u256::MAX)) @0x1.balance else amount);
             safe_transfer_native(to, amount);
         } else {
-            amount = if ((amount == u256::MAX)) balance_of(token, @0x1) else amount;
+            amount = (if ((amount == u256::MAX)) balance_of(token, @0x1) else amount);
             token_helper::safe_transfer(token, to, amount);
         };
     }
@@ -536,7 +536,7 @@ module 0x1::l_b_router {
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
             token_next = *vector::borrow(&token_path, ((i + 1) as u64));
-            recipient = if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64));
+            recipient = (if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64)));
             if ((version == V1)) {
                 let (reserve0, reserve1, unused2) = get_reserves(i_joe_pair(pair));
                 if ((token < token_next)) {
@@ -583,7 +583,7 @@ module 0x1::l_b_router {
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
             token_next = *vector::borrow(&token_path, ((i + 1) as u64));
-            recipient = if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64));
+            recipient = (if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64)));
             if ((version == V1)) {
                 amount_out = *vector::borrow(&amounts_in, ((i + 1) as u64));
                 if ((token < token_next)) {
@@ -627,7 +627,7 @@ module 0x1::l_b_router {
             version = *vector::borrow(&versions, (i as u64));
             token = token_next;
             token_next = *vector::borrow(&token_path, ((i + 1) as u64));
-            recipient = if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64));
+            recipient = (if (((i + 1) == (vector::length(&pairs) as u256))) to else *vector::borrow(&pairs, ((i + 1) as u64)));
             if ((version == V1)) {
                 let (reserve0, reserve1, unused2) = get_reserves(i_joe_pair(pair));
                 if ((token < token_next)) {

@@ -56,6 +56,10 @@ import type {
 } from './compiler/move-compiler.js';
 import { generateSpecs, renderSpecs } from './codegen/spec-generator.js';
 import type { MoveSpecBlock, MoveSpecCondition } from './types/move-ast.js';
+import { analyzeContract, buildResourcePlan } from './analyzer/state-analyzer.js';
+import { contractToIR } from './transformer/contract-transformer.js';
+import { parseSolidity, extractContracts } from './parser/solidity-parser.js';
+import type { ContractAccessProfile } from './types/optimization.js';
 
 // Re-export types that consumers will interact with
 export type { TranspileOptions, TranspileOutput } from './transpiler.js';
@@ -77,6 +81,14 @@ export type {
   MoveSpecBlock,
   MoveSpecCondition,
 } from './types/move-ast.js';
+export type {
+  ContractAccessProfile,
+  ResourceGroup,
+  StateVariableAnalysis,
+  FunctionAccessProfile,
+  ResourcePlan,
+  OptimizationLevel,
+} from './types/optimization.js';
 
 /**
  * Result of analyzing Solidity source code.
@@ -387,6 +399,44 @@ export class Sol2Move {
    */
   renderSpecs(specs: MoveSpecBlock[]): string[] {
     return renderSpecs(specs);
+  }
+
+  // ─── Parallelization Analysis ────────────────────────────────
+
+  /**
+   * Analyze a Solidity contract's state variable access patterns for
+   * parallelization optimization. Returns variable classifications,
+   * resource grouping suggestions, and a parallelization score.
+   *
+   * This runs the analysis phase only — no code generation.
+   *
+   * @example
+   * ```ts
+   * const profile = sdk.analyzeParallelism(soliditySource);
+   * console.log(`Score: ${profile.parallelizationScore}/100`);
+   * profile.recommendations.forEach(r => console.log(r));
+   * ```
+   */
+  analyzeParallelism(source: string): ContractAccessProfile[] {
+    const parseResult = parseSolidity(source);
+    if (!parseResult.success || !parseResult.ast) {
+      return [];
+    }
+
+    const contracts = extractContracts(parseResult.ast);
+    const profiles: ContractAccessProfile[] = [];
+
+    for (const contract of contracts) {
+      if (contract.kind === 'interface') continue;
+      try {
+        const ir = contractToIR(contract);
+        profiles.push(analyzeContract(ir));
+      } catch {
+        // Skip contracts that fail to parse to IR
+      }
+    }
+
+    return profiles;
   }
 
   // ─── Pipeline ─────────────────────────────────────────────────

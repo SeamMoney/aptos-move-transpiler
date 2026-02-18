@@ -64,3 +64,15 @@ export type {
   MoveSpecCondition,
   MoveSpecPragma,
 } from './types/move-ast.js';
+
+// Parallelization optimization
+export { analyzeContract, buildResourcePlan } from './analyzer/state-analyzer.js';
+export type {
+  OptimizationLevel,
+  StateVariableCategory,
+  StateVariableAnalysis,
+  ResourceGroup,
+  FunctionAccessProfile,
+  ContractAccessProfile,
+  ResourcePlan,
+} from './types/optimization.js';

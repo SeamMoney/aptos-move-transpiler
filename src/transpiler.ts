@@ -37,6 +37,11 @@ export interface TranspileOptions {
    *  Specs include aborts_if conditions from require(), modifies declarations,
    *  and resource existence checks. */
   generateSpecs?: boolean;
+  /** Parallelization optimization level.
+   *  - 'low' (default): Single resource struct, current behavior.
+   *  - 'medium': Split state into resource groups by access pattern, Aggregators for counters.
+   *  - 'high': Everything in medium + per-user resources for address-keyed mappings. */
+  optimizationLevel?: 'low' | 'medium' | 'high';
 }
 
 export interface TranspileOutput {
@@ -68,6 +73,7 @@ export function transpile(
     format = false,
     formatOptions = {},
     generateSpecs: shouldGenerateSpecs = false,
+    optimizationLevel = 'low',
   } = options;
 
   const output: TranspileOutput = {
@@ -201,7 +207,7 @@ export function transpile(
 
       // Convert IR to Move module (standard transpilation)
       // Pass all contracts for inheritance flattening
-      const result = irToMoveModule(ir, moduleAddress, allContractsIR);
+      const result = irToMoveModule(ir, moduleAddress, allContractsIR, { optimizationLevel });
 
       if (!result.success) {
         output.errors.push(...result.errors.map(e => e.message));

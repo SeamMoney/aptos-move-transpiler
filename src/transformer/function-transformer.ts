@@ -62,32 +62,104 @@ export function transformFunction(
   const isInternalFunction = fn.visibility === 'private' || fn.visibility === 'internal';
   const receiveStateAsParam = isInternalFunction && needsState;
 
-  if (receiveStateAsParam) {
-    // Add state parameter instead of borrowing globally
-    const stateType: MoveType = {
-      kind: 'reference',
-      mutable: needsMutableState,
-      innerType: { kind: 'struct', name: `${context.contractName}State` },
-    };
-    params.push({
-      name: 'state',
-      type: stateType,
-    });
-  }
+  // Multi-resource borrowing for medium/high optimization
+  const useMultiResource = context.resourcePlan && context.optimizationLevel !== 'low';
 
-  // Add state borrow FIRST (before modifiers) - only for public/external functions
-  if (needsState && !receiveStateAsParam) {
-    fullBody.push({
-      kind: 'let',
-      pattern: 'state',
-      mutable: false,
-      value: {
-        kind: 'call',
-        function: needsMutableState ? 'borrow_global_mut' : 'borrow_global',
-        typeArgs: [{ kind: 'struct', name: `${context.contractName}State` }],
-        args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
-      },
-    });
+  if (useMultiResource) {
+    const plan = context.resourcePlan!;
+    const fnProfile = plan.functionProfiles.get(fn.name);
+
+    if (fnProfile && (fnProfile.readsResources.size > 0 || fnProfile.writesResources.size > 0) && !isPureFunction) {
+      const allNeeded = new Set([...fnProfile.readsResources, ...fnProfile.writesResources]);
+
+      if (receiveStateAsParam) {
+        // Internal function: accept each needed resource group as a parameter
+        for (const groupName of allNeeded) {
+          const isMut = fnProfile.writesResources.has(groupName);
+          const localName = groupNameToLocal(groupName);
+          params.push({
+            name: localName,
+            type: {
+              kind: 'reference',
+              mutable: isMut,
+              innerType: { kind: 'struct', name: groupName },
+            },
+          });
+        }
+      } else {
+        // Public function: borrow each needed resource group
+        for (const groupName of allNeeded) {
+          const isMut = fnProfile.writesResources.has(groupName);
+          const localName = groupNameToLocal(groupName);
+          fullBody.push({
+            kind: 'let',
+            pattern: localName,
+            mutable: false,
+            value: {
+              kind: 'call',
+              function: isMut ? 'borrow_global_mut' : 'borrow_global',
+              typeArgs: [{ kind: 'struct', name: groupName }],
+              args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
+            },
+          });
+        }
+      }
+    }
+
+    // Per-user resources (high optimization): call ensure_user_state at function start
+    // for functions that write to per-user mapping variables
+    if (plan.perUserResources && !receiveStateAsParam) {
+      const perUserVarNames = new Set(plan.perUserResources.fields.map(f => f.varName));
+      // Check if this function writes to any per-user variable
+      const fnProfile = plan.functionProfiles.get(fn.name);
+      let writesPerUser = false;
+      if (fnProfile) {
+        // Check write resources — but per-user vars aren't in groups.
+        // Instead, check if the function body writes any per-user variable.
+        // Simple heuristic: scan IR body for assignments to per-user variables.
+        writesPerUser = functionWritesPerUserVar(fn, perUserVarNames);
+      }
+      if (writesPerUser) {
+        // ensure_user_state(account) — the signer param is always the first param named 'account'
+        fullBody.push({
+          kind: 'expression',
+          expression: {
+            kind: 'call',
+            function: 'ensure_user_state',
+            args: [{ kind: 'identifier', name: 'account' }],
+          },
+        });
+      }
+    }
+  } else {
+    // Low optimization: single resource struct (current behavior)
+    if (receiveStateAsParam) {
+      // Add state parameter instead of borrowing globally
+      const stateType: MoveType = {
+        kind: 'reference',
+        mutable: needsMutableState,
+        innerType: { kind: 'struct', name: `${context.contractName}State` },
+      };
+      params.push({
+        name: 'state',
+        type: stateType,
+      });
+    }
+
+    // Add state borrow FIRST (before modifiers) - only for public/external functions
+    if (needsState && !receiveStateAsParam) {
+      fullBody.push({
+        kind: 'let',
+        pattern: 'state',
+        mutable: false,
+        value: {
+          kind: 'call',
+          function: needsMutableState ? 'borrow_global_mut' : 'borrow_global',
+          typeArgs: [{ kind: 'struct', name: `${context.contractName}State` }],
+          args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
+        },
+      });
+    }
   }
 
   // Declare named return parameters (Solidity: returns (uint256 liquidity))
@@ -270,17 +342,19 @@ function getModifierPostStatementsForModifier(
 
   // Built-in modifiers with cleanup
   switch (name) {
-    case 'nonReentrant':
+    case 'nonReentrant': {
       // Reset reentrancy status after function body
+      const reentrancyObj = resolveStateObject('reentrancy_status', context);
       return [{
         kind: 'assign',
         target: {
           kind: 'field_access',
-          object: { kind: 'identifier', name: 'state' },
+          object: { kind: 'identifier', name: reentrancyObj },
           field: 'reentrancy_status',
         },
         value: { kind: 'literal', type: 'number', value: 1, suffix: 'u8' },
       }];
+    }
 
     default:
       // Check if we have a custom modifier definition
@@ -354,6 +428,9 @@ function transformModifier(
  */
 function generateOnlyOwnerCheck(context: TranspileContext): MoveStatement[] {
   context.usedModules.add('std::signer');
+
+  const ownerObj = resolveStateObject('owner', context);
+
   return [{
     kind: 'expression',
     expression: {
@@ -370,7 +447,7 @@ function generateOnlyOwnerCheck(context: TranspileContext): MoveStatement[] {
           },
           right: {
             kind: 'field_access',
-            object: { kind: 'identifier', name: 'state' },
+            object: { kind: 'identifier', name: ownerObj },
             field: 'owner',
           },
         },
@@ -385,6 +462,7 @@ function generateOnlyOwnerCheck(context: TranspileContext): MoveStatement[] {
  * Uses status field pattern from evm_compat
  */
 function generateReentrancyGuard(context: TranspileContext): MoveStatement[] {
+  const reentrancyObj = resolveStateObject('reentrancy_status', context);
   return [
     // Check not already entered
     {
@@ -398,7 +476,7 @@ function generateReentrancyGuard(context: TranspileContext): MoveStatement[] {
             operator: '!=',
             left: {
               kind: 'field_access',
-              object: { kind: 'identifier', name: 'state' },
+              object: { kind: 'identifier', name: reentrancyObj },
               field: 'reentrancy_status',
             },
             right: { kind: 'literal', type: 'number', value: 2, suffix: 'u8' },
@@ -412,7 +490,7 @@ function generateReentrancyGuard(context: TranspileContext): MoveStatement[] {
       kind: 'assign',
       target: {
         kind: 'field_access',
-        object: { kind: 'identifier', name: 'state' },
+        object: { kind: 'identifier', name: reentrancyObj },
         field: 'reentrancy_status',
       },
       value: { kind: 'literal', type: 'number', value: 2, suffix: 'u8' },
@@ -424,6 +502,7 @@ function generateReentrancyGuard(context: TranspileContext): MoveStatement[] {
  * Generate paused check
  */
 function generatePausedCheck(requirePaused: boolean, context: TranspileContext): MoveStatement[] {
+  const pausedObj = resolveStateObject('paused', context);
   return [{
     kind: 'expression',
     expression: {
@@ -433,7 +512,7 @@ function generatePausedCheck(requirePaused: boolean, context: TranspileContext):
         requirePaused
           ? {
               kind: 'field_access',
-              object: { kind: 'identifier', name: 'state' },
+              object: { kind: 'identifier', name: pausedObj },
               field: 'paused',
             }
           : {
@@ -441,7 +520,7 @@ function generatePausedCheck(requirePaused: boolean, context: TranspileContext):
               operator: '!',
               operand: {
                 kind: 'field_access',
-                object: { kind: 'identifier', name: 'state' },
+                object: { kind: 'identifier', name: pausedObj },
                 field: 'paused',
               },
             },
@@ -1579,6 +1658,17 @@ function determineAcquiresFromBody(
         resourceNames.add(expr.typeArgs[0].name);
       }
     }
+    // Also detect exists<T> calls (function name includes type parameter)
+    if (expr.kind === 'call' && typeof expr.function === 'string') {
+      const existsMatch = expr.function.match(/^exists<(\w+)>$/);
+      if (existsMatch) {
+        resourceNames.add(existsMatch[1]);
+      }
+    }
+    // Detect calls to ensure_user_state (needs acquires for per-user resource)
+    if (expr.kind === 'call' && expr.function === 'ensure_user_state' && context.resourcePlan?.perUserResources) {
+      resourceNames.add(context.resourcePlan.perUserResources.structName);
+    }
     // Recurse into all expression fields
     if (expr.args) expr.args.forEach(scanExpr);
     if (expr.left) scanExpr(expr.left);
@@ -1860,6 +1950,39 @@ function getDefaultValueForType(moveType: any): any {
 /**
  * Convert to snake_case
  */
+/**
+ * Resolve which local variable holds a given state variable.
+ * Returns 'state' for low optimization, or the appropriate group local name
+ * (e.g., 'admin_config', 'counters') for medium/high optimization.
+ */
+function resolveStateObject(varName: string, context: TranspileContext): string {
+  if (context.resourcePlan && context.optimizationLevel !== 'low') {
+    const groupName = context.resourcePlan.varToGroup.get(varName);
+    if (groupName) {
+      return groupNameToLocal(groupName);
+    }
+  }
+  return 'state';
+}
+
+/**
+ * Convert a resource group name (e.g., 'VaultAdminConfig') to a local variable
+ * name (e.g., 'admin_config'). Strips the contract name prefix.
+ */
+function groupNameToLocal(groupName: string): string {
+  // Resource groups are named like ContractNameAdminConfig, ContractNameCounters, etc.
+  // We want just the suffix part in snake_case.
+  // Match common suffixes
+  const suffixes = ['AdminConfig', 'Counters', 'UserData', 'State'];
+  for (const suffix of suffixes) {
+    if (groupName.endsWith(suffix)) {
+      return toSnakeCase(suffix);
+    }
+  }
+  // Fallback: full snake_case
+  return toSnakeCase(groupName);
+}
+
 function toSnakeCase(str: string): string {
   if (!str) return '';
   // Handle $ variable (EVM storage reference) — not valid in Move
@@ -1873,4 +1996,33 @@ function toSnakeCase(str: string): string {
     .replace(/([A-Z])/g, '_$1')
     .toLowerCase()
     .replace(/^_/, '');
+}
+
+/**
+ * Check if a function's IR body writes to any per-user variable.
+ * Scans for assignment targets that reference the given variable names.
+ */
+function functionWritesPerUserVar(fn: IRFunction, perUserVarNames: Set<string>): boolean {
+  function scanStmts(stmts: any[]): boolean {
+    for (const stmt of stmts) {
+      if (stmt.kind === 'assignment') {
+        const target = extractBaseIdent(stmt.target);
+        if (target && perUserVarNames.has(target)) return true;
+      }
+      if (stmt.body) { if (scanStmts(stmt.body)) return true; }
+      if (stmt.elseBody) { if (scanStmts(stmt.elseBody)) return true; }
+      if (stmt.thenBody) { if (scanStmts(stmt.thenBody)) return true; }
+    }
+    return false;
+  }
+
+  function extractBaseIdent(expr: any): string | null {
+    if (!expr) return null;
+    if (expr.kind === 'identifier') return expr.name;
+    if (expr.kind === 'index_access') return extractBaseIdent(expr.base);
+    if (expr.kind === 'member_access') return extractBaseIdent(expr.object);
+    return null;
+  }
+
+  return scanStmts(fn.body);
 }

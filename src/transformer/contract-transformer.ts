@@ -7,6 +7,8 @@ import type { ContractDefinition, FunctionDefinition, EventDefinition, ModifierD
 import type { MoveModule, MoveUseDeclaration, MoveStruct, MoveFunction, MoveConstant, MoveExpression, MoveStatement } from '../types/move-ast.js';
 import type { IRContract, IRStateVariable, IRFunction, IREvent, IRModifier, IRConstructor, TranspileContext, TranspileResult, FunctionSignature } from '../types/ir.js';
 import { transformStateVariable } from './state-transformer.js';
+import { analyzeContract, buildResourcePlan } from '../analyzer/state-analyzer.js';
+import type { ResourceGroup } from '../types/optimization.js';
 import { transformFunction, transformConstructor } from './function-transformer.js';
 import { transformEvent } from './event-transformer.js';
 import { createIRType } from '../mapper/type-mapper.js';
@@ -400,7 +402,12 @@ function deduplicateOverloadedFunctions(functions: IRFunction[]): IRFunction[] {
 /**
  * Transform IR contract to Move module
  */
-export function irToMoveModule(ir: IRContract, moduleAddress: string, allContracts?: Map<string, IRContract>): TranspileResult {
+export function irToMoveModule(
+  ir: IRContract,
+  moduleAddress: string,
+  allContracts?: Map<string, IRContract>,
+  options?: { optimizationLevel?: 'low' | 'medium' | 'high' }
+): TranspileResult {
   // Flatten inheritance if parent contracts are provided
   const flattenedIR = allContracts ? flattenInheritance(ir, allContracts) : ir;
 
@@ -430,6 +437,7 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
     usedModules: new Set(),
     acquiredResources: new Set(),
     inheritedContracts: allContracts,
+    optimizationLevel: options?.optimizationLevel || 'low',
   };
 
   // Attach function registry for borrow checker prevention
@@ -543,17 +551,127 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
   // Add standard imports
   addStandardImports(module, context);
 
-  // Transform state variables to resource struct (skip for libraries)
+  // Transform state variables to resource struct(s) (skip for libraries)
   if (flattenedIR.stateVariables.length > 0 && !isLibrary) {
-    const resourceStruct = transformStateVariablesToResource(flattenedIR.stateVariables, flattenedIR.name, context);
-    // Add SignerCapability for resource account pattern
-    // This allows the contract to sign transactions on behalf of the resource account
-    resourceStruct.fields.push({
-      name: 'signer_cap',
-      type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
-    });
-    context.usedModules.add('aptos_framework::account');
-    module.structs.push(resourceStruct);
+    const optLevel = context.optimizationLevel || 'low';
+
+    if (optLevel !== 'low') {
+      // Medium/High: Run state analyzer and split into resource groups
+      const profile = analyzeContract(flattenedIR);
+      const plan = buildResourcePlan(profile, optLevel);
+      context.resourcePlan = plan;
+
+      // Add optimization recommendations as warnings
+      for (const rec of profile.recommendations) {
+        context.warnings.push({ message: `[optimization] ${rec}`, severity: 'warning' });
+      }
+      context.warnings.push({
+        message: `[optimization] Parallelization score: ${profile.parallelizationScore}/100`,
+        severity: 'warning',
+      });
+
+      // Generate a resource struct for each group
+      for (const group of plan.groups) {
+        const resourceStruct = transformResourceGroup(group, context);
+        if (group.isPrimary) {
+          // Primary resource gets signer_cap
+          resourceStruct.fields.push({
+            name: 'signer_cap',
+            type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
+          });
+        }
+        context.usedModules.add('aptos_framework::account');
+        module.structs.push(resourceStruct);
+      }
+
+      // If aggregatable variables exist at medium+, add aggregator import
+      if (profile.variableAnalyses) {
+        for (const [, analysis] of profile.variableAnalyses) {
+          if (analysis.category === 'aggregatable') {
+            context.usedModules.add('aptos_framework::aggregator_v2');
+            break;
+          }
+        }
+      }
+
+      // Generate event structs for event-trackable variables (fees tracked via events)
+      if (plan.eventTrackables && plan.eventTrackables.size > 0) {
+        context.usedModules.add('aptos_framework::event');
+        for (const [, config] of plan.eventTrackables) {
+          module.structs.push({
+            name: config.eventName,
+            abilities: ['drop', 'store'],
+            fields: [{ name: 'amount', type: config.fieldType }],
+            isEvent: true,
+          });
+        }
+      }
+
+      // Generate per-user resource struct (high optimization)
+      if (plan.perUserResources) {
+        const pur = plan.perUserResources;
+        module.structs.push({
+          name: pur.structName,
+          abilities: ['key'],
+          fields: pur.fields.map(f => ({ name: f.fieldName, type: f.type })),
+        });
+
+        // Generate ensure_user_state helper function
+        const ensureFn: MoveFunction = {
+          name: 'ensure_user_state',
+          visibility: 'private',
+          params: [{ name: 'account', type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
+          returnType: undefined,
+          body: [],
+          acquires: [pur.structName],
+        };
+
+        // Build: if (!exists<UserState>(signer::address_of(account))) { move_to(account, UserState { field: default }) }
+        const addrExpr: MoveExpression = {
+          kind: 'call', module: 'signer', function: 'address_of',
+          args: [{ kind: 'identifier', name: 'account' }],
+        };
+        const existsExpr: MoveExpression = {
+          kind: 'call', function: `exists<${pur.structName}>`,
+          args: [addrExpr],
+        };
+        const notExists: MoveExpression = {
+          kind: 'unary', operator: '!', operand: existsExpr,
+        };
+        const structFields = pur.fields.map(f => ({
+          name: f.fieldName,
+          value: getDefaultValueForType(f.type) as MoveExpression,
+        }));
+        const moveToCall: MoveStatement = {
+          kind: 'expression',
+          expression: {
+            kind: 'call', function: 'move_to',
+            args: [
+              { kind: 'identifier', name: 'account' },
+              { kind: 'struct', name: pur.structName, fields: structFields },
+            ],
+          },
+        };
+        ensureFn.body.push({
+          kind: 'if',
+          condition: notExists,
+          thenBlock: [moveToCall],
+          elseBlock: undefined,
+        });
+
+        module.functions.push(ensureFn);
+        context.usedModules.add('std::signer');
+      }
+    } else {
+      // Low: Single resource struct (current behavior)
+      const resourceStruct = transformStateVariablesToResource(flattenedIR.stateVariables, flattenedIR.name, context);
+      resourceStruct.fields.push({
+        name: 'signer_cap',
+        type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
+      });
+      context.usedModules.add('aptos_framework::account');
+      module.structs.push(resourceStruct);
+    }
   }
 
   // Transform custom structs
@@ -586,7 +704,11 @@ export function irToMoveModule(ir: IRContract, moduleAddress: string, allContrac
       module.functions.push(initFn);
     } else if (flattenedIR.stateVariables.length > 0) {
       // Generate default init_module
-      module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
+      if (context.resourcePlan && context.optimizationLevel !== 'low') {
+        module.functions.push(generateOptimizedInit(flattenedIR.name, flattenedIR.stateVariables, context));
+      } else {
+        module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
+      }
     }
   }
 
@@ -709,6 +831,7 @@ const STDLIB_MODULES: Record<string, string> = {
   'fungible_asset': 'aptos_framework::fungible_asset',
   'primary_fungible_store': 'aptos_framework::primary_fungible_store',
   'evm_compat': 'transpiler::evm_compat',
+  'aggregator_v2': 'aptos_framework::aggregator_v2',
   'u256': 'std::u256',
   'u128': 'std::u128',
   'u64': 'std::u64',
@@ -865,6 +988,166 @@ function transformStateVariablesToResource(
   }
 
   return struct;
+}
+
+/**
+ * Transform a resource group into a Move struct (used for medium/high optimization).
+ * Each resource group becomes a separate `has key` struct.
+ */
+function transformResourceGroup(
+  group: ResourceGroup,
+  context: TranspileContext
+): MoveStruct {
+  const struct: MoveStruct = {
+    name: group.name,
+    abilities: ['key'],
+    fields: [],
+    isResource: true,
+  };
+
+  for (const analysis of group.variables) {
+    const variable = analysis.variable;
+    if (variable.mutability === 'constant') continue;
+
+    // For aggregatable variables at medium+, use Aggregator type
+    if (analysis.category === 'aggregatable' && context.optimizationLevel !== 'low') {
+      struct.fields.push({
+        name: toSnakeCase(variable.name),
+        type: {
+          kind: 'struct',
+          module: 'aggregator_v2',
+          name: 'Aggregator',
+          typeArgs: [{ kind: 'primitive', name: 'u128' }],
+        },
+      });
+    } else {
+      const field = transformStateVariable(variable, context);
+      struct.fields.push(field);
+    }
+  }
+
+  return struct;
+}
+
+/**
+ * Generate default init_module function (multi-resource version for medium/high).
+ * Creates one move_to() call per resource group.
+ */
+function generateOptimizedInit(
+  contractName: string,
+  stateVariables: IRStateVariable[],
+  context: TranspileContext
+): MoveFunction {
+  const plan = context.resourcePlan;
+  if (!plan) throw new Error('resourcePlan required for optimized init');
+
+  context.usedModules.add('aptos_framework::account');
+  context.usedModules.add('std::string');
+
+  const body: MoveStatement[] = [
+    // Create resource account
+    {
+      kind: 'let',
+      pattern: ['resource_signer', 'signer_cap'],
+      value: {
+        kind: 'call',
+        function: 'account::create_resource_account',
+        args: [
+          { kind: 'identifier', name: 'deployer' },
+          { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+        ],
+      },
+    },
+  ];
+
+  // Generate one move_to() per resource group
+  for (const group of plan.groups) {
+    const fields: Array<{ name: string; value: MoveExpression }> = [];
+
+    for (const analysis of group.variables) {
+      const v = analysis.variable;
+      if (v.mutability === 'constant') continue;
+
+      if (analysis.category === 'aggregatable' && context.optimizationLevel !== 'low') {
+        // Initialize unbounded Aggregator (no max_value limit, better parallelism)
+        context.usedModules.add('aptos_framework::aggregator_v2');
+        if (v.initialValue) {
+          // Non-zero initial value: use create_unbounded_aggregator_with_value()
+          const initValue = transformIRExpressionToMove(v.initialValue);
+          fields.push({
+            name: toSnakeCase(v.name),
+            value: {
+              kind: 'call',
+              function: 'aggregator_v2::create_unbounded_aggregator_with_value',
+              args: [initValue],
+            },
+          });
+        } else {
+          // Zero initial value: use create_unbounded_aggregator()
+          fields.push({
+            name: toSnakeCase(v.name),
+            value: {
+              kind: 'call',
+              function: 'aggregator_v2::create_unbounded_aggregator',
+              typeArgs: [{ kind: 'primitive', name: 'u128' }],
+              args: [],
+            },
+          });
+        }
+      } else if (v.isMapping) {
+        // Mapping types need table::new() initialization
+        context.usedModules.add('aptos_std::table');
+        fields.push({
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: 'table::new', args: [] },
+        });
+      } else if (v.type.isArray) {
+        // Array types need vector::empty() initialization
+        fields.push({
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: 'vector::empty', args: [] },
+        });
+      } else {
+        fields.push({
+          name: toSnakeCase(v.name),
+          value: v.initialValue
+            ? transformIRExpressionToMove(v.initialValue)
+            : getDefaultValue(v.type),
+        });
+      }
+    }
+
+    // Primary group gets signer_cap
+    if (group.isPrimary) {
+      fields.push({
+        name: 'signer_cap',
+        value: { kind: 'identifier', name: 'signer_cap' },
+      });
+    }
+
+    body.push({
+      kind: 'expression',
+      expression: {
+        kind: 'call',
+        function: 'move_to',
+        args: [
+          { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
+          {
+            kind: 'struct',
+            name: group.name,
+            fields,
+          },
+        ],
+      },
+    });
+  }
+
+  return {
+    name: 'init_module',
+    visibility: 'private',
+    params: [{ name: 'deployer', type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
+    body,
+  };
 }
 
 /**
@@ -1364,6 +1647,25 @@ function getDefaultValue(type: any): any {
     }
   }
   if (type.move?.kind === 'vector') {
+    return { kind: 'call', function: 'vector::empty', args: [] };
+  }
+  return { kind: 'literal', type: 'number', value: 0 };
+}
+
+/** Get default value for a MoveType (not IRType). Used by per-user resource generation. */
+function getDefaultValueForType(moveType: any): any {
+  if (!moveType) return { kind: 'literal', type: 'number', value: 0 };
+  if (moveType.kind === 'primitive') {
+    switch (moveType.name) {
+      case 'bool': return { kind: 'literal', type: 'bool', value: false };
+      case 'address': return { kind: 'call', function: '@0x0', args: [] };
+      default:
+        if (moveType.name.startsWith('u') || moveType.name.startsWith('i')) {
+          return { kind: 'literal', type: 'number', value: 0 };
+        }
+    }
+  }
+  if (moveType.kind === 'vector') {
     return { kind: 'call', function: 'vector::empty', args: [] };
   }
   return { kind: 'literal', type: 'number', value: 0 };

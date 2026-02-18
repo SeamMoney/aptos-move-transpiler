@@ -50,7 +50,7 @@ module 0x1::oracle_helper {
         active_size = (sample_math::get_oracle_length(active_sample) as u16);
         if ((oracle_id != active_size)) {
             active_size = (sample_math::get_oracle_length(get_sample(oracle, active_size)) as u16);
-            active_size = (if ((oracle_id > active_size)) oracle_id else active_size as u16);
+            active_size = ((if ((oracle_id > active_size)) oracle_id else active_size) as u16);
         };
         return (active_sample, active_size)
     }
@@ -144,9 +144,9 @@ module 0x1::oracle_helper {
         if ((length >= new_length)) {
             abort E_ORACLE_HELPER_NEW_LENGTH_TOO_SMALL
         };
-        let last_sample: u256 = if ((length == oracle_id)) sample else if ((length == 0)) (0 as u256) else get_sample(oracle, length);
+        let last_sample: u256 = (if ((length == oracle_id)) sample else (if ((length == 0)) (0 as u256) else get_sample(oracle, length)));
         let active_size: u256 = sample_math::get_oracle_length(last_sample);
-        active_size = if (((oracle_id as u256) > active_size)) oracle_id else active_size;
+        active_size = (if (((oracle_id as u256) > active_size)) oracle_id else active_size);
         let i: u256 = length;
         while ((i < (new_length as u256))) {
             *vector::borrow_mut(&mut oracle.samples, (i as u64)) = (active_size as u256);

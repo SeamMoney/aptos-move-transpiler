@@ -190,11 +190,11 @@ module 0x1::hooks {
         let hooks: address = get_hooks(hooks_parameters);
         let expected_selector = ((data + 0x20u256) >> (224 as u8));
         success = true;
-        if (((if (!success) 1 else 0 & if (!(0 == 0)) 1 else 0) != 0)) {
+        if ((((if (!success) 1 else 0) & (if (!(0 == 0)) 1 else 0)) != 0)) {
             0;
             abort E_REQUIRE_FAILED
         };
-        success = (success & (if ((0 > 0x1fu256)) 1 else 0 & if (((0 >> (224 as u8)) == expected_selector)) 1 else 0));
+        success = (success & ((if ((0 > 0x1fu256)) 1 else 0) & (if (((0 >> (224 as u8)) == expected_selector)) 1 else 0)));
         if (!success) {
             abort E_HOOKS_CALL_FAILED
         };

@@ -4,6 +4,7 @@
  */
 
 import type { MoveType, MoveAbility } from './move-ast.js';
+import type { OptimizationLevel, ResourcePlan } from './optimization.js';
 
 // Contract IR
 export interface IRContract {
@@ -399,6 +400,8 @@ export interface TranspileContext {
   usingFor?: IRUsingFor[];  // using Library for Type declarations
   libraryFunctions?: Map<string, string>;  // Maps function_name → library_module_name for cross-module calls
   functionSignatures?: Map<string, FunctionSignature>;  // Maps qualified function name → signature for type inference
+  optimizationLevel?: OptimizationLevel;  // Parallelization optimization level
+  resourcePlan?: ResourcePlan;  // Resource splitting plan from state analyzer
 }
 
 export interface TranspileError {

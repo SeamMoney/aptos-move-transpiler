@@ -33,6 +33,7 @@ program
   .option('--format', 'Format output with aptos move fmt (requires Aptos CLI)')
   .option('--compile-check', 'Verify output compiles with aptos move compile (requires Aptos CLI)')
   .option('--specs', 'Generate Move Specification Language (MSL) spec blocks')
+  .option('--optimize <level>', 'Parallelization optimization level: low, medium, high', 'low')
   .action(async (file: string, options: any) => {
     try {
       if (!existsSync(file)) {
@@ -53,6 +54,7 @@ program
         useDigitalAsset: options.digitalAsset || false,
         format: options.format || false,
         generateSpecs: options.specs || false,
+        optimizationLevel: options.optimize || 'low',
       });
 
       if (!result.success) {

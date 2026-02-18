@@ -88,7 +88,7 @@ module 0x1::uint256x256_math {
         let prod1 = 0u256;
         let mm = ((x * y) % (0 ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256));
         prod0 = (x * y);
-        prod1 = ((mm - prod0) - if ((mm < prod0)) 1 else 0);
+        prod1 = ((mm - prod0) - (if ((mm < prod0)) 1 else 0));
         return (prod0, prod1)
     }
 
@@ -102,7 +102,7 @@ module 0x1::uint256x256_math {
             };
             let remainder: u256;
             remainder = ((x * y) % denominator);
-            prod1 = (prod1 - if ((remainder > prod0)) 1 else 0);
+            prod1 = (prod1 - (if ((remainder > prod0)) 1 else 0));
             prod0 = (prod0 - remainder);
             let lpotdod: u256 = (denominator & (((denominator ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256) + 1)));
             denominator = (denominator / lpotdod);
@@ -136,6 +136,6 @@ module 0x1::uint256x256_math {
         sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
         sqrt_x = ((sqrt_x + (x / sqrt_x)) >> (1 as u8));
         x = (x / sqrt_x);
-        return if ((sqrt_x < x)) sqrt_x else x
+        return (if ((sqrt_x < x)) sqrt_x else x)
     }
 }

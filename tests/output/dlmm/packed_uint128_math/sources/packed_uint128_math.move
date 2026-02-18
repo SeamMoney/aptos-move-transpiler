@@ -49,7 +49,7 @@ module 0x1::packed_uint128_math {
 
     public(package) fun encode_u_bool(x: u128, first: bool): u256 {
         let _z = 0u256;
-        return if (first) encode_first(x) else encode_second(x)
+        return (if (first) encode_first(x) else encode_second(x))
     }
 
     public(package) fun decode(z: u256): (u128, u128) {
@@ -74,7 +74,7 @@ module 0x1::packed_uint128_math {
 
     public(package) fun decode_b_bool(z: u256, first: bool): u128 {
         let _x = 0u128;
-        return if (first) decode_x(z) else decode_y(z)
+        return (if (first) decode_x(z) else decode_y(z))
     }
 
     public(package) fun add(x: u256, y: u256): u256 {

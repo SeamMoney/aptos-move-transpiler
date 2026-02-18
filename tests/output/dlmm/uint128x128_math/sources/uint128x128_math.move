@@ -167,6 +167,6 @@ module 0x1::uint128x128_math {
         if ((result == 0)) {
             abort E_UINT128X128_MATH_POW_UNDERFLOW
         };
-        return if (invert) (u256::MAX / result) else result
+        return (if (invert) (u256::MAX / result) else result)
     }
 }

@@ -606,7 +606,7 @@ function generateExpression(expr: MoveExpression): string {
       const cond = generateExpression(expr.condition);
       const thenExpr = generateExpression(expr.thenExpr);
       if (expr.elseExpr) {
-        return `if (${cond}) ${thenExpr} else ${generateExpression(expr.elseExpr)}`;
+        return `(if (${cond}) ${thenExpr} else ${generateExpression(expr.elseExpr)})`;
       }
       return `if (${cond}) ${thenExpr}`;
 
