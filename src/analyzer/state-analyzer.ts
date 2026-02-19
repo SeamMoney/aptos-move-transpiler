@@ -197,7 +197,7 @@ export function buildResourcePlan(
           { kind: 'primitive' as const, name: 'u256' };
         // Field name: strip "balances" → "balance", or use as-is
         let fieldName = varName.replace(/s$/, '');
-        fieldName = fieldName.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+        fieldName = fieldName.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2').toLowerCase().replace(/^_/, '');
         return { varName, fieldName, type: valueType };
       });
 

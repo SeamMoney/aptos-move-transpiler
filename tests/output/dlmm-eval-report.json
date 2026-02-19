@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-18T01:29:55.092Z",
+  "timestamp": "2026-02-19T07:04:09.003Z",
   "totalContracts": 22,
   "successfulTranspiles": 22,
   "totalFunctions": 317,
   "totalErrors": 0,
-  "totalWarnings": 15,
+  "totalWarnings": 17,
   "totalUnsupported": 3,
   "totalAssemblyBlocks": 1,
   "contracts": [
@@ -266,7 +266,7 @@
       "functionCount": 42,
       "structCount": 1,
       "errorCount": 0,
-      "warningCount": 10,
+      "warningCount": 12,
       "unsupportedCount": 1,
       "assemblyBlockCount": 0,
       "lineCount": 739,

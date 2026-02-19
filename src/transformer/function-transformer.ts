@@ -687,7 +687,7 @@ function generateRoleCheck(roleArg: any, context: TranspileContext): MoveStateme
  */
 function roleNameToCapabilityStruct(roleName: string): string {
   // Handle SCREAMING_SNAKE_CASE (e.g., ADMIN_ROLE)
-  if (/^[A-Z][A-Z0-9_]*$/.test(roleName)) {
+  if (/^_?[A-Z][A-Z0-9_]*$/.test(roleName)) {
     const parts = roleName.split('_').filter(Boolean);
     const pascal = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('');
     return `${pascal}Capability`;
@@ -926,12 +926,13 @@ function containsReturn(stmt: any): boolean {
  */
 function toScreamingSnakeCase(str: string): string {
   return str
-    .replace(/\s+/g, '_')           // Replace spaces with underscores
-    .replace(/([A-Z])/g, '_$1')     // Add underscore before capitals
-    .replace(/[^A-Z0-9_]/gi, '')    // Remove non-alphanumeric except underscore
+    .replace(/\s+/g, '_')                       // Replace spaces with underscores
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')     // lowercase/digit → uppercase boundary
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')  // consecutive uppercase → Titlecase boundary
+    .replace(/[^A-Z0-9_]/gi, '')                 // Remove non-alphanumeric except underscore
     .toUpperCase()
-    .replace(/^_/, '')              // Remove leading underscore
-    .replace(/_+/g, '_');           // Collapse multiple underscores
+    .replace(/^_/, '')                           // Remove leading underscore
+    .replace(/_+/g, '_');                        // Collapse multiple underscores
 }
 
 /**
@@ -2242,11 +2243,12 @@ function toSnakeCase(str: string): string {
   if (str === '$') return '_storage_ref';
   if (str.includes('$')) str = str.replace(/\$/g, '_');
   // Preserve SCREAMING_SNAKE_CASE constants
-  if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
+  if (/^_?[A-Z][A-Z0-9_]*$/.test(str)) {
     return str.toLowerCase();
   }
   return str
-    .replace(/([A-Z])/g, '_$1')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')     // lowercase/digit → uppercase boundary
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')  // consecutive uppercase → Titlecase boundary
     .toLowerCase()
     .replace(/^_/, '');
 }

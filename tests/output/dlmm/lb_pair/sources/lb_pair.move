@@ -1,4 +1,4 @@
-module 0x1::l_b_pair {
+module 0x1::lb_pair {
 
     use std::signer;
     use aptos_std::table;
@@ -18,10 +18,10 @@ module 0x1::l_b_pair {
     use 0x1::bin_helper;
     use 0x1::hooks;
     use 0x1::safe_cast;
-    use 0x1::l_b_token;
+    use 0x1::lb_token;
 
     // Error codes
-    const _M_A_X_T_O_T_A_L_F_E_E: u256 = 100000000000000000u256;
+    const _MAX_TOTAL_FEE: u256 = 100000000000000000u256;
     const MAX_SAMPLE_LIFETIME: u256 = 120u256;
     const SCALE_OFFSET: u8 = 128u8;
     const CALLBACK_SUCCESS: u256 = 35999145600493609714228594312006990784747406012369540695634741508663724398019u256;
@@ -64,7 +64,7 @@ module 0x1::l_b_pair {
     }
 
     public entry fun initialize(deployer: &signer, factory_: address) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"l_b_pair");
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_pair");
         disable_initializers();
         move_to(&resource_signer, LBPairState { implementation: /* unsupported expression */, factory: factory_, parameters: 0, reserves: 0, protocol_fees: 0, bins: table::new(), tree: 0, oracle: 0, hooks_parameters: 0, signer_cap: signer_cap });
     }
@@ -73,7 +73,7 @@ module 0x1::l_b_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         only_factory(state);
         assert!(true, E_MODIFIER_INITIALIZER);
-        __reentrancy_guard_init();
+        _reentrancy_guard_init();
         set_static_fee_parameters(pair_parameter_helper::update_id_reference(pair_parameter_helper::set_active_id(state.parameters, active_id)), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, state);
     }
 
@@ -161,7 +161,7 @@ module 0x1::l_b_pair {
     }
 
     #[view]
-    public fun get_l_b_hooks_parameters(): u256 acquires LBPairState {
+    public fun get_lb_hooks_parameters(): u256 acquires LBPairState {
         let state = borrow_global<LBPairState>(@0x1);
         return state.hooks_parameters
     }
@@ -324,7 +324,7 @@ module 0x1::l_b_pair {
         let protocol_fees: u256 = state.protocol_fees;
         let amounts_left: u256 = (if (swap_for_y) bin_helper::received_x(reserves, token_x()) else bin_helper::received_y(reserves, token_y()));
         if ((amounts_left == 0)) {
-            abort E_L_B_PAIR_INSUFFICIENT_AMOUNT_IN
+            abort E_LB_PAIR_INSUFFICIENT_AMOUNT_IN
         };
         let swap_for_y_: bool = swap_for_y;
         hooks::before_swap(hooks_parameters, signer::address_of(account), to, swap_for_y_, amounts_left);
@@ -355,13 +355,13 @@ module 0x1::l_b_pair {
             } else {
                 let next_id: u32 = get_next_non_empty_bin(swap_for_y_, active_id, state);
                 if (((next_id == 0) || (next_id == 16777215))) {
-                    abort E_L_B_PAIR_OUT_OF_LIQUIDITY
+                    abort E_LB_PAIR_OUT_OF_LIQUIDITY
                 };
                 active_id = next_id;
             };
         }
         if ((amounts_out == 0)) {
-            abort E_L_B_PAIR_INSUFFICIENT_AMOUNT_OUT
+            abort E_LB_PAIR_INSUFFICIENT_AMOUNT_OUT
         };
         state.reserves = (reserves - amounts_out);
         state.protocol_fees = protocol_fees;
@@ -381,7 +381,7 @@ module 0x1::l_b_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         non_reentrant_before();
         if ((amounts == 0)) {
-            abort E_L_B_PAIR_ZERO_BORROW_AMOUNT
+            abort E_LB_PAIR_ZERO_BORROW_AMOUNT
         };
         let hooks_parameters: u256 = state.hooks_parameters;
         let reserves_before: u256 = state.reserves;
@@ -390,11 +390,11 @@ module 0x1::l_b_pair {
         bin_helper::transfer(amounts, token_x(), token_y(), evm_compat::to_address(receiver));
         let (success, r_data) = call(evm_compat::to_address(receiver), vector::empty<u8>());
         if (((!success || (vector::length(&r_data) != 32)) || (bcs::from_bytes(r_data) != CALLBACK_SUCCESS))) {
-            abort E_L_B_PAIR_FLASH_LOAN_CALLBACK_FAILED
+            abort E_LB_PAIR_FLASH_LOAN_CALLBACK_FAILED
         };
         let balances_after: u256 = bin_helper::received((0 as u256), token_x(), token_y());
         if (packed_uint128_math::lt(balances_after, (reserves_before + total_fees))) {
-            abort E_L_B_PAIR_FLASH_LOAN_INSUFFICIENT_AMOUNT
+            abort E_LB_PAIR_FLASH_LOAN_INSUFFICIENT_AMOUNT
         };
         let fees_received: u256 = (balances_after - reserves_before);
         state.reserves = balances_after;
@@ -412,10 +412,10 @@ module 0x1::l_b_pair {
         assert!(true, E_MODIFIER_NOT_ADDRESS_ZERO_OR_THIS);
         non_reentrant_before();
         if ((vector::length(&liquidity_configs) == 0)) {
-            abort E_L_B_PAIR_EMPTY_MARKET_CONFIGS
+            abort E_LB_PAIR_EMPTY_MARKET_CONFIGS
         };
         let hooks_parameters: u256 = state.hooks_parameters;
-        let arrays: MintArrays = mint_arrays(unknown(vector::length(&liquidity_configs)), unknown(vector::length(&liquidity_configs)), unknown(vector::length(&liquidity_configs)));
+        let arrays: MintArrays = mint_arrays(vector::empty<unknown>(), vector::empty<unknown>(), vector::empty<unknown>());
         let reserves: u256 = state.reserves;
         amounts_received = bin_helper::received(reserves, token_x(), token_y());
         hooks::before_mint(hooks_parameters, signer::address_of(account), to, liquidity_configs, amounts_received);
@@ -438,26 +438,26 @@ module 0x1::l_b_pair {
         assert!(true, E_MODIFIER_CHECK_APPROVAL);
         non_reentrant_before();
         if (((vector::length(&ids) == 0) || (vector::length(&ids) != vector::length(&amounts_to_burn)))) {
-            abort E_L_B_PAIR_INVALID_INPUT
+            abort E_LB_PAIR_INVALID_INPUT
         };
         let hooks_parameters: u256 = state.hooks_parameters;
         hooks::before_burn(hooks_parameters, signer::address_of(account), from, to, ids, amounts_to_burn);
         let from_: address = from;
-        amounts = unknown(vector::length(&ids));
+        amounts = vector::empty<unknown>();
         let amounts_out: u256;
         let i: u256;
         while ((i < (vector::length(&ids) as u256))) {
             let id: u32 = safe_cast::safe24(*vector::borrow(&ids, (i as u64)));
             let amount_to_burn: u256 = *vector::borrow(&amounts_to_burn, (i as u64));
             if ((amount_to_burn == 0)) {
-                abort E_L_B_PAIR_ZERO_AMOUNT
+                abort E_LB_PAIR_ZERO_AMOUNT
             };
             let bin_reserves: u256 = *table::borrow_with_default(&state.bins, id, &0u256);
             let supply: u256 = total_supply(id);
             burn(from_, id, amount_to_burn);
             let amounts_out_from_bin: u256 = bin_helper::get_amount_out_of_bin(bin_reserves, amount_to_burn, supply);
             if ((amounts_out_from_bin == 0)) {
-                abort E_L_B_PAIR_ZERO_AMOUNTS_OUT
+                abort E_LB_PAIR_ZERO_AMOUNTS_OUT
             };
             bin_reserves = (bin_reserves - amounts_out_from_bin);
             if ((supply == amount_to_burn)) {
@@ -483,7 +483,7 @@ module 0x1::l_b_pair {
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
         if ((signer::address_of(account) != get_fee_recipient(state.factory))) {
-            abort E_L_B_PAIR_ONLY_PROTOCOL_FEE_RECIPIENT
+            abort E_LB_PAIR_ONLY_PROTOCOL_FEE_RECIPIENT
         };
         let protocol_fees: u256 = state.protocol_fees;
         let (x, y) = packed_uint128_math::decode(protocol_fees);
@@ -528,10 +528,10 @@ module 0x1::l_b_pair {
         state.reentrancy_status = 2u8;
         only_factory(state);
         state.hooks_parameters = hooks_parameters;
-        let hooks: address = i_l_b_hooks(hooks::get_hooks(hooks_parameters));
+        let hooks: address = ilb_hooks(hooks::get_hooks(hooks_parameters));
         event::emit(HooksParametersSet { arg0: signer::address_of(account), arg1: hooks_parameters });
-        if (((evm_compat::to_address(hooks) != @0x0) && (get_l_b_pair(hooks) != @0x1))) {
-            abort E_L_B_PAIR_INVALID_HOOKS
+        if (((evm_compat::to_address(hooks) != @0x0) && (get_lb_pair(hooks) != @0x1))) {
+            abort E_LB_PAIR_INVALID_HOOKS
         };
         hooks::on_hooks_set(hooks_parameters, on_hooks_set_data);
         state.reentrancy_status = 1u8;
@@ -553,7 +553,7 @@ module 0x1::l_b_pair {
         non_reentrant_before();
         let hooks_parameters: u256 = state.hooks_parameters;
         hooks::before_batch_transfer_from(hooks_parameters, signer::address_of(account), from, to, ids, amounts);
-        l_b_token::batch_transfer_from(from, to, ids, amounts);
+        lb_token::batch_transfer_from(from, to, ids, amounts);
         non_reentrant_after();
         hooks::after_batch_transfer_from(hooks_parameters, signer::address_of(account), from, to, ids, amounts);
     }
@@ -577,7 +577,7 @@ module 0x1::l_b_pair {
     #[view]
     fun only_factory(account: address, state: &LBPairState) {
         if ((account != evm_compat::to_address(state.factory))) {
-            abort E_L_B_PAIR_ONLY_FACTORY
+            abort E_LB_PAIR_ONLY_FACTORY
         };
     }
 
@@ -593,14 +593,14 @@ module 0x1::l_b_pair {
 
     public(package) fun set_static_fee_parameters(account: &signer, parameters: u256, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, state: &mut LBPairState) {
         if ((((((((base_factor == 0) && (filter_period == 0)) && (decay_period == 0)) && (reduction_factor == 0)) && (variable_fee_control == 0)) && (protocol_share == 0)) && (max_volatility_accumulator == 0))) {
-            abort E_L_B_PAIR_INVALID_STATIC_FEE_PARAMETERS
+            abort E_LB_PAIR_INVALID_STATIC_FEE_PARAMETERS
         };
         parameters = pair_parameter_helper::set_static_fee_parameters(parameters, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
         let bin_step: u16 = bin_step();
         let max_parameters: u256 = pair_parameter_helper::set_volatility_accumulator(parameters, max_volatility_accumulator);
         let total_fee: u256 = (pair_parameter_helper::get_base_fee(max_parameters, bin_step) + pair_parameter_helper::get_variable_fee(max_parameters, bin_step));
-        if ((total_fee > _M_A_X_T_O_T_A_L_F_E_E)) {
-            abort E_L_B_PAIR_MAX_TOTAL_FEE_EXCEEDED
+        if ((total_fee > _MAX_TOTAL_FEE)) {
+            abort E_LB_PAIR_MAX_TOTAL_FEE_EXCEEDED
         };
         state.parameters = parameters;
         event::emit(StaticFeeParametersSet { arg0: signer::address_of(account), arg1: base_factor, arg2: filter_period, arg3: decay_period, arg4: reduction_factor, arg5: variable_fee_control, arg6: protocol_share, arg7: max_volatility_accumulator });
@@ -655,7 +655,7 @@ module 0x1::l_b_pair {
             bin_helper::verify_amounts(amounts_in, active_id, id);
         };
         if (((shares == 0) || (amounts_in_to_bin == 0))) {
-            abort E_L_B_PAIR_ZERO_SHARES
+            abort E_LB_PAIR_ZERO_SHARES
         };
         if ((supply == 0)) {
             (state.tree + id);

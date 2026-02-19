@@ -42,8 +42,8 @@ module 0x1::vault {
     const E_ZERO_ASSETS: u64 = 264u64;
 
     struct VaultState has key {
-        name: vector<u8>,
-        symbol: vector<u8>,
+        name: std::string::String,
+        symbol: std::string::String,
         asset: address,
         total_supply: u256,
         balance_of: aptos_std::table::Table<address, u256>,
@@ -127,7 +127,7 @@ module 0x1::vault {
         active: bool
     }
 
-    public entry fun initialize(deployer: &signer, asset: address, name: vector<u8>, symbol: vector<u8>) {
+    public entry fun initialize(deployer: &signer, asset: address, name: std::string::String, symbol: std::string::String) {
         let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"vault");
         move_to(&resource_signer, VaultState { name: name, symbol: symbol, asset: asset, total_supply: 0, balance_of: table::new(), allowance: table::new(), deposit_limit: /* unsupported expression */, total_debt: 0, last_report: /* unsupported expression */, locked_profit: 0, locked_profit_degradation: (46000000000000000000u256 / /* unsupported expression */), performance_fee: 0, management_fee: 0, governance: signer::address_of(deployer), management: signer::address_of(deployer), guardian: signer::address_of(deployer), strategies: table::new(), withdrawal_queue: vector::empty(), debt_ratio: 0, emergency_shutdown: false, signer_cap: signer_cap });
     }

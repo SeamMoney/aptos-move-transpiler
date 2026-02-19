@@ -1325,6 +1325,18 @@ export function transformExpression(
     case 'type_member':
       return transformTypeMember(expr, context);
 
+    case 'new': {
+      // Standalone new expression (e.g., `new Type()`)
+      // Array allocations are handled in transformFunctionCall when wrapped in FunctionCall
+      const moveType = solidityTypeToMoveTypeName((expr as any).typeName || 'u256');
+      context.usedModules.add('std::vector');
+      return {
+        kind: 'call',
+        function: `vector::empty<${moveType}>`,
+        args: [],
+      };
+    }
+
     default:
       return { kind: 'literal', type: 'number', value: 0 };
   }
@@ -1860,6 +1872,20 @@ function transformUnary(expr: any, context: TranspileContext): MoveExpression {
 function transformFunctionCall(expr: any, context: TranspileContext): MoveExpression {
   const args = (expr.args || []).map((a: any) => transformExpression(a, context));
 
+  // Handle `new Type[](length)` → vector::empty<MoveType>()
+  // Solidity array allocations: Move vectors are dynamic, no pre-allocation needed
+  if (expr.function?.kind === 'new') {
+    const typeName: string = expr.function.typeName || 'unknown';
+    const moveElementType = solidityTypeToMoveTypeName(typeName);
+    context.usedModules.add('std::vector');
+    return {
+      kind: 'call',
+      function: `vector::empty<${moveElementType}>`,
+      args: [],
+      inferredType: { kind: 'vector', elementType: { kind: 'primitive', name: moveElementType as any } },
+    };
+  }
+
   // Handle special functions
   if (expr.function?.kind === 'identifier') {
     const name = expr.function.name;
@@ -2334,9 +2360,24 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
   }
 
   // Look up return type from function signature registry
+  // If function name couldn't be resolved, generate a compilable stub
+  let resolvedFuncName = funcName;
+  if (!resolvedFuncName) {
+    // Try to extract a meaningful name from the transformed expression
+    if (funcExpr?.kind === 'call') {
+      resolvedFuncName = typeof funcExpr.function === 'string' ? funcExpr.function : undefined;
+    } else if (funcExpr?.kind === 'field_access') {
+      resolvedFuncName = (funcExpr as any).field;
+    }
+    // Final fallback: produce a no-op that's clearly marked as unresolvable
+    if (!resolvedFuncName) {
+      resolvedFuncName = 'evm_compat::stub';
+      warnOrError(context, 'Unresolvable function call replaced with evm_compat::stub');
+    }
+  }
   const callResult: MoveExpression = {
     kind: 'call',
-    function: funcName || 'unknown',
+    function: resolvedFuncName,
     args,
   };
   if (funcName && context.functionSignatures) {
@@ -3588,6 +3629,45 @@ function findVariableAnalysis(
   return null;
 }
 
+/**
+ * Map Solidity type name to Move type name for generic parameters.
+ * Handles elementary types (uint256→u256, address, bool, bytes→u8)
+ * and passes through struct/custom names unchanged.
+ */
+function solidityTypeToMoveTypeName(typeName: string): string {
+  if (typeName === 'uint' || typeName === 'uint256') return 'u256';
+  if (typeName === 'uint8') return 'u8';
+  if (typeName === 'uint16') return 'u16';
+  if (typeName === 'uint32') return 'u32';
+  if (typeName === 'uint64') return 'u64';
+  if (typeName === 'uint128') return 'u128';
+  if (typeName.startsWith('uint')) {
+    const bits = parseInt(typeName.slice(4));
+    if (bits <= 8) return 'u8';
+    if (bits <= 16) return 'u16';
+    if (bits <= 32) return 'u32';
+    if (bits <= 64) return 'u64';
+    if (bits <= 128) return 'u128';
+    return 'u256';
+  }
+  if (typeName === 'int' || typeName === 'int256') return 'i256';
+  if (typeName.startsWith('int')) {
+    const bits = parseInt(typeName.slice(3));
+    if (bits <= 8) return 'i8';
+    if (bits <= 16) return 'i16';
+    if (bits <= 32) return 'i32';
+    if (bits <= 64) return 'i64';
+    if (bits <= 128) return 'i128';
+    return 'i256';
+  }
+  if (typeName === 'bool') return 'bool';
+  if (typeName === 'address') return 'address';
+  if (typeName === 'bytes' || typeName === 'string') return 'u8';
+  if (typeName.startsWith('bytes') && typeName.length <= 7) return 'u8'; // bytes1..bytes32
+  // Pass through struct/custom type names unchanged
+  return typeName;
+}
+
 /** Find per-user resource field config for a variable, if applicable. */
 function findPerUserField(
   context: TranspileContext,
@@ -3609,13 +3689,14 @@ function toSnakeCase(str: string): string {
 
   // Check if it's already SCREAMING_SNAKE_CASE (all caps with underscores)
   // Move constants use SCREAMING_SNAKE — preserve as-is
-  if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
+  if (/^_?[A-Z][A-Z0-9_]*$/.test(str)) {
     return str;
   }
 
   // Convert camelCase/PascalCase to snake_case
   return str
-    .replace(/([A-Z])/g, '_$1')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')     // lowercase/digit → uppercase boundary
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')  // consecutive uppercase → Titlecase boundary
     .toLowerCase()
     .replace(/^_/, '');
 }
@@ -3627,16 +3708,17 @@ function toSnakeCase(str: string): string {
 function toScreamingSnakeCase(str: string): string {
   if (!str) return '';
   // Already in SCREAMING_SNAKE_CASE format
-  if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
+  if (/^_?[A-Z][A-Z0-9_]*$/.test(str)) {
     return str;
   }
   return str
-    .replace(/\s+/g, '_')           // Replace spaces with underscores
-    .replace(/([A-Z])/g, '_$1')     // Add underscore before capitals
-    .replace(/[^A-Z0-9_]/gi, '')    // Remove non-alphanumeric except underscore
+    .replace(/\s+/g, '_')                       // Replace spaces with underscores
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')     // lowercase/digit → uppercase boundary
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')  // consecutive uppercase → Titlecase boundary
+    .replace(/[^A-Z0-9_]/gi, '')                 // Remove non-alphanumeric except underscore
     .toUpperCase()
-    .replace(/^_/, '')              // Remove leading underscore
-    .replace(/_+/g, '_');           // Collapse multiple underscores
+    .replace(/^_/, '')                           // Remove leading underscore
+    .replace(/_+/g, '_');                        // Collapse multiple underscores
 }
 
 /**

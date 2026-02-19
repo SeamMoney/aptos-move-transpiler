@@ -7,7 +7,7 @@ module 0x1::oracle_helper {
     use 0x1::safe_cast;
 
     // Error codes
-    const _M_A_X_S_A_M_P_L_E_L_I_F_E_T_I_M_E: u256 = 120u256;
+    const _MAX_SAMPLE_LIFETIME: u256 = 120u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
     const E_ASSERT_FAILED: u64 = 1u64;
@@ -126,7 +126,7 @@ module 0x1::oracle_helper {
             let (cumulative_id, cumulative_volatility, cumulative_bin_crossed) = sample_math::update(sample, (((timestamp::now_seconds() as u256) - last_updated_at) & 1099511627775), pair_parameter_helper::get_active_id(parameters), pair_parameter_helper::get_volatility_accumulator(parameters), pair_parameter_helper::get_delta_id(parameters, active_id));
             let length: u16 = sample_math::get_oracle_length(sample);
             let lifetime: u256 = ((timestamp::now_seconds() as u256) - created_at);
-            if ((lifetime > _M_A_X_S_A_M_P_L_E_L_I_F_E_T_I_M_E)) {
+            if ((lifetime > _MAX_SAMPLE_LIFETIME)) {
                 oracle_id = ((oracle_id % length) + 1);
                 lifetime = 0;
                 created_at = ((timestamp::now_seconds() as u256) & 1099511627775);

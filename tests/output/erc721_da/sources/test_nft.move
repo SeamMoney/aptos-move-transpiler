@@ -1,4 +1,4 @@
-module 0x1::test_n_f_t {
+module 0x1::test_nft {
     use std::string::{Self, String};
     use std::signer;
     use std::option::{Self, Option};

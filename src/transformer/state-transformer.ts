@@ -302,11 +302,12 @@ export function generateGetter(
 function toSnakeCase(str: string): string {
   if (!str) return '';
   // Preserve SCREAMING_SNAKE_CASE constants
-  if (/^[A-Z][A-Z0-9_]*$/.test(str)) {
+  if (/^_?[A-Z][A-Z0-9_]*$/.test(str)) {
     return str.toLowerCase();
   }
   return str
-    .replace(/([A-Z])/g, '_$1')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')     // lowercase/digit → uppercase boundary
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')  // consecutive uppercase → Titlecase boundary
     .toLowerCase()
     .replace(/^_/, '');
 }

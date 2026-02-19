@@ -192,7 +192,7 @@ module 0x1::simple_lending {
         accrue_interest(asset, state);
         let position: UserPosition = *table::borrow(&*table::borrow_with_default(&state.user_positions, signer::address_of(account), &0u256), asset);
         let borrowed_with_interest: u256 = borrow_balance_with_interest(signer::address_of(account), asset, state);
-        let repay_amount: u256 = if ((amount > borrowed_with_interest)) borrowed_with_interest else amount;
+        let repay_amount: u256 = (if ((amount > borrowed_with_interest)) borrowed_with_interest else amount);
         position.borrow_balance = (borrowed_with_interest - repay_amount);
         position.borrow_index = market.borrow_index;
         market.total_borrows -= repay_amount;

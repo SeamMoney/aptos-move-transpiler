@@ -34,7 +34,7 @@ module 0x1::struct_array {
 
     struct Item has copy, drop, store {
         id: u256,
-        name: vector<u8>
+        name: std::string::String
     }
 
     fun init_module(deployer: &signer) {
@@ -42,7 +42,7 @@ module 0x1::struct_array {
         move_to(&resource_signer, StructArrayState { items: vector::empty(), signer_cap: signer_cap });
     }
 
-    public entry fun add_item(account: &signer, id: u256, name: vector<u8>) acquires StructArrayState {
+    public entry fun add_item(account: &signer, id: u256, name: std::string::String) acquires StructArrayState {
         let state = borrow_global<StructArrayState>(@0x1);
         vector::push_back(&mut state.items, Item { id: id, name: name });
     }

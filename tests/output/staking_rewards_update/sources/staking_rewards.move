@@ -85,7 +85,7 @@ module 0x1::staking_rewards {
     #[view]
     public fun last_time_reward_applicable(): u256 acquires StakingRewardsState {
         let state = borrow_global<StakingRewardsState>(@0x1);
-        return if (((timestamp::now_seconds() as u256) < state.period_finish)) (timestamp::now_seconds() as u256) else state.period_finish
+        return (if (((timestamp::now_seconds() as u256) < state.period_finish)) (timestamp::now_seconds() as u256) else state.period_finish)
     }
 
     #[view]
@@ -209,7 +209,7 @@ module 0x1::staking_rewards {
         state.rewards_distributor = rewards_distributor;
     }
 
-    public entry fun recover_e_r_c20(account: &signer, token_address: address, token_amount: u256) acquires StakingRewardsState {
+    public entry fun recover_erc20(account: &signer, token_address: address, token_amount: u256) acquires StakingRewardsState {
         let state = borrow_global_mut<StakingRewardsState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         assert!((token_address != state.staking_token), E_CANNOT_RECOVER_STAKING_TOKEN);

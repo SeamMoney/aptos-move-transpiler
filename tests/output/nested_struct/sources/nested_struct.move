@@ -44,6 +44,6 @@ module 0x1::nested_struct {
 
     fun init_module(deployer: &signer) {
         let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"nested_struct");
-        move_to(&resource_signer, NestedStructState { items: 0, signer_cap: signer_cap });
+        move_to(&resource_signer, NestedStructState { items: table::new(), signer_cap: signer_cap });
     }
 }

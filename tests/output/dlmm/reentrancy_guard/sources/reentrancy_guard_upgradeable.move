@@ -50,12 +50,12 @@ module 0x1::reentrancy_guard_upgradeable {
         return _storage_ref
     }
 
-    public(package) fun __reentrancy_guard_init(state: &mut ReentrancyGuardUpgradeableState) {
+    public(package) fun _reentrancy_guard_init(state: &mut ReentrancyGuardUpgradeableState) {
         assert!(true, E_MODIFIER_ONLY_INITIALIZING);
-        __reentrancy_guard_init_unchained(state);
+        _reentrancy_guard_init_unchained(state);
     }
 
-    public(package) fun __reentrancy_guard_init_unchained(state: &mut ReentrancyGuardUpgradeableState) {
+    public(package) fun _reentrancy_guard_init_unchained(state: &mut ReentrancyGuardUpgradeableState) {
         assert!(true, E_MODIFIER_ONLY_INITIALIZING);
         let _storage_ref: ReentrancyGuardStorage = get_reentrancy_guard_storage();
         _storage_ref.status = NOT_ENTERED;

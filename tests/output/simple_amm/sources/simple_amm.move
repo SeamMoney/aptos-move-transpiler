@@ -1,4 +1,4 @@
-module 0x1::simple_a_m_m {
+module 0x1::simple_amm {
 
     use std::signer;
     use aptos_std::table;
@@ -81,7 +81,7 @@ module 0x1::simple_a_m_m {
     }
 
     public entry fun initialize(deployer: &signer, token0: address, token1: address) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"simple_a_m_m");
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"simple_amm");
         move_to(&resource_signer, SimpleAMMState { token0: token0, token1: token1, reserve0: 0, reserve1: 0, total_supply: 0, balance_of: table::new(), unlocked: 0, signer_cap: signer_cap });
     }
 
@@ -141,8 +141,8 @@ module 0x1::simple_a_m_m {
         assert!(((to != state.token0) && (to != state.token1)), E_INVALID_TO);
         let balance0: u256 = (get_balance0(state) - amount0_out);
         let balance1: u256 = (get_balance1(state) - amount1_out);
-        let amount0_in: u256 = if ((balance0 > (reserve0 - amount0_out))) (balance0 - ((reserve0 - amount0_out))) else 0;
-        let amount1_in: u256 = if ((balance1 > (reserve1 - amount1_out))) (balance1 - ((reserve1 - amount1_out))) else 0;
+        let amount0_in: u256 = (if ((balance0 > (reserve0 - amount0_out))) (balance0 - ((reserve0 - amount0_out))) else 0);
+        let amount1_in: u256 = (if ((balance1 > (reserve1 - amount1_out))) (balance1 - ((reserve1 - amount1_out))) else 0);
         assert!(((amount0_in > 0) || (amount1_in > 0)), E_INVALID_AMOUNT);
         let balance0_adjusted: u256 = (((balance0 * FEE_DENOMINATOR)) - ((amount0_in * FEE_NUMERATOR)));
         let balance1_adjusted: u256 = (((balance1 * FEE_DENOMINATOR)) - ((amount1_in * FEE_NUMERATOR)));
@@ -213,6 +213,6 @@ module 0x1::simple_a_m_m {
     }
 
     public(package) fun min(a: u256, b: u256): u256 {
-        return if ((a < b)) a else b
+        return (if ((a < b)) a else b)
     }
 }

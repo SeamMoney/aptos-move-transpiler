@@ -1,4 +1,4 @@
-module 0x1::l_b_token {
+module 0x1::lb_token {
 
     use std::signer;
     use aptos_std::table;
@@ -37,15 +37,15 @@ module 0x1::l_b_token {
     }
 
     fun init_module(deployer: &signer) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"l_b_token");
-        move_to(&resource_signer, LBTokenState { balances: 0, total_supplies: 0, spender_approvals: 0, signer_cap: signer_cap });
+        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_token");
+        move_to(&resource_signer, LBTokenState { balances: table::new(), total_supplies: table::new(), spender_approvals: table::new(), signer_cap: signer_cap });
     }
 
-    public fun name(): vector<u8> {
+    public fun name(): std::string::String {
         return string::utf8(b"Liquidity Book Token")
     }
 
-    public fun symbol(): vector<u8> {
+    public fun symbol(): std::string::String {
         return string::utf8(b"LBT")
     }
 
@@ -64,7 +64,7 @@ module 0x1::l_b_token {
     public fun balance_of_batch(accounts: vector<address>, ids: vector<u256>): vector<u256> {
         let batch_balances = vector::empty();
         check_length(vector::length(&accounts), vector::length(&ids));
-        batch_balances = unknown(vector::length(&accounts));
+        batch_balances = vector::empty<unknown>();
         let i: u256;
         while ((i < (vector::length(&accounts) as u256))) {
             *vector::borrow_mut(&mut batch_balances, (i as u64)) = balance_of(*vector::borrow(&accounts, (i as u64)), *vector::borrow(&ids, (i as u64)));
@@ -83,7 +83,7 @@ module 0x1::l_b_token {
 
     public entry fun batch_transfer_from(account: &signer, from: address, to: address, ids: vector<u256>, amounts: vector<u256>) {
         if (!is_approved_for_all(from, signer::address_of(account), state)) {
-            abort E_L_B_TOKEN_SPENDER_NOT_APPROVED
+            abort E_LB_TOKEN_SPENDER_NOT_APPROVED
         };
         batch_transfer_from(from, to, ids, amounts, state);
     }
@@ -102,7 +102,7 @@ module 0x1::l_b_token {
         let account_balances: aptos_std::table::Table<u256, u256> = *table::borrow_with_default(&state.balances, account, &0u256);
         let balance: u256 = *table::borrow_with_default(&account_balances, id, &0u256);
         if ((balance < amount)) {
-            abort E_L_B_TOKEN_BURN_EXCEEDS_BALANCE
+            abort E_LB_TOKEN_BURN_EXCEEDS_BALANCE
         };
         *table::borrow_mut_with_default(&mut state.total_supplies, id, 0u256) -= amount;
         *table::borrow_mut_with_default(&mut account_balances, id, 0u256) = (balance - amount);
@@ -119,7 +119,7 @@ module 0x1::l_b_token {
             let amount: u256 = *vector::borrow(&amounts, (i as u64));
             let from_balance: u256 = *table::borrow_with_default(&from_balances, id, &0u256);
             if ((from_balance < amount)) {
-                abort E_L_B_TOKEN_TRANSFER_EXCEEDS_BALANCE
+                abort E_LB_TOKEN_TRANSFER_EXCEEDS_BALANCE
             };
             *table::borrow_mut_with_default(&mut from_balances, id, 0u256) = (from_balance - amount);
             *table::borrow_mut_with_default(&mut to_balances, id, 0u256) += amount;
@@ -131,7 +131,7 @@ module 0x1::l_b_token {
     public(package) fun approve_for_all(owner: address, spender: address, approved: bool, state: &mut LBTokenState) {
         not_address_zero_or_this(owner);
         if ((owner == spender)) {
-            abort E_L_B_TOKEN_SELF_APPROVAL
+            abort E_LB_TOKEN_SELF_APPROVAL
         };
         *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.spender_approvals, owner, 0u256), spender) = approved;
         event::emit(ApprovalForAll { arg0: owner, arg1: spender, arg2: approved });
@@ -139,13 +139,13 @@ module 0x1::l_b_token {
 
     public(package) fun not_address_zero_or_this(account: address) {
         if (((account == @0x0) || (account == @0x1))) {
-            abort E_L_B_TOKEN_ADDRESS_THIS_OR_ZERO
+            abort E_LB_TOKEN_ADDRESS_THIS_OR_ZERO
         };
     }
 
     public(package) fun check_length(length_a: u256, length_b: u256) {
         if ((length_a != length_b)) {
-            abort E_L_B_TOKEN_INVALID_LENGTH
+            abort E_LB_TOKEN_INVALID_LENGTH
         };
     }
 }

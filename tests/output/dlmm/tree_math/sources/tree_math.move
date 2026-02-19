@@ -27,7 +27,7 @@ module 0x1::tree_math {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
-    struct TreeUint24 has copy, drop, store {
+    struct TreeUint24 has store {
         level0: u256,
         level1: aptos_std::table::Table<u256, u256>,
         level2: aptos_std::table::Table<u256, u256>

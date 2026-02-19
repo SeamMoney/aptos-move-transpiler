@@ -7,6 +7,7 @@ module 0x1::multi_sig {
     use std::vector;
     use std::string;
     use aptos_std::bcs;
+    use transpiler::evm_compat;
 
     // Error codes
     const E_REVERT: u64 = 0u64;
@@ -162,7 +163,7 @@ module 0x1::multi_sig {
         let transaction: Transaction = *vector::borrow(&state.transactions, (tx_index as u64));
         assert!((transaction.num_confirmations >= state.num_confirmations_required), E_INSUFFICIENT_BALANCE);
         transaction.executed = true;
-        let (success, unused1) = unknown(transaction.data);
+        let (success, unused1) = evm_compat::stub(transaction.data);
         assert!(success, E_TX_EXECUTION_FAILED);
         event::emit(ExecuteTransaction { owner: signer::address_of(account), tx_index: tx_index });
     }
@@ -250,7 +251,7 @@ module 0x1::multi_sig {
             };
             i = (i + 1);
         }
-        let pending: vector<u256> = unknown(pending_count);
+        let pending: vector<u256> = vector::empty<unknown>();
         let index: u256 = 0;
         let i: u256 = 0;
         while ((i < (vector::length(&state.transactions) as u256))) {
@@ -280,7 +281,7 @@ module 0x1::multi_sig {
             };
             i = (i + 1);
         }
-        let confirmations: vector<address> = unknown(count);
+        let confirmations: vector<address> = vector::empty<unknown>();
         let index: u256 = 0;
         let i: u256 = 0;
         while ((i < (vector::length(&state.owners) as u256))) {
