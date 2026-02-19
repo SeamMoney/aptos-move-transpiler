@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mapSolidityTypeToMove } from '../../src/mapper/type-mapper.js';
+import { mapSolidityTypeToMove, setStringTypeConfig } from '../../src/mapper/type-mapper.js';
 
 // Helper to create a simple type node
 function createTypeName(name: string): any {
@@ -115,12 +115,20 @@ describe('Type Mapper', () => {
   });
 
   describe('String and Bytes', () => {
-    it('should map string to vector<u8>', () => {
+    it('should map string to string::String by default', () => {
       const result = mapSolidityType('string');
-      // Strings are mapped to vector<u8> for compatibility
+      // Default: strings map to std::string::String
+      expect(result.kind).toBe('struct');
+      expect((result as any).name).toBe('String');
+    });
+
+    it('should map string to vector<u8> in bytes mode', () => {
+      setStringTypeConfig('bytes');
+      const result = mapSolidityType('string');
       expect(result.kind).toBe('vector');
-      expect(result.elementType.kind).toBe('primitive');
-      expect(result.elementType.name).toBe('u8');
+      expect((result as any).elementType.kind).toBe('primitive');
+      expect((result as any).elementType.name).toBe('u8');
+      setStringTypeConfig('string'); // Reset to default
     });
 
     it('should map bytes to vector<u8>', () => {

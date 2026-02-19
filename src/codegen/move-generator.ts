@@ -21,9 +21,105 @@ import type {
 import { renderSpecs } from './spec-generator.js';
 
 /**
+ * Module-level call style flag, set at the start of generateMoveCode().
+ * Controls whether known stdlib calls are rendered as module-qualified
+ * (e.g., `vector::length(&v)`) or receiver syntax (e.g., `v.length()`).
+ */
+let _currentCallStyle: 'module-qualified' | 'receiver' = 'module-qualified';
+
+/**
+ * Module-level index notation flag, set at the start of generateMoveCode().
+ * When true, renders vector::borrow/borrow_mut as v[i] and
+ * borrow_global/borrow_global_mut as Type[addr] (Move 2.0+ syntax).
+ */
+let _currentIndexNotation = false;
+
+/**
+ * Unwrap a borrow (reference) expression to get the inner value.
+ * Strips `&` or `&mut` from an expression for index notation rendering.
+ */
+function unwrapBorrow(expr: MoveExpression): MoveExpression {
+  if (expr.kind === 'borrow') return expr.value;
+  return expr;
+}
+
+/**
+ * Generate the correct XOR mask for bitwise NOT based on integer type width.
+ * Move has no `~` operator; `~x` must be lowered to `x ^ MAX_VALUE`.
+ */
+function bitwiseNotMask(typeName: string): string {
+  switch (typeName) {
+    case 'u8': return '0xffu8';
+    case 'u16': return '0xffffu16';
+    case 'u32': return '0xffffffffu32';
+    case 'u64': return '0xffffffffffffffffu64';
+    case 'u128': return '0xffffffffffffffffffffffffffffffffu128';
+    case 'u256':
+    default:
+      return '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256';
+  }
+}
+
+/**
+ * Set of module::function names eligible for receiver syntax conversion.
+ * These are known Move stdlib/framework functions where the first parameter
+ * is a reference to (or owned value of) the receiver type.
+ */
+const RECEIVER_ELIGIBLE_FUNCTIONS = new Set([
+  // vector
+  'vector::length',
+  'vector::is_empty',
+  'vector::push_back',
+  'vector::pop_back',
+  'vector::borrow',
+  'vector::borrow_mut',
+  'vector::contains',
+  'vector::index_of',
+  'vector::remove',
+  'vector::swap',
+  'vector::reverse',
+  'vector::append',
+  'vector::trim',
+  // string
+  'string::length',
+  'string::bytes',
+  'string::is_empty',
+  'string::append',
+  'string::utf8',
+  // table
+  'table::contains',
+  'table::borrow',
+  'table::borrow_mut',
+  'table::borrow_with_default',
+  'table::borrow_mut_with_default',
+  'table::add',
+  'table::remove',
+  'table::upsert',
+  'table::length',
+  // smart_table
+  'smart_table::contains',
+  'smart_table::borrow',
+  'smart_table::borrow_mut',
+  'smart_table::add',
+  'smart_table::remove',
+  'smart_table::upsert',
+  'smart_table::length',
+  // option
+  'option::is_none',
+  'option::is_some',
+  'option::borrow',
+  'option::extract',
+  'option::contains',
+  'option::swap',
+]);
+
+/**
  * Generate Move source code from a module AST
  */
 export function generateMoveCode(module: MoveModule): string {
+  _currentCallStyle = module.callStyle || 'module-qualified';
+  _currentIndexNotation = module.indexNotation || false;
+
   const lines: string[] = [];
 
   // Module declaration
@@ -193,6 +289,11 @@ function generateFunction(func: MoveFunction, indent: number): string {
   const pad = ' '.repeat(indent);
   const lines: string[] = [];
 
+  // Source comment (emitSourceComments flag)
+  if (func.sourceComment) {
+    lines.push(`${pad}// ${func.sourceComment}`);
+  }
+
   // View attribute
   if (func.isView) {
     lines.push(`${pad}#[view]`);
@@ -208,6 +309,11 @@ function generateFunction(func: MoveFunction, indent: number): string {
     sig += 'public(friend) ';
   } else if (func.visibility === 'public(package)') {
     sig += 'public(package) ';
+  }
+
+  // Inline
+  if (func.isInline) {
+    sig += 'inline ';
   }
 
   // Entry
@@ -336,6 +442,9 @@ function generateStatement(stmt: MoveStatement, indent: number): string {
       return `${pad}return`;
 
     case 'abort':
+      if (stmt.comment) {
+        return `${pad}abort ${generateExpression(stmt.code)} // ${stmt.comment}`;
+      }
       return `${pad}abort ${generateExpression(stmt.code)}`;
 
     case 'expression':
@@ -343,6 +452,9 @@ function generateStatement(stmt: MoveStatement, indent: number): string {
       // Skip empty expressions (e.g., from modifier placeholders)
       if (!exprStr || exprStr.trim() === '' || exprStr === '/* unsupported expression */') {
         return '';
+      }
+      if (stmt.comment) {
+        return `${pad}${exprStr}; // ${stmt.comment}`;
       }
       return `${pad}${exprStr};`;
 
@@ -541,9 +653,13 @@ function generateExpression(expr: MoveExpression): string {
       return `(${generateExpression(expr.left)} ${expr.operator} ${generateExpression(expr.right)})`;
 
     case 'unary':
-      // Move doesn't have bitwise NOT (~), convert to XOR with max value
+      // Move doesn't have bitwise NOT (~), convert to XOR with max value for the correct type width
       if (expr.operator === '~') {
-        return `(${generateExpression(expr.operand)} ^ 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256)`;
+        const operandCode = generateExpression(expr.operand);
+        const typeName = expr.operand.inferredType?.kind === 'primitive'
+          ? expr.operand.inferredType.name
+          : (expr.inferredType?.kind === 'primitive' ? expr.inferredType.name : 'u256');
+        return `(${operandCode} ^ ${bitwiseNotMask(typeName)})`;
       }
       return `${expr.operator}${generateExpression(expr.operand)}`;
 
@@ -572,8 +688,36 @@ function generateExpression(expr: MoveExpression): string {
       const borrowPrefix = expr.mutable ? '&mut ' : '&';
       return borrowPrefix + generateExpression(expr.value);
 
-    case 'dereference':
+    case 'dereference': {
+      // Index notation: *vector::borrow(&v, i) → v[i]
+      // Also handles *borrow_global<T>(addr) → T[addr]
+      if (_currentIndexNotation && expr.value.kind === 'call') {
+        const callExpr = expr.value as import('../types/move-ast.js').MoveCallExpression;
+        // vector::borrow(&v, i) → v[i]  (strip the outer dereference)
+        if (callExpr.function === 'vector::borrow' && callExpr.args.length === 2) {
+          const vecExpr = unwrapBorrow(callExpr.args[0]);
+          const indexExpr = callExpr.args[1];
+          return `${generateExpression(vecExpr)}[${generateExpression(indexExpr)}]`;
+        }
+        // vector::borrow_mut(&mut v, i) → &mut v[i]  (strip deref, add &mut)
+        if (callExpr.function === 'vector::borrow_mut' && callExpr.args.length === 2) {
+          const vecExpr = unwrapBorrow(callExpr.args[0]);
+          const indexExpr = callExpr.args[1];
+          return `&mut ${generateExpression(vecExpr)}[${generateExpression(indexExpr)}]`;
+        }
+        // borrow_global<Type>(addr) → Type[addr]
+        const bgMatch = callExpr.function.match(/^borrow_global<(.+)>$/);
+        if (bgMatch && callExpr.args.length >= 1) {
+          return `${bgMatch[1]}[${generateExpression(callExpr.args[0])}]`;
+        }
+        // borrow_global_mut<Type>(addr) → &mut Type[addr]
+        const bgmMatch = callExpr.function.match(/^borrow_global_mut<(.+)>$/);
+        if (bgmMatch && callExpr.args.length >= 1) {
+          return `&mut ${bgmMatch[1]}[${generateExpression(callExpr.args[0])}]`;
+        }
+      }
       return `*${generateExpression(expr.value)}`;
+    }
 
     case 'cast':
       // Move doesn't support casting to bool - use != 0 instead
@@ -725,16 +869,87 @@ function normalizeNumber(value: string): string {
 }
 
 /**
- * Generate call expression
+ * Generate call expression.
+ * When _currentCallStyle is 'receiver' and the function is in the
+ * RECEIVER_ELIGIBLE_FUNCTIONS set, converts module-qualified calls to
+ * receiver syntax (Move 2.2+).
+ *
+ * Example: vector::length(&v) → v.length()
  */
 function generateCallExpression(expr: any): string {
-  let funcName = expr.function;
+  let funcName: string = expr.function;
 
   // Handle module-qualified functions
   if (expr.module) {
     funcName = `${expr.module}::${funcName}`;
   }
 
+  // Index notation conversion for Move 2.0+
+  // Intercepts vector::borrow, vector::borrow_mut, borrow_global<T>, borrow_global_mut<T>
+  // and renders them with bracket syntax.
+  if (_currentIndexNotation) {
+    // vector::borrow(&v, i) → v[i]
+    if (funcName === 'vector::borrow' && expr.args && expr.args.length === 2) {
+      const vecExpr = unwrapBorrow(expr.args[0]);
+      const indexExpr = expr.args[1];
+      return `${generateExpression(vecExpr)}[${generateExpression(indexExpr)}]`;
+    }
+
+    // vector::borrow_mut(&mut v, i) → &mut v[i]
+    if (funcName === 'vector::borrow_mut' && expr.args && expr.args.length === 2) {
+      const vecExpr = unwrapBorrow(expr.args[0]);
+      const indexExpr = expr.args[1];
+      return `&mut ${generateExpression(vecExpr)}[${generateExpression(indexExpr)}]`;
+    }
+
+    // borrow_global<Type>(addr) → Type[addr]
+    const bgMatch = funcName.match(/^borrow_global<(.+)>$/);
+    if (bgMatch && expr.args && expr.args.length >= 1) {
+      return `${bgMatch[1]}[${generateExpression(expr.args[0])}]`;
+    }
+
+    // borrow_global_mut<Type>(addr) → &mut Type[addr]
+    const bgmMatch = funcName.match(/^borrow_global_mut<(.+)>$/);
+    if (bgmMatch && expr.args && expr.args.length >= 1) {
+      return `&mut ${bgmMatch[1]}[${generateExpression(expr.args[0])}]`;
+    }
+  }
+
+  // Receiver syntax conversion for Move 2.2+
+  // Only applies to known stdlib functions with at least one argument.
+  if (
+    _currentCallStyle === 'receiver' &&
+    RECEIVER_ELIGIBLE_FUNCTIONS.has(funcName) &&
+    expr.args &&
+    expr.args.length > 0
+  ) {
+    const firstArg = expr.args[0];
+
+    // The first argument is typically a reference (borrow).
+    // For receiver syntax, Move infers the borrow, so unwrap it.
+    let receiverStr: string;
+    if (firstArg.kind === 'borrow') {
+      receiverStr = generateExpression(firstArg.value);
+    } else {
+      receiverStr = generateExpression(firstArg);
+    }
+
+    // Extract the method name (part after ::)
+    const methodName = funcName.split('::')[1];
+
+    // Type arguments go after the method name: receiver.method<T>(args)
+    let typeArgsStr = '';
+    if (expr.typeArgs && expr.typeArgs.length > 0) {
+      typeArgsStr = `<${expr.typeArgs.map(generateType).join(', ')}>`;
+    }
+
+    // Remaining arguments (everything after the receiver)
+    const restArgs = expr.args.slice(1).map(generateExpression).join(', ');
+
+    return `${receiverStr}.${methodName}${typeArgsStr}(${restArgs})`;
+  }
+
+  // Default: module-qualified call syntax
   // Type arguments
   if (expr.typeArgs && expr.typeArgs.length > 0) {
     funcName += `<${expr.typeArgs.map(generateType).join(', ')}>`;

@@ -8,6 +8,32 @@ import type { MoveType, MoveStructType } from '../types/move-ast.js';
 import { MoveTypes } from '../types/move-ast.js';
 import type { IRType } from '../types/ir.js';
 
+// Module-level string type configuration (set by transpiler before processing)
+let _stringTypeConfig: 'string' | 'bytes' = 'string';
+
+/** Configure how Solidity `string` maps to Move types.
+ *  Call before transpilation to set the strategy. */
+export function setStringTypeConfig(mode: 'string' | 'bytes') {
+  _stringTypeConfig = mode;
+}
+
+export function getStringTypeConfig(): 'string' | 'bytes' {
+  return _stringTypeConfig;
+}
+
+// Module-level mapping type configuration (set by transpiler before processing)
+let _mappingTypeConfig: 'table' | 'smart-table' = 'table';
+
+/** Configure how Solidity `mapping` maps to Move table types.
+ *  Call before transpilation to set the strategy. */
+export function setMappingTypeConfig(mode: 'table' | 'smart-table') {
+  _mappingTypeConfig = mode;
+}
+
+export function getMappingTypeConfig(): 'table' | 'smart-table' {
+  return _mappingTypeConfig;
+}
+
 /**
  * Map a Solidity type name to a Move type
  */
@@ -21,9 +47,17 @@ export function mapSolidityTypeToMove(typeName: TypeName): MoveType {
       return MoveTypes.vector(elementType);
 
     case 'Mapping':
-      // Mappings become Table<K, V>
+      // Mappings become Table<K, V> or SmartTable<K, V> based on config
       const keyType = mapSolidityTypeToMove(typeName.keyType);
       const valueType = mapSolidityTypeToMove(typeName.valueType);
+      if (_mappingTypeConfig === 'smart-table') {
+        return {
+          kind: 'struct',
+          module: 'aptos_std::smart_table',
+          name: 'SmartTable',
+          typeArgs: [keyType, valueType],
+        };
+      }
       return {
         kind: 'struct',
         module: 'aptos_std::table',
@@ -43,10 +77,11 @@ export function mapSolidityTypeToMove(typeName: TypeName): MoveType {
 
       // Map well-known OpenZeppelin collection types to Move equivalents
       const resolvedName = namePath.includes('.') ? namePath.split('.').pop()! : namePath;
+      const mapStructName = _mappingTypeConfig === 'smart-table' ? 'SmartTable' : 'Table';
       const collectionTypeMap: Record<string, MoveType> = {
-        'UintToUintMap': { kind: 'struct', name: 'Table', typeArgs: [MoveTypes.u256(), MoveTypes.u256()] },
-        'UintToAddressMap': { kind: 'struct', name: 'Table', typeArgs: [MoveTypes.u256(), MoveTypes.address()] },
-        'AddressToUintMap': { kind: 'struct', name: 'Table', typeArgs: [MoveTypes.address(), MoveTypes.u256()] },
+        'UintToUintMap': { kind: 'struct', name: mapStructName, typeArgs: [MoveTypes.u256(), MoveTypes.u256()] },
+        'UintToAddressMap': { kind: 'struct', name: mapStructName, typeArgs: [MoveTypes.u256(), MoveTypes.address()] },
+        'AddressToUintMap': { kind: 'struct', name: mapStructName, typeArgs: [MoveTypes.address(), MoveTypes.u256()] },
         'AddressSet': { kind: 'vector', elementType: MoveTypes.address() },
         'UintSet': { kind: 'vector', elementType: MoveTypes.u256() },
         'Bytes32Set': { kind: 'vector', elementType: MoveTypes.u256() },
@@ -126,9 +161,21 @@ function mapElementaryType(name: string): MoveType {
   // Address types
   if (name === 'address' || name === 'address payable') return MoveTypes.address();
 
-  // Bytes types
-  if (name === 'bytes' || name === 'string') {
+  // Bytes type (raw bytes, not string)
+  if (name === 'bytes') {
     return MoveTypes.vector(MoveTypes.u8());
+  }
+
+  // String type — behavior depends on stringType config
+  if (name === 'string') {
+    if (_stringTypeConfig === 'bytes') {
+      return MoveTypes.vector(MoveTypes.u8());
+    }
+    return {
+      kind: 'struct',
+      module: 'std::string',
+      name: 'String',
+    };
   }
 
   // Fixed-size bytes (bytes1 to bytes32)
@@ -145,15 +192,6 @@ function mapElementaryType(name: string): MoveType {
       if (size <= 16) return MoveTypes.u128();
       return MoveTypes.u256(); // bytes17-bytes32 → u256
     }
-  }
-
-  // String type
-  if (name === 'string') {
-    return {
-      kind: 'struct',
-      module: 'std::string',
-      name: 'String',
-    };
   }
 
   throw new Error(`Unknown elementary type: ${name}`);

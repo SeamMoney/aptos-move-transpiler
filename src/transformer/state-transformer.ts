@@ -34,30 +34,32 @@ export function transformStateVariable(
 }
 
 /**
- * Transform a mapping type to Move Table
+ * Transform a mapping type to Move Table or SmartTable based on context.mappingType
  */
 function transformMappingType(
   variable: IRStateVariable,
   context: TranspileContext
 ): MoveType {
-  context.usedModules.add('aptos_std::table');
+  const isSmartTable = context.mappingType === 'smart-table';
+  const tableModPath = isSmartTable ? 'aptos_std::smart_table' : 'aptos_std::table';
+  const tableStructName = isSmartTable ? 'SmartTable' : 'Table';
+  context.usedModules.add(tableModPath);
 
   const keyType = variable.mappingKeyType?.move || MoveTypes.address();
   const valueType = variable.mappingValueType?.move || MoveTypes.u256();
 
   // Handle nested mappings (e.g., mapping(address => mapping(address => uint256)))
   if (variable.mappingValueType?.isMapping) {
-    context.usedModules.add('aptos_std::table');
     return {
       kind: 'struct',
-      module: 'aptos_std::table',
-      name: 'Table',
+      module: tableModPath,
+      name: tableStructName,
       typeArgs: [
         keyType,
         {
           kind: 'struct',
-          module: 'aptos_std::table',
-          name: 'Table',
+          module: tableModPath,
+          name: tableStructName,
           typeArgs: [
             variable.mappingValueType.keyType?.move || MoveTypes.address(),
             variable.mappingValueType.valueType?.move || MoveTypes.u256(),
@@ -69,8 +71,8 @@ function transformMappingType(
 
   return {
     kind: 'struct',
-    module: 'aptos_std::table',
-    name: 'Table',
+    module: tableModPath,
+    name: tableStructName,
     typeArgs: [keyType, valueType],
   };
 }
@@ -123,11 +125,14 @@ function getDefaultValueForType(
   context: TranspileContext
 ): any {
   if (variable.isMapping) {
-    context.usedModules.add('aptos_std::table');
+    const isSmartTable = context.mappingType === 'smart-table';
+    const tableModPath = isSmartTable ? 'aptos_std::smart_table' : 'aptos_std::table';
+    const tableModPrefix = isSmartTable ? 'smart_table' : 'table';
+    context.usedModules.add(tableModPath);
     return {
       kind: 'call',
-      function: 'table::new',
-      module: 'aptos_std::table',
+      function: `${tableModPrefix}::new`,
+      module: tableModPath,
       args: [],
     };
   }
@@ -152,6 +157,11 @@ function getDefaultValueForType(
         case 'bool':
           return { kind: 'literal', type: 'bool', value: false };
         case 'address':
+          // optionalValues='option-type': default address → option::none<address>()
+          if (context.optionalValues === 'option-type') {
+            context.usedModules.add('std::option');
+            return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
+          }
           return { kind: 'literal', type: 'address', value: '@0x0' };
         default:
           // Numeric types
@@ -219,7 +229,10 @@ export function generateGetter(
   const moduleAddr = context.moduleAddress;
 
   if (variable.isMapping) {
-    context.usedModules.add('aptos_std::table');
+    const isSmartTable = context.mappingType === 'smart-table';
+    const tableModPath = isSmartTable ? 'aptos_std::smart_table' : 'aptos_std::table';
+    const tableModPrefix = isSmartTable ? 'smart_table' : 'table';
+    context.usedModules.add(tableModPath);
     return {
       name: `get_${fieldName}`,
       visibility: 'public',
@@ -246,7 +259,7 @@ export function generateGetter(
             kind: 'dereference',
             value: {
               kind: 'call',
-              function: 'table::borrow',
+              function: `${tableModPrefix}::borrow`,
               args: [
                 { kind: 'borrow', mutable: false, value: { kind: 'field_access', object: { kind: 'identifier', name: 'state' }, field: fieldName } },
                 { kind: 'identifier', name: 'key' },

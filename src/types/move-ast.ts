@@ -59,6 +59,13 @@ export interface MoveModule {
   constants: MoveConstant[];
   functions: MoveFunction[];
   specs?: MoveSpecBlock[];
+  /** Call syntax style: 'module-qualified' (default) or 'receiver' (Move 2.2+). */
+  callStyle?: 'module-qualified' | 'receiver';
+  /** Event emission pattern: 'native' (#[event] + event::emit), 'event-handle' (EventHandle<T> + emit_event), or 'none' (strip events). */
+  eventPattern?: 'native' | 'event-handle' | 'none';
+  /** Use index notation (Move 2.0+) for vector/resource access.
+   *  When true: v[i], State[addr] instead of vector::borrow(&v, i), borrow_global<State>(addr). */
+  indexNotation?: boolean;
 }
 
 // ─── Move Specification Language (MSL) ───────────────────────────────
@@ -153,11 +160,13 @@ export interface MoveFunction {
   visibility: MoveVisibility;
   isEntry?: boolean;
   isView?: boolean;
+  isInline?: boolean;
   typeParams?: MoveTypeParameter[];
   params: MoveFunctionParam[];
   returnType?: MoveType | MoveType[];
   acquires?: string[];
   body: MoveStatement[];
+  sourceComment?: string;
 }
 
 export interface MoveFunctionParam {
@@ -229,11 +238,13 @@ export interface MoveReturnStatement {
 export interface MoveAbortStatement {
   kind: 'abort';
   code: MoveExpression;
+  comment?: string;
 }
 
 export interface MoveExpressionStatement {
   kind: 'expression';
   expression: MoveExpression;
+  comment?: string;
 }
 
 export interface MoveBlockStatement {

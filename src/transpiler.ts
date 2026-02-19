@@ -11,6 +11,7 @@ import { generateDigitalAssetModule, isERC721Contract, extractERC721Config } fro
 import { formatMoveCode, isFormatterAvailable } from './formatter/move-formatter.js';
 import type { FormatOptions } from './formatter/move-formatter.js';
 import { generateSpecs } from './codegen/spec-generator.js';
+import { setStringTypeConfig, setMappingTypeConfig } from './mapper/type-mapper.js';
 import type { TranspileResult } from './types/ir.js';
 import type { MoveModule } from './types/move-ast.js';
 
@@ -42,6 +43,130 @@ export interface TranspileOptions {
    *  - 'medium': Split state into resource groups by access pattern, Aggregators for counters.
    *  - 'high': Everything in medium + per-user resources for address-keyed mappings. */
   optimizationLevel?: 'low' | 'medium' | 'high';
+
+  // ── Tier 1 Transpilation Flags ──
+
+  /** Strict mode: emit errors instead of stubs/warnings for unsupported Solidity patterns.
+   *  When false (default), unsupported patterns produce placeholder code and warnings.
+   *  When true, unsupported patterns cause transpilation to fail with errors. */
+  strictMode?: boolean;
+
+  /** Reentrancy guard pattern for nonReentrant modifiers.
+   *  - 'mutex' (default): State field reentrancy_status with assert! check.
+   *  - 'none': Strip reentrancy guards entirely (Move's ownership model prevents reentrancy). */
+  reentrancyPattern?: 'mutex' | 'none';
+
+  /** How to represent Solidity `string` type in Move.
+   *  - 'string' (default): Use std::string::String with utf8() encoding.
+   *  - 'bytes': Use vector<u8> for raw byte representation. */
+  stringType?: 'string' | 'bytes';
+
+  /** Mark small internal helper functions as `inline` in generated Move.
+   *  Inline functions are expanded at call sites, reducing function call overhead.
+   *  Only applies to private functions with simple bodies (no state access, ≤5 statements). */
+  useInlineFunctions?: boolean;
+
+  /** Include original Solidity source references as comments in generated Move code.
+   *  Adds `// Solidity: <function_name>` headers and `// line <N>` annotations. */
+  emitSourceComments?: boolean;
+
+  /** How to handle Solidity view/pure function annotations.
+   *  - 'annotate' (default): Emit #[view] attribute on view functions that read state.
+   *  - 'skip': Omit #[view] annotations (useful for older Move compiler versions). */
+  viewFunctionBehavior?: 'annotate' | 'skip';
+
+  /** How to translate Solidity require/revert error messages.
+   *  - 'abort-codes' (default): Map error messages to named u64 abort code constants.
+   *  - 'abort-verbose': Include original error message as inline comment next to abort. */
+  errorStyle?: 'abort-codes' | 'abort-verbose';
+
+  // ── Tier 2 Transpilation Flags ──
+
+  /** How to represent Solidity enums in Move.
+   *  - 'native-enum' (default): Use Move 2.0 native `enum` declarations.
+   *  - 'u8-constants': Use `const VARIANT: u8 = N` pattern (wider tooling compatibility). */
+  enumStyle?: 'native-enum' | 'u8-constants';
+
+  /** State storage and initialization pattern.
+   *  - 'resource-account' (default): Create resource account in init_module, store state there.
+   *  - 'deployer-direct': Store state directly at deployer address (simpler, no resource account).
+   *  - 'named-object': Use Aptos Object model with named objects for state storage. */
+  constructorPattern?: 'resource-account' | 'deployer-direct' | 'named-object';
+
+  /** How to map Solidity `internal` visibility to Move.
+   *  - 'public-package' (default): Use `public(package)` (Move 2.0+, recommended).
+   *  - 'public-friend': Use `public(friend)` (explicit friend declarations).
+   *  - 'private': Make internal functions fully private. */
+  internalVisibility?: 'public-package' | 'public-friend' | 'private';
+
+  /** Arithmetic overflow behavior.
+   *  - 'abort' (default): Move native behavior — abort on overflow/underflow.
+   *  - 'wrapping': Use wrapping arithmetic (matches Solidity unchecked blocks). */
+  overflowBehavior?: 'abort' | 'wrapping';
+
+  // ── Tier 3 Transpilation Flags ──
+
+  /** Mapping data structure in generated Move.
+   *  - 'table' (default): Use aptos_std::table::Table<K,V>. Suitable for small/medium maps.
+   *  - 'smart-table': Use aptos_std::smart_table::SmartTable<K,V>. Auto-splits buckets
+   *    for better parallelism on large datasets. */
+  mappingType?: 'table' | 'smart-table';
+
+  /** Access control pattern for modifier translation (onlyOwner, onlyRole, etc.).
+   *  - 'inline-assert' (default): Inline assert! checks comparing signer address to owner.
+   *  - 'capability': Use Move capability pattern with typed marker structs (OwnerCap, RoleCap).
+   *    More idiomatic Move; enables delegation and composable permissions. */
+  accessControl?: 'inline-assert' | 'capability';
+
+  /** Module upgradeability support.
+   *  - 'immutable' (default): No upgrade infrastructure. Module is frozen after publish.
+   *  - 'resource-account': Store SignerCapability; generate upgrade_module() that calls
+   *    code::publish_package_txn. Only effective with constructorPattern='resource-account'. */
+  upgradeability?: 'immutable' | 'resource-account';
+
+  /** How to represent nullable/optional values.
+   *  - 'sentinel' (default): Use sentinel values (0, @0x0, empty vector) for "not set".
+   *  - 'option-type': Use std::option::Option<T> for nullable address/struct fields. */
+  optionalValues?: 'sentinel' | 'option-type';
+
+  /** Function call syntax style in generated Move code.
+   *  - 'module-qualified' (default): vector::length(&v), table::borrow(&t, key).
+   *  - 'receiver' (Move 2.2+): v.length(), t.borrow(key). More readable, requires Move 2.2+. */
+  callStyle?: 'module-qualified' | 'receiver';
+
+  // ── Tier 4 Transpilation Flags ──
+
+  /** Event emission pattern.
+   *  - 'native' (default): #[event] struct + event::emit() (Move 2.0+, recommended).
+   *  - 'event-handle': Legacy EventHandle<T> stored in state with emit_event().
+   *  - 'none': Strip all event emissions (useful for gas optimization or testing). */
+  eventPattern?: 'native' | 'event-handle' | 'none';
+
+  /** Signer parameter name convention.
+   *  - 'account' (default): Use `account: &signer` as the parameter name.
+   *  - 'signer': Use `signer: &signer` (common in Aptos framework code). */
+  signerParamName?: 'account' | 'signer';
+
+  /** Whether to emit all boilerplate error constants or only referenced ones.
+   *  - true (default): Emit all 19 standard E_* error constants for every module.
+   *  - false: Only emit error constants that appear in generated function bodies. */
+  emitAllErrorConstants?: boolean;
+
+  /** Error code encoding style.
+   *  - 'u64' (default): Raw `const E_UNAUTHORIZED: u64 = 2` abort code constants.
+   *  - 'aptos-error-module': Use `error::permission_denied(REASON)` from std::error module.
+   *    Encodes category + reason per Aptos framework convention. */
+  errorCodeType?: 'u64' | 'aptos-error-module';
+
+  /** Use index notation (Move 2.0+) for vector/resource access.
+   *  - false (default): vector::borrow(&v, i), borrow_global<T>(addr).
+   *  - true: v[i], Resource[addr]. More concise but requires Move 2.0+ tooling. */
+  indexNotation?: boolean;
+
+  /** Acquires annotation style for functions accessing global storage.
+   *  - 'explicit' (default): Emit `acquires ResourceType` annotations on all functions.
+   *  - 'inferred': Omit acquires annotations (Move 2.2+ compiler infers them). */
+  acquiresStyle?: 'explicit' | 'inferred';
 }
 
 export interface TranspileOutput {
@@ -74,7 +199,33 @@ export function transpile(
     formatOptions = {},
     generateSpecs: shouldGenerateSpecs = false,
     optimizationLevel = 'low',
+    strictMode = false,
+    reentrancyPattern = 'mutex',
+    stringType = 'string',
+    useInlineFunctions = false,
+    emitSourceComments = false,
+    viewFunctionBehavior = 'annotate',
+    errorStyle = 'abort-codes',
+    enumStyle = 'native-enum',
+    constructorPattern = 'resource-account',
+    internalVisibility = 'public-package',
+    overflowBehavior = 'abort',
+    mappingType = 'table',
+    accessControl = 'inline-assert',
+    upgradeability = 'immutable',
+    optionalValues = 'sentinel',
+    callStyle = 'module-qualified',
+    eventPattern = 'native',
+    signerParamName = 'account',
+    emitAllErrorConstants = true,
+    errorCodeType = 'u64',
+    indexNotation = false,
+    acquiresStyle = 'explicit',
   } = options;
+
+  // Configure module-level type mapper for string and mapping representation
+  setStringTypeConfig(stringType);
+  setMappingTypeConfig(mappingType);
 
   const output: TranspileOutput = {
     success: true,
@@ -207,7 +358,31 @@ export function transpile(
 
       // Convert IR to Move module (standard transpilation)
       // Pass all contracts for inheritance flattening
-      const result = irToMoveModule(ir, moduleAddress, allContractsIR, { optimizationLevel });
+      const result = irToMoveModule(ir, moduleAddress, allContractsIR, {
+        optimizationLevel,
+        strictMode,
+        reentrancyPattern,
+        stringType,
+        useInlineFunctions,
+        emitSourceComments,
+        viewFunctionBehavior,
+        errorStyle,
+        enumStyle,
+        constructorPattern,
+        internalVisibility,
+        overflowBehavior,
+        mappingType,
+        accessControl,
+        upgradeability,
+        optionalValues,
+        callStyle,
+        eventPattern,
+        signerParamName,
+        emitAllErrorConstants,
+        errorCodeType,
+        indexNotation,
+        acquiresStyle,
+      });
 
       if (!result.success) {
         output.errors.push(...result.errors.map(e => e.message));

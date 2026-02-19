@@ -4,7 +4,7 @@
  */
 
 import type { ContractDefinition, FunctionDefinition, EventDefinition, ModifierDefinition } from '@solidity-parser/parser/dist/src/ast-types.js';
-import type { MoveModule, MoveUseDeclaration, MoveStruct, MoveFunction, MoveConstant, MoveExpression, MoveStatement } from '../types/move-ast.js';
+import type { MoveModule, MoveUseDeclaration, MoveStruct, MoveFunction, MoveConstant, MoveExpression, MoveStatement, MoveType, MoveAbility, MoveStructField } from '../types/move-ast.js';
 import type { IRContract, IRStateVariable, IRFunction, IREvent, IRModifier, IRConstructor, TranspileContext, TranspileResult, FunctionSignature } from '../types/ir.js';
 import { transformStateVariable } from './state-transformer.js';
 import { analyzeContract, buildResourcePlan } from '../analyzer/state-analyzer.js';
@@ -12,8 +12,16 @@ import type { ResourceGroup } from '../types/optimization.js';
 import { transformFunction, transformConstructor } from './function-transformer.js';
 import { transformEvent } from './event-transformer.js';
 import { createIRType } from '../mapper/type-mapper.js';
-import { solidityStatementToIR, solidityExpressionToIR } from './expression-transformer.js';
+import { solidityStatementToIR, solidityExpressionToIR, wrapErrorCode } from './expression-transformer.js';
 import { createHash } from 'node:crypto';
+
+/**
+ * Get the configured signer parameter name from context.
+ * Returns 'account' (default) or 'signer' depending on the signerParamName flag.
+ */
+function signerName(context: TranspileContext): string {
+  return context.signerParamName || 'account';
+}
 
 /**
  * Transform a Solidity contract to IR
@@ -402,11 +410,37 @@ function deduplicateOverloadedFunctions(functions: IRFunction[]): IRFunction[] {
 /**
  * Transform IR contract to Move module
  */
+export interface TranspileFlags {
+  optimizationLevel?: 'low' | 'medium' | 'high';
+  strictMode?: boolean;
+  reentrancyPattern?: 'mutex' | 'none';
+  stringType?: 'string' | 'bytes';
+  useInlineFunctions?: boolean;
+  emitSourceComments?: boolean;
+  viewFunctionBehavior?: 'annotate' | 'skip';
+  errorStyle?: 'abort-codes' | 'abort-verbose';
+  enumStyle?: 'native-enum' | 'u8-constants';
+  constructorPattern?: 'resource-account' | 'deployer-direct' | 'named-object';
+  internalVisibility?: 'public-package' | 'public-friend' | 'private';
+  overflowBehavior?: 'abort' | 'wrapping';
+  mappingType?: 'table' | 'smart-table';
+  accessControl?: 'inline-assert' | 'capability';
+  upgradeability?: 'immutable' | 'resource-account';
+  optionalValues?: 'sentinel' | 'option-type';
+  callStyle?: 'module-qualified' | 'receiver';
+  eventPattern?: 'native' | 'event-handle' | 'none';
+  signerParamName?: 'account' | 'signer';
+  emitAllErrorConstants?: boolean;
+  errorCodeType?: 'u64' | 'aptos-error-module';
+  indexNotation?: boolean;
+  acquiresStyle?: 'explicit' | 'inferred';
+}
+
 export function irToMoveModule(
   ir: IRContract,
   moduleAddress: string,
   allContracts?: Map<string, IRContract>,
-  options?: { optimizationLevel?: 'low' | 'medium' | 'high' }
+  options?: TranspileFlags
 ): TranspileResult {
   // Flatten inheritance if parent contracts are provided
   const flattenedIR = allContracts ? flattenInheritance(ir, allContracts) : ir;
@@ -438,6 +472,28 @@ export function irToMoveModule(
     acquiredResources: new Set(),
     inheritedContracts: allContracts,
     optimizationLevel: options?.optimizationLevel || 'low',
+    strictMode: options?.strictMode || false,
+    reentrancyPattern: options?.reentrancyPattern || 'mutex',
+    stringType: options?.stringType || 'string',
+    useInlineFunctions: options?.useInlineFunctions || false,
+    emitSourceComments: options?.emitSourceComments || false,
+    viewFunctionBehavior: options?.viewFunctionBehavior || 'annotate',
+    errorStyle: options?.errorStyle || 'abort-codes',
+    enumStyle: options?.enumStyle || 'native-enum',
+    constructorPattern: options?.constructorPattern || 'resource-account',
+    internalVisibility: options?.internalVisibility || 'public-package',
+    overflowBehavior: options?.overflowBehavior || 'abort',
+    mappingType: options?.mappingType || 'table',
+    accessControl: options?.accessControl || 'inline-assert',
+    upgradeability: options?.upgradeability || 'immutable',
+    optionalValues: options?.optionalValues || 'sentinel',
+    callStyle: options?.callStyle || 'module-qualified',
+    eventPattern: options?.eventPattern || 'native',
+    signerParamName: options?.signerParamName || 'account',
+    emitAllErrorConstants: options?.emitAllErrorConstants !== false,
+    errorCodeType: options?.errorCodeType || 'u64',
+    indexNotation: options?.indexNotation || false,
+    acquiresStyle: options?.acquiresStyle || 'explicit',
   };
 
   // Attach function registry for borrow checker prevention
@@ -520,6 +576,7 @@ export function irToMoveModule(
     ['vector::is_empty', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'vector', elementType: { kind: 'generic', name: 'T' } } }], returnType: { kind: 'primitive', name: 'bool' } }],
     ['vector::contains', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'vector', elementType: { kind: 'generic', name: 'T' } } }, { kind: 'reference', mutable: false, innerType: { kind: 'generic', name: 'T' } }], returnType: { kind: 'primitive', name: 'bool' } }],
     ['table::contains', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'struct', name: 'Table' } }, { kind: 'generic', name: 'K' }], returnType: { kind: 'primitive', name: 'bool' } }],
+    ['smart_table::contains', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'struct', name: 'SmartTable' } }, { kind: 'generic', name: 'K' }], returnType: { kind: 'primitive', name: 'bool' } }],
     ['string::length', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'struct', name: 'String' } }], returnType: { kind: 'primitive', name: 'u64' } }],
     ['timestamp::now_seconds', { params: [], returnType: { kind: 'primitive', name: 'u64' } }],
     ['signer::address_of', { params: [{ kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } }], returnType: { kind: 'primitive', name: 'address' } }],
@@ -542,6 +599,9 @@ export function irToMoveModule(
     enums: [],
     constants: [],
     functions: [],
+    callStyle: context.callStyle,
+    indexNotation: context.indexNotation,
+    eventPattern: context.eventPattern,
   };
 
   // Track if this is a library (no state, no init_module, pure functions)
@@ -574,13 +634,21 @@ export function irToMoveModule(
       for (const group of plan.groups) {
         const resourceStruct = transformResourceGroup(group, context);
         if (group.isPrimary) {
-          // Primary resource gets signer_cap
-          resourceStruct.fields.push({
-            name: 'signer_cap',
-            type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
-          });
+          if (context.constructorPattern === 'resource-account') {
+            resourceStruct.fields.push({
+              name: 'signer_cap',
+              type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
+            });
+            context.usedModules.add('aptos_framework::account');
+          } else if (context.constructorPattern === 'named-object') {
+            resourceStruct.fields.push({
+              name: 'extend_ref',
+              type: { kind: 'struct', module: 'object', name: 'ExtendRef' },
+            });
+            context.usedModules.add('aptos_framework::object');
+          }
+          // deployer-direct: no extra field in primary group
         }
-        context.usedModules.add('aptos_framework::account');
         module.structs.push(resourceStruct);
       }
 
@@ -617,10 +685,11 @@ export function irToMoveModule(
         });
 
         // Generate ensure_user_state helper function
+        const sName = signerName(context);
         const ensureFn: MoveFunction = {
           name: 'ensure_user_state',
           visibility: 'private',
-          params: [{ name: 'account', type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
+          params: [{ name: sName, type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
           returnType: undefined,
           body: [],
           acquires: [pur.structName],
@@ -629,7 +698,7 @@ export function irToMoveModule(
         // Build: if (!exists<UserState>(signer::address_of(account))) { move_to(account, UserState { field: default }) }
         const addrExpr: MoveExpression = {
           kind: 'call', module: 'signer', function: 'address_of',
-          args: [{ kind: 'identifier', name: 'account' }],
+          args: [{ kind: 'identifier', name: sName }],
         };
         const existsExpr: MoveExpression = {
           kind: 'call', function: `exists<${pur.structName}>`,
@@ -640,14 +709,14 @@ export function irToMoveModule(
         };
         const structFields = pur.fields.map(f => ({
           name: f.fieldName,
-          value: getDefaultValueForType(f.type) as MoveExpression,
+          value: getDefaultValueForType(f.type, context) as MoveExpression,
         }));
         const moveToCall: MoveStatement = {
           kind: 'expression',
           expression: {
             kind: 'call', function: 'move_to',
             args: [
-              { kind: 'identifier', name: 'account' },
+              { kind: 'identifier', name: sName },
               { kind: 'struct', name: pur.structName, fields: structFields },
             ],
           },
@@ -665,11 +734,20 @@ export function irToMoveModule(
     } else {
       // Low: Single resource struct (current behavior)
       const resourceStruct = transformStateVariablesToResource(flattenedIR.stateVariables, flattenedIR.name, context);
-      resourceStruct.fields.push({
-        name: 'signer_cap',
-        type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
-      });
-      context.usedModules.add('aptos_framework::account');
+      if (context.constructorPattern === 'resource-account') {
+        resourceStruct.fields.push({
+          name: 'signer_cap',
+          type: { kind: 'struct', module: 'account', name: 'SignerCapability' },
+        });
+        context.usedModules.add('aptos_framework::account');
+      } else if (context.constructorPattern === 'named-object') {
+        resourceStruct.fields.push({
+          name: 'extend_ref',
+          type: { kind: 'struct', module: 'object', name: 'ExtendRef' },
+        });
+        context.usedModules.add('aptos_framework::object');
+      }
+      // deployer-direct: no extra field needed
       module.structs.push(resourceStruct);
     }
   }
@@ -680,16 +758,80 @@ export function irToMoveModule(
     module.structs.push(moveStruct);
   }
 
-  // Transform enums (Move v2 supports enums)
-  for (const enumDef of flattenedIR.enums) {
-    const moveEnum = transformEnum(enumDef, context);
-    module.enums.push(moveEnum);
+  // Generate capability structs when accessControl === 'capability'
+  if (context.accessControl === 'capability' && !isLibrary) {
+    if (contractUsesOwnerModifier(flattenedIR)) {
+      module.structs.push({
+        name: 'OwnerCapability',
+        abilities: ['key'],
+        fields: [],
+        isResource: false,
+      });
+    }
+    const roleNames = contractUsesRoleModifiers(flattenedIR);
+    for (const roleName of roleNames) {
+      const capName = roleNameToCapabilityStruct(roleName);
+      module.structs.push({
+        name: capName,
+        abilities: ['key'],
+        fields: [],
+        isResource: false,
+      });
+    }
   }
 
-  // Transform events
-  for (const event of flattenedIR.events) {
-    const eventStruct = transformEvent(event, context);
-    module.structs.push(eventStruct);
+  // Transform enums (Move v2 supports enums)
+  for (const enumDef of flattenedIR.enums) {
+    if (context.enumStyle === 'u8-constants') {
+      // Generate u8 constants for each variant instead of native enum
+      for (let i = 0; i < enumDef.members.length; i++) {
+        const constName = `${toScreamingSnakeCase(enumDef.name)}_${toScreamingSnakeCase(enumDef.members[i])}`;
+        module.constants.push({
+          name: constName,
+          type: { kind: 'primitive', name: 'u8' },
+          value: { kind: 'literal', type: 'number', value: i, suffix: 'u8' },
+        });
+      }
+    } else {
+      const moveEnum = transformEnum(enumDef, context);
+      module.enums.push(moveEnum);
+    }
+  }
+
+  // Transform events (respects eventPattern flag)
+  if (context.eventPattern !== 'none') {
+    for (const event of flattenedIR.events) {
+      const eventStruct = transformEvent(event, context);
+      if (eventStruct) {
+        module.structs.push(eventStruct);
+      }
+    }
+  }
+
+  // For event-handle mode: add EventHandle<T> fields to the state struct
+  if (context.eventPattern === 'event-handle' && flattenedIR.events.length > 0 && !isLibrary) {
+    context.usedModules.add('aptos_framework::event');
+    context.usedModules.add('aptos_framework::account');
+
+    // Find the primary state struct (the one with isResource flag)
+    const stateStruct = module.structs.find(s => s.isResource);
+    if (stateStruct) {
+      for (const event of flattenedIR.events) {
+        const handleFieldName = `${toSnakeCase(event.name)}_events`;
+        // Only add if not already present (avoid duplicates from inheritance)
+        if (!stateStruct.fields.some(f => f.name === handleFieldName)) {
+          stateStruct.fields.push({
+            name: handleFieldName,
+            type: {
+              kind: 'struct',
+              module: 'event',
+              name: 'EventHandle',
+              typeArgs: [{ kind: 'struct', name: event.name }],
+            },
+          });
+        }
+      }
+    }
   }
 
   // Transform Solidity constants to Move const declarations FIRST
@@ -697,18 +839,40 @@ export function irToMoveModule(
   const stateConstants = generateStateConstants(flattenedIR.stateVariables, context);
   module.constants.push(...stateConstants);
 
+  // Pre-compute whether we need OwnerCapability move_to in init functions
+  const needsOwnerCap = context.accessControl === 'capability' && contractUsesOwnerModifier(flattenedIR);
+
   // Transform constructor to init_module (skip for libraries)
   if (!isLibrary) {
     if (flattenedIR.constructor) {
       const initFn = transformConstructor(flattenedIR.constructor, flattenedIR.name, flattenedIR.stateVariables, context);
+      // Append OwnerCapability move_to at the end of the constructor body
+      if (needsOwnerCap) {
+        initFn.body.push(generateCapabilityMoveTo({ kind: 'identifier', name: 'deployer' }));
+      }
       module.functions.push(initFn);
     } else if (flattenedIR.stateVariables.length > 0) {
-      // Generate default init_module
+      // Generate default init_module based on constructor pattern
+      let initFn: MoveFunction;
       if (context.resourcePlan && context.optimizationLevel !== 'low') {
-        module.functions.push(generateOptimizedInit(flattenedIR.name, flattenedIR.stateVariables, context));
+        initFn = generateOptimizedInit(flattenedIR.name, flattenedIR.stateVariables, context);
+      } else if (context.constructorPattern === 'deployer-direct') {
+        initFn = generateDeployerDirectInit(flattenedIR.name, flattenedIR.stateVariables, context);
+      } else if (context.constructorPattern === 'named-object') {
+        initFn = generateNamedObjectInit(flattenedIR.name, flattenedIR.stateVariables, context);
       } else {
-        module.functions.push(generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context));
+        initFn = generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context);
       }
+      // Append OwnerCapability move_to at the end of init_module body
+      if (needsOwnerCap) {
+        initFn.body.push(generateCapabilityMoveTo({ kind: 'identifier', name: 'deployer' }));
+      }
+      module.functions.push(initFn);
+    }
+
+    // For event-handle mode: inject EventHandle initialization into init_module state struct
+    if (context.eventPattern === 'event-handle' && flattenedIR.events.length > 0) {
+      injectEventHandleInitFields(module, flattenedIR.events, context);
     }
   }
 
@@ -721,6 +885,14 @@ export function irToMoveModule(
   for (const fn of deduplicatedFunctions) {
     const moveFn = transformFunction(fn, context);
     module.functions.push(moveFn);
+  }
+
+  // Generate upgrade_module function if upgradeability is enabled
+  // Requires resource-account constructor pattern (signer_cap field must exist)
+  if (context.upgradeability === 'resource-account' &&
+      context.constructorPattern === 'resource-account' &&
+      !isLibrary) {
+    module.functions.push(generateUpgradeFunction(flattenedIR.name, context));
   }
 
   // Copy imported constants from other modules (Move constants are module-private)
@@ -762,8 +934,12 @@ export function irToMoveModule(
   }
 
   // Add error constants AFTER function transformation
-  // so dynamically discovered error codes from require messages are included
-  const errorConstants = generateErrorConstants(flattenedIR, context);
+  // so dynamically discovered error codes from require messages are included.
+  // When emitAllErrorConstants is false, scan function bodies to find which E_* codes are used.
+  const referencedErrors = !context.emitAllErrorConstants
+    ? collectReferencedErrorCodes(module.functions)
+    : undefined;
+  const errorConstants = generateErrorConstants(flattenedIR, context, referencedErrors);
   module.constants.push(...errorConstants);
 
   // Auto-discover cross-module references from function bodies
@@ -771,6 +947,13 @@ export function irToMoveModule(
 
   // Finalize imports based on used modules
   module.uses = generateImports(context);
+
+  // Strip acquires annotations if compiler-inferred mode (Move 2.2+)
+  if (context.acquiresStyle === 'inferred') {
+    for (const fn of module.functions) {
+      delete fn.acquires;
+    }
+  }
 
   return {
     success: context.errors.length === 0,
@@ -814,6 +997,7 @@ const STDLIB_MODULES: Record<string, string> = {
   'string': 'std::string',
   'option': 'std::option',
   'signer': 'std::signer',
+  'error': 'std::error',
   'hash': 'std::hash',
   'bcs': 'aptos_std::bcs',
   'table': 'aptos_std::table',
@@ -832,6 +1016,7 @@ const STDLIB_MODULES: Record<string, string> = {
   'primary_fungible_store': 'aptos_framework::primary_fungible_store',
   'evm_compat': 'transpiler::evm_compat',
   'aggregator_v2': 'aptos_framework::aggregator_v2',
+  'code': 'aptos_framework::code',
   'u256': 'std::u256',
   'u128': 'std::u128',
   'u64': 'std::u64',
@@ -1095,11 +1280,13 @@ function generateOptimizedInit(
           });
         }
       } else if (v.isMapping) {
-        // Mapping types need table::new() initialization
-        context.usedModules.add('aptos_std::table');
+        // Mapping types need table::new() or smart_table::new() initialization
+        const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+        const tblModPrefix = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+        context.usedModules.add(tblModPath);
         fields.push({
           name: toSnakeCase(v.name),
-          value: { kind: 'call', function: 'table::new', args: [] },
+          value: { kind: 'call', function: `${tblModPrefix}::new`, args: [] },
         });
       } else if (v.type.isArray) {
         // Array types need vector::empty() initialization
@@ -1112,7 +1299,7 @@ function generateOptimizedInit(
           name: toSnakeCase(v.name),
           value: v.initialValue
             ? transformIRExpressionToMove(v.initialValue)
-            : getDefaultValue(v.type),
+            : getDefaultValue(v.type, context),
         });
       }
     }
@@ -1151,6 +1338,58 @@ function generateOptimizedInit(
 }
 
 /**
+ * Inject EventHandle initialization fields into init_module for event-handle mode.
+ * Walks the init function body to find move_to struct expressions and adds
+ * `event_name_events: account::new_event_handle<EventType>(account)` fields.
+ */
+function injectEventHandleInitFields(
+  module: MoveModule,
+  events: IREvent[],
+  context: TranspileContext
+): void {
+  // Find the init_module function
+  const initFn = module.functions.find(f => f.name === 'init_module');
+  if (!initFn) return;
+
+  // Determine the signer identifier used in the init function
+  // (typically 'deployer' for resource-account pattern, or the first param name)
+  const signerName = initFn.params.length > 0 ? initFn.params[0].name : 'deployer';
+
+  // Walk all statements to find move_to calls with struct expressions
+  for (const stmt of initFn.body) {
+    if (stmt.kind === 'expression' && stmt.expression.kind === 'call') {
+      const call = stmt.expression as any;
+      if (call.function === 'move_to') {
+        // Find the struct arg (typically the second argument to move_to)
+        for (const arg of call.args) {
+          if (arg.kind === 'struct') {
+            // Check if this is the primary state struct (contains resource fields)
+            // Add event handle fields for each event
+            for (const event of events) {
+              const handleFieldName = `${toSnakeCase(event.name)}_events`;
+              // Only add if not already present
+              if (!arg.fields.some((f: any) => f.name === handleFieldName)) {
+                arg.fields.push({
+                  name: handleFieldName,
+                  value: {
+                    kind: 'call',
+                    function: 'account::new_event_handle',
+                    typeArgs: [{ kind: 'struct', name: event.name }],
+                    args: [{ kind: 'identifier', name: signerName }],
+                  },
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  context.usedModules.add('aptos_framework::account');
+}
+
+/**
  * Generate default init_module function
  */
 function generateDefaultInit(
@@ -1165,12 +1404,29 @@ function generateDefaultInit(
 
   const stateFields = stateVariables
     .filter(v => v.mutability !== 'constant')
-    .map(v => ({
-      name: toSnakeCase(v.name),
-      value: v.initialValue ?
-        transformIRExpressionToMove(v.initialValue) :
-        getDefaultValue(v.type),
-    }));
+    .map(v => {
+      if (v.isMapping) {
+        const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+        const tblModPrefix = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+        context.usedModules.add(tblModPath);
+        return {
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: `${tblModPrefix}::new`, args: [] } as any,
+        };
+      }
+      if (v.type.isArray) {
+        return {
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: 'vector::empty', args: [] } as any,
+        };
+      }
+      return {
+        name: toSnakeCase(v.name),
+        value: v.initialValue ?
+          transformIRExpressionToMove(v.initialValue) :
+          getDefaultValue(v.type, context),
+      };
+    });
 
   // Add signer_cap field
   stateFields.push({
@@ -1217,10 +1473,383 @@ function generateDefaultInit(
 }
 
 /**
+ * Generate deployer-direct init_module function.
+ * Stores state directly at the deployer's address via move_to(deployer, ...).
+ * No resource account creation, no signer_cap field.
+ */
+function generateDeployerDirectInit(
+  contractName: string,
+  stateVariables: IRStateVariable[],
+  context: TranspileContext
+): MoveFunction {
+  const stateName = `${contractName}State`;
+
+  const stateFields = stateVariables
+    .filter(v => v.mutability !== 'constant')
+    .map(v => {
+      if (v.isMapping) {
+        const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+        const tblModPrefix = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+        context.usedModules.add(tblModPath);
+        return {
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: `${tblModPrefix}::new`, args: [] } as any,
+        };
+      }
+      if (v.type.isArray) {
+        return {
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: 'vector::empty', args: [] } as any,
+        };
+      }
+      return {
+        name: toSnakeCase(v.name),
+        value: v.initialValue ?
+          transformIRExpressionToMove(v.initialValue) :
+          getDefaultValue(v.type, context),
+      };
+    });
+
+  return {
+    name: 'init_module',
+    visibility: 'private',
+    params: [{ name: 'deployer', type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
+    body: [
+      // move_to(deployer, State { ... })
+      {
+        kind: 'expression',
+        expression: {
+          kind: 'call',
+          function: 'move_to',
+          args: [
+            { kind: 'identifier', name: 'deployer' },
+            {
+              kind: 'struct',
+              name: stateName,
+              fields: stateFields,
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Generate named-object init_module function.
+ * Uses Aptos Object model: creates a named object, stores state on the object signer,
+ * and persists an extend_ref for future state access.
+ */
+function generateNamedObjectInit(
+  contractName: string,
+  stateVariables: IRStateVariable[],
+  context: TranspileContext
+): MoveFunction {
+  const stateName = `${contractName}State`;
+
+  context.usedModules.add('aptos_framework::object');
+
+  const stateFields = stateVariables
+    .filter(v => v.mutability !== 'constant')
+    .map(v => {
+      if (v.isMapping) {
+        const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+        const tblModPrefix = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+        context.usedModules.add(tblModPath);
+        return {
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: `${tblModPrefix}::new`, args: [] } as any,
+        };
+      }
+      if (v.type.isArray) {
+        return {
+          name: toSnakeCase(v.name),
+          value: { kind: 'call', function: 'vector::empty', args: [] } as any,
+        };
+      }
+      return {
+        name: toSnakeCase(v.name),
+        value: v.initialValue ?
+          transformIRExpressionToMove(v.initialValue) :
+          getDefaultValue(v.type, context),
+      };
+    });
+
+  // Add extend_ref field to the struct initialization
+  stateFields.push({
+    name: 'extend_ref',
+    value: { kind: 'identifier', name: 'extend_ref' },
+  });
+
+  return {
+    name: 'init_module',
+    visibility: 'private',
+    params: [{ name: 'deployer', type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } }],
+    body: [
+      // let constructor_ref = object::create_named_object(deployer, b"contract_name");
+      {
+        kind: 'let',
+        pattern: 'constructor_ref',
+        value: {
+          kind: 'call',
+          function: 'object::create_named_object',
+          args: [
+            { kind: 'identifier', name: 'deployer' },
+            { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+          ],
+        },
+      },
+      // let object_signer = object::generate_signer(&constructor_ref);
+      {
+        kind: 'let',
+        pattern: 'object_signer',
+        value: {
+          kind: 'call',
+          function: 'object::generate_signer',
+          args: [
+            { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'constructor_ref' } },
+          ],
+        },
+      },
+      // let extend_ref = object::generate_extend_ref(&constructor_ref);
+      {
+        kind: 'let',
+        pattern: 'extend_ref',
+        value: {
+          kind: 'call',
+          function: 'object::generate_extend_ref',
+          args: [
+            { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'constructor_ref' } },
+          ],
+        },
+      },
+      // move_to(&object_signer, State { ..., extend_ref })
+      {
+        kind: 'expression',
+        expression: {
+          kind: 'call',
+          function: 'move_to',
+          args: [
+            { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'object_signer' } },
+            {
+              kind: 'struct',
+              name: stateName,
+              fields: stateFields,
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Generate upgrade_module entry function for resource-account upgradeability.
+ * Uses stored SignerCapability to create resource signer, then calls
+ * code::publish_package_txn to upgrade the module code.
+ *
+ * Only generated when upgradeability === 'resource-account' AND
+ * constructorPattern === 'resource-account' (signer_cap field must exist).
+ */
+function generateUpgradeFunction(
+  contractName: string,
+  context: TranspileContext
+): MoveFunction {
+  const stateName = `${contractName}State`;
+
+  context.usedModules.add('aptos_framework::code');
+  context.usedModules.add('aptos_framework::account');
+  context.usedModules.add('std::signer');
+
+  // For resource-account pattern, state is at @module_address
+  const borrowAddress: MoveExpression = { kind: 'literal', type: 'address', value: `@${context.moduleAddress}` };
+
+  const sName = signerName(context);
+  return {
+    name: 'upgrade_module',
+    visibility: 'public',
+    isEntry: true,
+    params: [
+      { name: sName, type: { kind: 'reference', mutable: false, innerType: { kind: 'primitive', name: 'signer' } } },
+      { name: 'metadata_serialized', type: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } } },
+      { name: 'code', type: { kind: 'vector', elementType: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } } } },
+    ],
+    body: [
+      // assert!(signer::address_of(account) == @module_address, E_UNAUTHORIZED);
+      {
+        kind: 'expression',
+        expression: {
+          kind: 'call',
+          function: 'assert!',
+          args: [
+            {
+              kind: 'binary',
+              operator: '==',
+              left: {
+                kind: 'call',
+                function: 'signer::address_of',
+                args: [{ kind: 'identifier', name: sName }],
+              },
+              right: { kind: 'literal', type: 'address', value: `@${context.moduleAddress}` },
+            },
+            wrapErrorCode('E_UNAUTHORIZED', context),
+          ],
+        },
+      },
+      // let state = borrow_global<State>(@module_address);
+      {
+        kind: 'let',
+        pattern: 'state',
+        value: {
+          kind: 'call',
+          function: 'borrow_global',
+          typeArgs: [{ kind: 'struct', name: stateName }],
+          args: [borrowAddress],
+        },
+      },
+      // let resource_signer = account::create_signer_with_capability(&state.signer_cap);
+      {
+        kind: 'let',
+        pattern: 'resource_signer',
+        value: {
+          kind: 'call',
+          function: 'account::create_signer_with_capability',
+          args: [{
+            kind: 'borrow',
+            mutable: false,
+            value: {
+              kind: 'field_access',
+              object: { kind: 'identifier', name: 'state' },
+              field: 'signer_cap',
+            },
+          }],
+        },
+      },
+      // code::publish_package_txn(&resource_signer, metadata_serialized, code);
+      {
+        kind: 'expression',
+        expression: {
+          kind: 'call',
+          function: 'code::publish_package_txn',
+          args: [
+            { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
+            { kind: 'identifier', name: 'metadata_serialized' },
+            { kind: 'identifier', name: 'code' },
+          ],
+        },
+      },
+    ],
+    acquires: [stateName],
+  };
+}
+
+/**
+ * Walk a MoveExpression tree and collect all identifier names matching the E_* pattern.
+ * This supports filtering error constants to only those actually referenced in code.
+ */
+function walkExprForErrors(expr: any, refs: Set<string>): void {
+  if (!expr) return;
+  if (expr.kind === 'identifier' && typeof expr.name === 'string' && expr.name.startsWith('E_')) {
+    refs.add(expr.name);
+  }
+  // Recurse into all object properties to catch every expression variant
+  for (const key of Object.keys(expr)) {
+    if (key === 'inferredType' || key === 'kind') continue;
+    const val = expr[key];
+    if (val && typeof val === 'object') {
+      if (Array.isArray(val)) {
+        for (const item of val) {
+          if (item && typeof item === 'object') {
+            if (item.kind) {
+              walkExprForErrors(item, refs);
+            } else {
+              // Handle struct field entries: { name, value }
+              walkExprForErrors(item, refs);
+            }
+          }
+        }
+      } else if (val.kind) {
+        walkExprForErrors(val, refs);
+      }
+    }
+  }
+}
+
+/**
+ * Walk a MoveStatement tree and collect all E_* identifier references.
+ */
+function walkStmtForErrors(stmt: any, refs: Set<string>): void {
+  if (!stmt) return;
+  switch (stmt.kind) {
+    case 'let':
+      walkExprForErrors(stmt.value, refs);
+      break;
+    case 'assign':
+      walkExprForErrors(stmt.target, refs);
+      walkExprForErrors(stmt.value, refs);
+      break;
+    case 'if':
+      walkExprForErrors(stmt.condition, refs);
+      if (stmt.thenBlock) {
+        for (const s of stmt.thenBlock) walkStmtForErrors(s, refs);
+      }
+      if (stmt.elseBlock) {
+        for (const s of stmt.elseBlock) walkStmtForErrors(s, refs);
+      }
+      break;
+    case 'while':
+      walkExprForErrors(stmt.condition, refs);
+      if (stmt.body) {
+        for (const s of stmt.body) walkStmtForErrors(s, refs);
+      }
+      break;
+    case 'loop':
+      if (stmt.body) {
+        for (const s of stmt.body) walkStmtForErrors(s, refs);
+      }
+      break;
+    case 'for':
+      walkExprForErrors(stmt.iterable, refs);
+      if (stmt.body) {
+        for (const s of stmt.body) walkStmtForErrors(s, refs);
+      }
+      break;
+    case 'return':
+      walkExprForErrors(stmt.value, refs);
+      break;
+    case 'abort':
+      walkExprForErrors(stmt.code, refs);
+      break;
+    case 'expression':
+      walkExprForErrors(stmt.expression, refs);
+      break;
+    case 'block':
+      if (stmt.statements) {
+        for (const s of stmt.statements) walkStmtForErrors(s, refs);
+      }
+      break;
+  }
+}
+
+/**
+ * Scan all function bodies in a module for E_* error constant references.
+ * Returns the set of error constant names that are actually used in the generated code.
+ */
+function collectReferencedErrorCodes(functions: MoveFunction[]): Set<string> {
+  const refs = new Set<string>();
+  for (const fn of functions) {
+    for (const stmt of fn.body) {
+      walkStmtForErrors(stmt, refs);
+    }
+  }
+  return refs;
+}
+
+/**
  * Generate error constants
  * Based on EVM error code patterns from e2m reverse engineering
  */
-function generateErrorConstants(ir: IRContract, context: TranspileContext): MoveConstant[] {
+function generateErrorConstants(ir: IRContract, context: TranspileContext, referencedErrors?: Set<string>): MoveConstant[] {
   const constants: MoveConstant[] = [];
 
   // Standard error codes matching EVM Solidity patterns
@@ -1247,8 +1876,10 @@ function generateErrorConstants(ir: IRContract, context: TranspileContext): Move
     { name: 'E_DIVISION_BY_ZERO', code: 0x12, comment: 'Division by zero' },
   ];
 
-  // Add standard error codes
+  // Add standard error codes — filter to only referenced ones when emitAllErrorConstants is false
+  const shouldFilterStandard = !context.emitAllErrorConstants && referencedErrors;
   for (const error of standardErrors) {
+    if (shouldFilterStandard && !referencedErrors!.has(error.name)) continue;
     constants.push({
       name: error.name,
       type: { kind: 'primitive', name: 'u64' },
@@ -1515,16 +2146,96 @@ function getDefaultConstantValue(type: any): any {
 }
 
 /**
+ * Set of struct type names that lack the `copy` and `drop` abilities.
+ * These are Move framework types that manage internal state/resources.
+ */
+const NON_COPYABLE_DROP_STRUCT_NAMES = new Set([
+  'Table', 'SmartTable', 'SimpleMap', 'BigOrderedMap',
+  'Aggregator', 'AggregatorSnapshot',
+]);
+
+/**
+ * Compute the abilities a MoveType can carry.
+ * Returns the set of abilities (`copy`, `drop`, `store`) that the type supports.
+ */
+function typeAbilities(ty: MoveType): Set<MoveAbility> {
+  switch (ty.kind) {
+    case 'primitive':
+      // All primitive types (u8, u64, bool, address, signer, etc.) have full abilities
+      return new Set(['copy', 'drop', 'store']);
+
+    case 'reference':
+      // References always have copy and drop, but NOT store
+      return new Set(['copy', 'drop']);
+
+    case 'generic':
+      // For generics, assume all abilities (constraints are enforced at the type-parameter level)
+      return new Set(['copy', 'drop', 'store']);
+
+    case 'vector': {
+      // Vector inherits abilities from its element type
+      const elementAbilities = typeAbilities(ty.elementType);
+      // Vectors themselves always have store if the element does; copy/drop follow the element
+      return elementAbilities;
+    }
+
+    case 'struct': {
+      // Check if this is a known non-copyable/non-droppable framework type
+      if (NON_COPYABLE_DROP_STRUCT_NAMES.has(ty.name)) {
+        return new Set(['store']);
+      }
+      // Also check module name for table/aggregator types that may have non-standard names
+      if (ty.module && (ty.module.includes('table') || ty.module.includes('aggregator'))) {
+        return new Set(['store']);
+      }
+      // For other struct types, conservatively assume all abilities
+      // (the struct's own declaration controls its abilities; we can't introspect further here)
+      return new Set(['copy', 'drop', 'store']);
+    }
+
+    default:
+      return new Set(['copy', 'drop', 'store']);
+  }
+}
+
+/**
+ * Compute struct abilities from the intersection of field type abilities.
+ * A struct can only have an ability if ALL of its field types support that ability.
+ */
+function computeStructAbilities(fields: MoveStructField[]): MoveAbility[] {
+  const allAbilities: MoveAbility[] = ['copy', 'drop', 'store'];
+
+  if (fields.length === 0) {
+    return allAbilities;
+  }
+
+  // Intersect abilities across all fields
+  const result = new Set<MoveAbility>(allAbilities);
+  for (const field of fields) {
+    const fieldAbilities = typeAbilities(field.type);
+    for (const ability of result) {
+      if (!fieldAbilities.has(ability)) {
+        result.delete(ability);
+      }
+    }
+  }
+
+  return Array.from(result);
+}
+
+/**
  * Transform struct to Move struct
  */
 function transformStruct(struct: { name: string; fields: any[] }, context: TranspileContext): MoveStruct {
+  const fields: MoveStructField[] = struct.fields.map(field => ({
+    name: toSnakeCase(field.name),
+    type: field.type.move || { kind: 'primitive' as const, name: 'u256' },
+  }));
+
   return {
     name: struct.name,
-    abilities: ['copy', 'drop', 'store'],
-    fields: struct.fields.map(field => ({
-      name: toSnakeCase(field.name),
-      type: field.type.move || { kind: 'primitive' as const, name: 'u256' },
-    })),
+    abilities: computeStructAbilities(fields),
+    fields,
     isResource: false,
   };
 }
@@ -1635,11 +2346,17 @@ function transformIRExpressionToMove(expr: any): any {
   return expr;
 }
 
-function getDefaultValue(type: any): any {
+function getDefaultValue(type: any, context?: TranspileContext): any {
   if (type.move?.kind === 'primitive') {
     switch (type.move.name) {
       case 'bool': return { kind: 'literal', type: 'bool', value: false };
-      case 'address': return { kind: 'call', function: '@0x0', args: [] };
+      case 'address':
+        // optionalValues='option-type': default address → option::none<address>()
+        if (context?.optionalValues === 'option-type') {
+          context.usedModules.add('std::option');
+          return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
+        }
+        return { kind: 'call', function: '@0x0', args: [] };
       default:
         if (type.move.name.startsWith('u') || type.move.name.startsWith('i')) {
           return { kind: 'literal', type: 'number', value: 0 };
@@ -1653,12 +2370,18 @@ function getDefaultValue(type: any): any {
 }
 
 /** Get default value for a MoveType (not IRType). Used by per-user resource generation. */
-function getDefaultValueForType(moveType: any): any {
+function getDefaultValueForType(moveType: any, context?: TranspileContext): any {
   if (!moveType) return { kind: 'literal', type: 'number', value: 0 };
   if (moveType.kind === 'primitive') {
     switch (moveType.name) {
       case 'bool': return { kind: 'literal', type: 'bool', value: false };
-      case 'address': return { kind: 'call', function: '@0x0', args: [] };
+      case 'address':
+        // optionalValues='option-type': default address → option::none<address>()
+        if (context?.optionalValues === 'option-type') {
+          context.usedModules.add('std::option');
+          return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
+        }
+        return { kind: 'call', function: '@0x0', args: [] };
       default:
         if (moveType.name.startsWith('u') || moveType.name.startsWith('i')) {
           return { kind: 'literal', type: 'number', value: 0 };
@@ -1669,6 +2392,73 @@ function getDefaultValueForType(moveType: any): any {
     return { kind: 'call', function: 'vector::empty', args: [] };
   }
   return { kind: 'literal', type: 'number', value: 0 };
+}
+
+/**
+ * Check if a contract uses the onlyOwner modifier on any function or defines it.
+ */
+function contractUsesOwnerModifier(ir: IRContract): boolean {
+  return ir.functions.some(fn =>
+    fn.modifiers.some(m => m.name === 'onlyOwner')
+  ) || ir.modifiers.some(m => m.name === 'onlyOwner');
+}
+
+/**
+ * Collect role names from onlyRole modifier usages in the contract.
+ * Returns a set of role argument names (e.g., 'ADMIN_ROLE', 'MINTER_ROLE').
+ */
+function contractUsesRoleModifiers(ir: IRContract): Set<string> {
+  const roleNames = new Set<string>();
+  for (const fn of ir.functions) {
+    for (const mod of fn.modifiers) {
+      if (mod.name === 'onlyRole' && mod.args.length > 0) {
+        const arg = mod.args[0];
+        const roleName = (arg as any).value || (arg as any).name || 'ADMIN_ROLE';
+        roleNames.add(String(roleName));
+      }
+    }
+  }
+  return roleNames;
+}
+
+/**
+ * Convert a role name (e.g., ADMIN_ROLE, MINTER_ROLE) to a PascalCase capability struct name.
+ * ADMIN_ROLE -> AdminRoleCapability
+ * MINTER_ROLE -> MinterRoleCapability
+ * myRole -> MyRoleCapability
+ */
+function roleNameToCapabilityStruct(roleName: string): string {
+  // Handle SCREAMING_SNAKE_CASE (e.g., ADMIN_ROLE)
+  if (/^[A-Z][A-Z0-9_]*$/.test(roleName)) {
+    const parts = roleName.split('_').filter(Boolean);
+    const pascal = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('');
+    return `${pascal}Capability`;
+  }
+  // Handle camelCase or PascalCase
+  const pascal = roleName.charAt(0).toUpperCase() + roleName.slice(1);
+  return `${pascal}Capability`;
+}
+
+/**
+ * Generate a move_to statement that grants an OwnerCapability to the deployer.
+ * Used in init_module / constructor when accessControl === 'capability'.
+ */
+function generateCapabilityMoveTo(signerExpr: any): MoveStatement {
+  return {
+    kind: 'expression',
+    expression: {
+      kind: 'call',
+      function: 'move_to',
+      args: [
+        signerExpr,
+        {
+          kind: 'struct',
+          name: 'OwnerCapability',
+          fields: [],
+        },
+      ],
+    },
+  };
 }
 
 /**

@@ -402,6 +402,36 @@ export interface TranspileContext {
   functionSignatures?: Map<string, FunctionSignature>;  // Maps qualified function name → signature for type inference
   optimizationLevel?: OptimizationLevel;  // Parallelization optimization level
   resourcePlan?: ResourcePlan;  // Resource splitting plan from state analyzer
+
+  // Tier 1 transpilation flags
+  strictMode?: boolean;
+  reentrancyPattern?: 'mutex' | 'none';
+  stringType?: 'string' | 'bytes';
+  useInlineFunctions?: boolean;
+  emitSourceComments?: boolean;
+  viewFunctionBehavior?: 'annotate' | 'skip';
+  errorStyle?: 'abort-codes' | 'abort-verbose';
+
+  // Tier 2 transpilation flags
+  enumStyle?: 'native-enum' | 'u8-constants';
+  constructorPattern?: 'resource-account' | 'deployer-direct' | 'named-object';
+  internalVisibility?: 'public-package' | 'public-friend' | 'private';
+  overflowBehavior?: 'abort' | 'wrapping';
+
+  // Tier 3 transpilation flags
+  mappingType?: 'table' | 'smart-table';
+  accessControl?: 'inline-assert' | 'capability';
+  upgradeability?: 'immutable' | 'resource-account';
+  optionalValues?: 'sentinel' | 'option-type';
+  callStyle?: 'module-qualified' | 'receiver';
+
+  // Tier 4 transpilation flags
+  eventPattern?: 'native' | 'event-handle' | 'none';
+  signerParamName?: 'account' | 'signer';
+  emitAllErrorConstants?: boolean;
+  errorCodeType?: 'u64' | 'aptos-error-module';
+  indexNotation?: boolean;
+  acquiresStyle?: 'explicit' | 'inferred';
 }
 
 export interface TranspileError {

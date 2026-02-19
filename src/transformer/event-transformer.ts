@@ -8,23 +8,35 @@ import type { IREvent, IREventParam, TranspileContext } from '../types/ir.js';
 import { MoveTypes } from '../types/move-ast.js';
 
 /**
- * Transform an IR event to a Move event struct
+ * Transform an IR event to a Move event struct.
+ *
+ * Returns null when eventPattern is 'none' (caller must skip the struct).
+ * For 'event-handle' mode, sets isEvent to false so no #[event] attribute is rendered.
+ * For 'native' mode (default), keeps existing behavior with isEvent: true.
  */
 export function transformEvent(
   event: IREvent,
   context: TranspileContext
-): MoveStruct {
+): MoveStruct | null {
+  // 'none': strip event structs entirely
+  if (context.eventPattern === 'none') {
+    return null;
+  }
+
   context.usedModules.add('aptos_framework::event');
 
   const fields: MoveStructField[] = event.params.map(param =>
     transformEventParam(param, context)
   );
 
+  // 'event-handle': struct exists but without #[event] attribute
+  const isNativeEvent = context.eventPattern !== 'event-handle';
+
   return {
     name: event.name,
     abilities: ['drop', 'store'],
     fields,
-    isEvent: true,
+    isEvent: isNativeEvent,
   };
 }
 

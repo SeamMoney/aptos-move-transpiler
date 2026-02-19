@@ -8,4 +8,6 @@ export {
   needsStoreAbility,
   getDefaultAbilities,
   CommonPatterns,
+  setStringTypeConfig,
+  getStringTypeConfig,
 } from './type-mapper.js';

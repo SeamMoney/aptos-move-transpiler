@@ -20,6 +20,84 @@ import {
 } from './type-inference.js';
 
 /**
+ * Get the configured signer parameter name from context.
+ * Returns 'account' (default) or 'signer' depending on the signerParamName flag.
+ */
+function signerName(context: TranspileContext): string {
+  return context.signerParamName || 'account';
+}
+
+/**
+ * Push a warning or error depending on strict mode.
+ * In strict mode, unsupported patterns become transpilation errors.
+ */
+function warnOrError(context: TranspileContext, message: string): void {
+  if (context.strictMode) {
+    context.errors.push({ message, severity: 'error' });
+  } else {
+    context.warnings.push({ message, severity: 'warning' });
+  }
+}
+
+/** Get the table module prefix based on context.mappingType */
+function tableModule(context: TranspileContext): string {
+  return context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+}
+
+/** Get the full use-declaration path for the table module based on context.mappingType */
+function tableModulePath(context: TranspileContext): string {
+  return context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+}
+
+/**
+ * Mapping from error constant names to their appropriate std::error category function.
+ * Used when errorCodeType === 'aptos-error-module' to wrap raw abort codes
+ * in the canonical Aptos error encoding: error::category(reason).
+ */
+const ERROR_CATEGORY_MAP: Record<string, string> = {
+  'E_UNAUTHORIZED': 'error::permission_denied',
+  'E_INVALID_ARGUMENT': 'error::invalid_argument',
+  'E_INSUFFICIENT_BALANCE': 'error::invalid_state',
+  'E_REENTRANCY': 'error::invalid_state',
+  'E_PAUSED': 'error::invalid_state',
+  'E_NOT_PAUSED': 'error::invalid_state',
+  'E_ALREADY_EXISTS': 'error::already_exists',
+  'E_NOT_FOUND': 'error::not_found',
+  'E_EXPIRED': 'error::invalid_state',
+  'E_LOCKED': 'error::invalid_state',
+  'E_INVALID_ADDRESS': 'error::invalid_argument',
+  'E_INVALID_AMOUNT': 'error::invalid_argument',
+  'E_TRANSFER_FAILED': 'error::aborted',
+  'E_INSUFFICIENT_ALLOWANCE': 'error::invalid_state',
+  'E_OVERFLOW': 'error::out_of_range',
+  'E_UNDERFLOW': 'error::out_of_range',
+  'E_DIVISION_BY_ZERO': 'error::out_of_range',
+  'E_REVERT': 'error::aborted',
+  'E_REQUIRE_FAILED': 'error::aborted',
+  'E_ASSERT_FAILED': 'error::aborted',
+};
+
+/**
+ * Wrap an error code identifier in an error::category() call when
+ * errorCodeType === 'aptos-error-module'. Returns the raw identifier otherwise.
+ *
+ * @param errorName - The error constant name (e.g., 'E_UNAUTHORIZED')
+ * @param context   - The transpile context (reads errorCodeType, writes usedModules)
+ */
+export function wrapErrorCode(errorName: string, context: TranspileContext): MoveExpression {
+  if (context.errorCodeType !== 'aptos-error-module') {
+    return { kind: 'identifier', name: errorName };
+  }
+  context.usedModules.add('std::error');
+  const category = ERROR_CATEGORY_MAP[errorName] || 'error::aborted';
+  return {
+    kind: 'call',
+    function: category,
+    args: [{ kind: 'identifier', name: errorName }],
+  };
+}
+
+/**
  * Transform a Solidity statement AST node to IR
  * Uses 'any' type because the parser's AST types vary
  */
@@ -427,23 +505,74 @@ export function transformStatement(
       return { kind: 'expression', expression: { kind: 'continue' } };
 
     case 'unchecked':
-      // Move doesn't have unchecked blocks - operations are unchecked by default
-      // We return undefined here and handle flattening at a higher level
-      // For now, just transform to a block (will be handled by if-statement flattening)
-      return {
-        kind: 'block',
-        statements: stmt.statements
-          .map(s => transformStatement(s, context))
-          .filter((s): s is MoveStatement => s !== undefined),
-      };
+      // Solidity unchecked blocks disable overflow/underflow checks.
+      // Move always aborts on arithmetic overflow — there is no native wrapping mode.
+      // When overflowBehavior is 'wrapping', we annotate the block with a comment
+      // and emit a warning so the developer knows manual wrapping may be needed.
+      return transformUncheckedBlock(stmt, context);
 
     default:
-      context.warnings.push({
-        message: `Unsupported statement type: ${(stmt as any).kind}`,
-        severity: 'warning',
-      });
+      warnOrError(context, `Unsupported statement type: ${(stmt as any).kind}`);
       return undefined;
   }
+}
+
+/**
+ * Transform a Solidity unchecked block to Move statements.
+ *
+ * Move always aborts on arithmetic overflow — there is no native wrapping mode.
+ * - overflowBehavior 'abort' (default): silently flatten the block (Move already checks).
+ * - overflowBehavior 'wrapping': annotate the block with a comment so the developer
+ *   knows the original Solidity code intended wrapping arithmetic, and emit a warning
+ *   that manual wrapping patterns may be required for correctness.
+ */
+function transformUncheckedBlock(
+  stmt: { statements: any[] },
+  context: TranspileContext
+): MoveStatement {
+  const innerStatements = stmt.statements
+    .map(s => transformStatement(s, context))
+    .filter((s): s is MoveStatement => s !== undefined);
+
+  if (context.overflowBehavior === 'wrapping') {
+    // Emit a one-time warning per module (tracked via usedModules to avoid repeats)
+    const warningKey = '__overflow_wrapping_warning';
+    if (!(context as any)[warningKey]) {
+      (context as any)[warningKey] = true;
+      context.warnings.push({
+        message: 'Wrapping arithmetic (Solidity unchecked block) is not natively supported in Move. ' +
+                 'Move will abort on overflow. Consider using modular arithmetic patterns for correctness.',
+        severity: 'warning',
+      });
+    }
+
+    // Mark the wrapping-intent region with an inline comment.
+    // Attach the comment to the first inner statement if it supports comments
+    // (expression or abort kinds). Otherwise, prepend a no-op comment marker.
+    const wrappingComment = 'Wrapping arithmetic (Solidity unchecked) — Move aborts on overflow; review for correctness';
+    if (innerStatements.length > 0 && (innerStatements[0].kind === 'expression' || innerStatements[0].kind === 'abort')) {
+      (innerStatements[0] as any).comment = wrappingComment;
+    } else if (innerStatements.length > 0) {
+      // Prepend a no-op expression statement carrying the comment
+      innerStatements.unshift({
+        kind: 'expression',
+        expression: { kind: 'literal', type: 'bool', value: true },
+        comment: wrappingComment,
+      });
+    }
+
+    return {
+      kind: 'block',
+      statements: innerStatements,
+    };
+  }
+
+  // Default ('abort'): Move already aborts on overflow, matching Solidity checked behavior.
+  // Silently flatten the unchecked block — no special handling needed.
+  return {
+    kind: 'block',
+    statements: innerStatements,
+  };
 }
 
 /**
@@ -896,9 +1025,18 @@ function transformReturn(stmt: any, context: TranspileContext): MoveStatement {
 }
 
 /**
- * Transform emit statement
+ * Transform emit statement.
+ * Respects the eventPattern context flag:
+ * - 'native' (default): event::emit(EventStruct { ... })
+ * - 'event-handle': event::emit_event(&mut borrow_global_mut<State>(@addr).event_events, EventStruct { ... })
+ * - 'none': skip the statement entirely (returns undefined)
  */
-function transformEmit(stmt: any, context: TranspileContext): MoveStatement {
+function transformEmit(stmt: any, context: TranspileContext): MoveStatement | undefined {
+  // 'none': strip event emissions entirely
+  if (context.eventPattern === 'none') {
+    return undefined;
+  }
+
   context.usedModules.add('aptos_framework::event');
 
   // Look up event definition to get field names
@@ -912,18 +1050,52 @@ function transformEmit(stmt: any, context: TranspileContext): MoveStatement {
     };
   });
 
+  const structExpr: MoveExpression = {
+    kind: 'struct',
+    name: stmt.event,
+    fields,
+  };
+
+  // 'event-handle': emit via EventHandle stored in state struct
+  if (context.eventPattern === 'event-handle') {
+    context.usedModules.add('aptos_framework::account');
+    const stateName = `${context.contractName}State`;
+    const handleFieldName = `${toSnakeCase(stmt.event)}_events`;
+    context.acquiredResources.add(stateName);
+
+    // event::emit_event(&mut borrow_global_mut<State>(@module_addr).handle_events, EventStruct { ... })
+    return {
+      kind: 'expression',
+      expression: {
+        kind: 'call',
+        function: 'event::emit_event',
+        args: [
+          {
+            kind: 'borrow',
+            mutable: true,
+            value: {
+              kind: 'field_access',
+              object: {
+                kind: 'call',
+                function: `borrow_global_mut<${stateName}>`,
+                args: [{ kind: 'identifier', name: `@${context.moduleAddress}` }],
+              },
+              field: handleFieldName,
+            },
+          },
+          structExpr,
+        ],
+      },
+    };
+  }
+
+  // 'native' (default): event::emit(EventStruct { ... })
   return {
     kind: 'expression',
     expression: {
       kind: 'call',
       function: 'event::emit',
-      args: [
-        {
-          kind: 'struct',
-          name: stmt.event,
-          fields,
-        },
-      ],
+      args: [structExpr],
     },
   };
 }
@@ -940,7 +1112,7 @@ function transformRequire(stmt: any, context: TranspileContext): MoveStatement {
       function: 'assert!',
       args: [
         transformExpression(stmt.condition, context),
-        { kind: 'identifier', name: 'E_INVALID_ARGUMENT' },
+        wrapErrorCode('E_INVALID_ARGUMENT', context),
       ],
     },
   };
@@ -954,7 +1126,7 @@ function transformRevert(stmt: any, context: TranspileContext): MoveStatement {
 
   return {
     kind: 'abort',
-    code: { kind: 'identifier', name: errorName },
+    code: wrapErrorCode(errorName, context),
   };
 }
 
@@ -974,7 +1146,7 @@ function transformExpressionStatement(
 
     if (funcName === 'require') {
       const errorCode = extractErrorCode(expr.args[1], context);
-      return {
+      const result: MoveStatement = {
         kind: 'expression',
         expression: {
           kind: 'call',
@@ -985,6 +1157,11 @@ function transformExpressionStatement(
           ],
         },
       };
+      // In abort-verbose mode, include original error message as comment
+      if (context.errorStyle === 'abort-verbose' && expr.args[1]?.kind === 'literal' && expr.args[1]?.type === 'string') {
+        result.comment = `require: "${expr.args[1].value}"`;
+      }
+      return result;
     }
 
     if (funcName === 'assert') {
@@ -995,7 +1172,7 @@ function transformExpressionStatement(
           function: 'assert!',
           args: [
             transformExpression(expr.args[0], context),
-            { kind: 'identifier', name: 'E_ASSERT_FAILED' },
+            wrapErrorCode('E_ASSERT_FAILED', context),
           ],
         },
       };
@@ -1005,14 +1182,18 @@ function transformExpressionStatement(
     if (funcName === 'revert') {
       if (expr.args && expr.args.length > 0) {
         const errorCode = extractErrorCode(expr.args[0], context);
-        return {
+        const result: MoveStatement = {
           kind: 'abort',
           code: errorCode,
         };
+        if (context.errorStyle === 'abort-verbose' && expr.args[0]?.kind === 'literal' && expr.args[0]?.type === 'string') {
+          result.comment = `revert: "${expr.args[0].value}"`;
+        }
+        return result;
       }
       return {
         kind: 'abort',
-        code: { kind: 'identifier', name: 'E_REVERT' },
+        code: wrapErrorCode('E_REVERT', context),
       };
     }
   }
@@ -1035,7 +1216,7 @@ function transformExpressionStatement(
  */
 function extractErrorCode(errorArg: any, context: TranspileContext): MoveExpression {
   if (!errorArg) {
-    return { kind: 'identifier', name: 'E_REQUIRE_FAILED' };
+    return wrapErrorCode('E_REQUIRE_FAILED', context);
   }
 
   // If it's a string literal, try to extract a meaningful error code
@@ -1069,7 +1250,7 @@ function extractErrorCode(errorArg: any, context: TranspileContext): MoveExpress
         if (!context.errorCodes.has(errorCode)) {
           context.errorCodes.set(errorCode, { message: errorArg.value, code: context.errorCodes.size + 1 });
         }
-        return { kind: 'identifier', name: errorCode };
+        return wrapErrorCode(errorCode, context);
       }
     }
 
@@ -1081,17 +1262,17 @@ function extractErrorCode(errorArg: any, context: TranspileContext): MoveExpress
     if (!context.errorCodes.has(constantName)) {
       context.errorCodes.set(constantName, { message: errorArg.value, code: context.errorCodes.size + 1 });
     }
-    return { kind: 'identifier', name: constantName };
+    return wrapErrorCode(constantName, context);
   }
 
   // If it's a custom error, convert to error code
   if (errorArg.kind === 'function_call') {
     const errorName = errorArg.function?.name || 'CustomError';
     const constantName = 'E_' + toScreamingSnakeCase(errorName);
-    return { kind: 'identifier', name: constantName };
+    return wrapErrorCode(constantName, context);
   }
 
-  return { kind: 'identifier', name: 'E_REQUIRE_FAILED' };
+  return wrapErrorCode('E_REQUIRE_FAILED', context);
 }
 
 /**
@@ -1189,6 +1370,16 @@ function transformLiteral(expr: any, context: TranspileContext): MoveExpression 
       return boolResult;
 
     case 'string':
+      // In bytes mode, strings become raw byte vectors
+      if (context.stringType === 'bytes') {
+        return {
+          kind: 'literal',
+          type: 'bytestring',
+          value: `b"${expr.value}"`,
+          inferredType: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } },
+        };
+      }
+      // Default: string::String with utf8 encoding
       context.usedModules.add('std::string');
       return {
         kind: 'call',
@@ -1476,6 +1667,25 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
     }
   }
 
+  // optionalValues='option-type': transform zero-address comparisons to Option checks.
+  // addr == address(0) → option::is_none(&addr)
+  // addr != address(0) → option::is_some(&addr)
+  if (context.optionalValues === 'option-type' && (op === '==' || op === '!=')) {
+    const isLeftZeroAddr = isZeroAddress(left);
+    const isRightZeroAddr = isZeroAddress(right);
+    if (isLeftZeroAddr || isRightZeroAddr) {
+      const addrExpr = isLeftZeroAddr ? right : left;
+      const checkFn = op === '==' ? 'option::is_none' : 'option::is_some';
+      context.usedModules.add('std::option');
+      return {
+        kind: 'call',
+        function: checkFn,
+        args: [{ kind: 'borrow', mutable: false, value: addrExpr }],
+        inferredType: { kind: 'primitive', name: 'bool' },
+      };
+    }
+  }
+
   // Type harmonization for comparisons: Move requires both operands to have the same type.
   // Upcast the narrower operand to the wider type.
   // e.g., (y:u128 != x:u256) → ((y as u256) != x)
@@ -1511,6 +1721,24 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
 
 function isZeroLiteral(expr: any): boolean {
   return expr?.kind === 'literal' && expr?.type === 'number' && (expr?.value === 0 || expr?.value === '0');
+}
+
+/**
+ * Check if an expression represents a zero/null address.
+ * Detects both sentinel form (@0x0 literal) and option-type form (option::none<address>() call).
+ * Used by the optionalValues='option-type' transformation.
+ */
+function isZeroAddress(expr: MoveExpression): boolean {
+  // Sentinel form: @0x0 address literal
+  if (expr.kind === 'literal' && (expr as any).type === 'address') {
+    const val = String((expr as any).value);
+    return val === '@0x0' || val === '@0x0000000000000000000000000000000000000000';
+  }
+  // Option-type form: option::none<address>() call (already transformed by transformTypeConversion)
+  if (expr.kind === 'call' && (expr as any).function === 'option::none') {
+    return true;
+  }
+  return false;
 }
 
 function isBoolVariable(name: string, context: TranspileContext): boolean {
@@ -1678,10 +1906,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
 
     // gasleft() - not supported but provide placeholder
     if (name === 'gasleft') {
-      context.warnings.push({
-        message: 'gasleft() has no equivalent in Move, using max u64',
-        severity: 'warning',
-      });
+      warnOrError(context, 'gasleft() has no equivalent in Move, using max u64');
       return {
         kind: 'literal',
         type: 'number',
@@ -1692,10 +1917,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
 
     // blockhash(blockNumber) - not supported
     if (name === 'blockhash') {
-      context.warnings.push({
-        message: 'blockhash() has no equivalent in Move',
-        severity: 'warning',
-      });
+      warnOrError(context, 'blockhash() has no equivalent in Move');
       return {
         kind: 'call',
         function: 'vector::empty',
@@ -1705,10 +1927,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
 
     // ecrecover - not directly available
     if (name === 'ecrecover') {
-      context.warnings.push({
-        message: 'ecrecover() needs custom cryptographic implementation',
-        severity: 'warning',
-      });
+      warnOrError(context, 'ecrecover() needs custom cryptographic implementation');
       return {
         kind: 'literal',
         type: 'address',
@@ -1873,10 +2092,10 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
 
       if (method === 'contains') {
         if (objIsTable) {
-          context.usedModules.add('aptos_std::table');
+          context.usedModules.add(tableModulePath(context));
           return {
             kind: 'call',
-            function: 'table::contains',
+            function: `${tableModule(context)}::contains`,
             args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
           };
         } else {
@@ -1891,10 +2110,10 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
 
       if (method === 'add') {
         if (objIsTable) {
-          context.usedModules.add('aptos_std::table');
+          context.usedModules.add(tableModulePath(context));
           return {
             kind: 'call',
-            function: 'table::add',
+            function: `${tableModule(context)}::add`,
             args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
           };
         } else {
@@ -1909,10 +2128,10 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
 
       if (method === 'remove') {
         if (objIsTable) {
-          context.usedModules.add('aptos_std::table');
+          context.usedModules.add(tableModulePath(context));
           return {
             kind: 'call',
-            function: 'table::remove',
+            function: `${tableModule(context)}::remove`,
             args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
           };
         } else {
@@ -1926,35 +2145,35 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
       }
 
       if (method === 'get') {
-        context.usedModules.add('aptos_std::table');
+        context.usedModules.add(tableModulePath(context));
         return {
           kind: 'dereference',
           value: {
             kind: 'call',
-            function: 'table::borrow',
+            function: `${tableModule(context)}::borrow`,
             args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
           },
         };
       }
 
       if (method === 'set') {
-        context.usedModules.add('aptos_std::table');
+        context.usedModules.add(tableModulePath(context));
         return {
           kind: 'call',
-          function: 'table::upsert',
+          function: `${tableModule(context)}::upsert`,
           args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
         };
       }
 
       if (method === 'at') {
         if (objIsTable) {
-          context.usedModules.add('aptos_std::table');
+          context.usedModules.add(tableModulePath(context));
           // EnumerableMap.at(index) returns (key, value) tuple — approximate with table access
           return {
             kind: 'dereference',
             value: {
               kind: 'call',
-              function: 'table::borrow',
+              function: `${tableModule(context)}::borrow`,
               args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
             },
           };
@@ -2011,7 +2230,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
         function: 'coin::transfer',
         typeArgs: [{ kind: 'struct', module: 'aptos_framework::aptos_coin', name: 'AptosCoin' }],
         args: [
-          { kind: 'identifier', name: 'account' },
+          { kind: 'identifier', name: signerName(context) },
           obj,
           args[0] || { kind: 'literal', type: 'number', value: 0 },
         ],
@@ -2029,7 +2248,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
         function: 'coin::transfer',
         typeArgs: [{ kind: 'struct', module: 'aptos_framework::aptos_coin', name: 'AptosCoin' }],
         args: [
-          { kind: 'identifier', name: 'account' },
+          { kind: 'identifier', name: signerName(context) },
           obj,
           args[0] || { kind: 'literal', type: 'number', value: 0 },
         ],
@@ -2037,10 +2256,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     }
 
     if (method === 'call') {
-      context.warnings.push({
-        message: 'Low-level call() not supported - use direct module calls',
-        severity: 'warning',
-      });
+      warnOrError(context, 'Low-level call() not supported - use direct module calls');
       return {
         kind: 'tuple',
         elements: [
@@ -2051,10 +2267,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     }
 
     if (method === 'delegatecall') {
-      context.errors.push({
-        message: 'UNSUPPORTED: delegatecall cannot be transpiled to Move - Move has no execution context switching. Consider using the capability pattern instead.',
-        severity: 'error',
-      });
+      warnOrError(context, 'UNSUPPORTED: delegatecall cannot be transpiled to Move - Move has no execution context switching. Consider using the capability pattern instead.');
       return {
         kind: 'tuple',
         elements: [
@@ -2065,10 +2278,7 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     }
 
     if (method === 'staticcall') {
-      context.warnings.push({
-        message: 'staticcall not directly supported - all Move view functions are static',
-        severity: 'warning',
-      });
+      warnOrError(context, 'staticcall not directly supported - all Move view functions are static');
       return {
         kind: 'tuple',
         elements: [
@@ -2146,7 +2356,15 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
 function transformMemberAccess(expr: any, context: TranspileContext): MoveExpression {
   // Check if this is an enum variant access
   if (expr.object?.kind === 'identifier' && context.enums?.has(expr.object.name)) {
-    // This is an enum variant access: EnumName.Variant -> EnumName::Variant
+    if (context.enumStyle === 'u8-constants') {
+      // u8-constants mode: EnumName.Variant -> ENUM_NAME_VARIANT constant
+      const constName = `${toScreamingSnakeCase(expr.object.name)}_${toScreamingSnakeCase(expr.member)}`;
+      return {
+        kind: 'identifier',
+        name: constName,
+      };
+    }
+    // native-enum mode (default): EnumName.Variant -> EnumName::Variant
     return {
       kind: 'identifier',
       name: `${expr.object.name}::${expr.member}`,
@@ -2239,7 +2457,7 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
   if (expr.base?.kind === 'identifier') {
     const stateVar = context.stateVariables.get(expr.base.name);
     if (stateVar?.isMapping) {
-      context.usedModules.add('aptos_std::table');
+      context.usedModules.add(tableModulePath(context));
 
       // Use table::borrow_with_default for safe access
       // Solidity mappings return 0/false/address(0) for missing keys
@@ -2248,7 +2466,7 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow_with_default',
+          function: `${tableModule(context)}::borrow_with_default`,
           args: [
             { kind: 'borrow', mutable: false, value: base },
             index,
@@ -2263,13 +2481,13 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
   if (expr.base?.kind === 'identifier') {
     const localType = context.localVariables.get(toSnakeCase(expr.base.name));
     if (localType?.isMapping) {
-      context.usedModules.add('aptos_std::table');
+      context.usedModules.add(tableModulePath(context));
       const defaultValue = getDefaultForMappingValue(localType, context);
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow_with_default',
+          function: `${tableModule(context)}::borrow_with_default`,
           args: [
             { kind: 'borrow', mutable: false, value: base },
             index,
@@ -2283,14 +2501,14 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
   // Handle nested index access (e.g., nestedMapping[addr1][addr2])
   if (expr.base?.kind === 'index_access') {
     const outerAccess = transformIndexAccess(expr.base, context);
-    context.usedModules.add('aptos_std::table');
+    context.usedModules.add(tableModulePath(context));
 
     // Nested table access - the outer access should give us an inner table
     return {
       kind: 'dereference',
       value: {
         kind: 'call',
-        function: 'table::borrow',
+        function: `${tableModule(context)}::borrow`,
         args: [
           { kind: 'borrow', mutable: false, value: outerAccess },
           index,
@@ -2415,7 +2633,20 @@ function getDefaultForMoveType(moveType: any, irType: any, context: TranspileCon
   switch (moveType.kind) {
     case 'primitive':
       if (moveType.name === 'bool') return { kind: 'literal', type: 'bool', value: false };
-      if (moveType.name === 'address') return { kind: 'literal', type: 'address', value: '@0x0' };
+      if (moveType.name === 'address') {
+        // optionalValues='option-type': default address → option::none<address>()
+        if (context.optionalValues === 'option-type') {
+          context.usedModules.add('std::option');
+          return {
+            kind: 'call',
+            function: 'option::none',
+            typeArgs: [{ kind: 'primitive', name: 'address' }],
+            args: [],
+            inferredType: { kind: 'struct', name: 'Option', module: 'option', typeArgs: [{ kind: 'primitive', name: 'address' }] },
+          };
+        }
+        return { kind: 'literal', type: 'address', value: '@0x0' };
+      }
       return { kind: 'literal', type: 'number', value: 0, suffix: moveType.name };
 
     case 'vector':
@@ -2499,14 +2730,14 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
   if (expr.base?.kind === 'identifier') {
     const stateVar = context.stateVariables.get(expr.base.name);
     if (stateVar?.isMapping) {
-      context.usedModules.add('aptos_std::table');
+      context.usedModules.add(tableModulePath(context));
       // Use table::upsert pattern: add default if key doesn't exist, then borrow_mut
       // This mirrors Solidity's behavior where writing to mapping[key] auto-initializes
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow_mut_with_default',
+          function: `${tableModule(context)}::borrow_mut_with_default`,
           args: [
             { kind: 'borrow', mutable: true, value: base },
             index,
@@ -2521,12 +2752,12 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
   if (expr.base?.kind === 'identifier') {
     const localType = context.localVariables.get(toSnakeCase(expr.base.name));
     if (localType?.isMapping) {
-      context.usedModules.add('aptos_std::table');
+      context.usedModules.add(tableModulePath(context));
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow_mut_with_default',
+          function: `${tableModule(context)}::borrow_mut_with_default`,
           args: [
             { kind: 'borrow', mutable: true, value: base },
             index,
@@ -2540,12 +2771,12 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
   // Handle nested index access for mutation
   if (expr.base?.kind === 'index_access') {
     const outerAccess = transformIndexAccessMutable(expr.base, context);
-    context.usedModules.add('aptos_std::table');
+    context.usedModules.add(tableModulePath(context));
     return {
       kind: 'dereference',
       value: {
         kind: 'call',
-        function: 'table::borrow_mut',
+        function: `${tableModule(context)}::borrow_mut`,
         args: [
           { kind: 'borrow', mutable: true, value: outerAccess },
           index,
@@ -2624,6 +2855,17 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
     if (value.kind === 'literal' && value.type === 'number') {
       const numValue = value.value;
       if (numValue === 0 || numValue === '0') {
+        // optionalValues='option-type': address(0) → option::none<address>()
+        if (context.optionalValues === 'option-type') {
+          context.usedModules.add('std::option');
+          return {
+            kind: 'call',
+            function: 'option::none',
+            typeArgs: [{ kind: 'primitive', name: 'address' }],
+            args: [],
+            inferredType: { kind: 'struct', name: 'Option', module: 'option', typeArgs: [{ kind: 'primitive', name: 'address' }] },
+          };
+        }
         return { kind: 'literal', type: 'address', value: '@0x0', inferredType: { kind: 'primitive', name: 'address' } };
       }
       // For other numeric literals, convert to hex address
@@ -2709,33 +2951,27 @@ function transformTypeConversion(expr: any, context: TranspileContext): MoveExpr
 function transformMsgAccess(expr: any, context: TranspileContext): MoveExpression {
   switch (expr.property) {
     case 'sender':
-      // For view/pure functions, account is already an address parameter
-      // For other functions, account is a &signer that needs address_of
+      // For view/pure functions, the signer param is already an address parameter
+      // For other functions, the signer param is a &signer that needs address_of
       const isViewOrPure = context.currentFunctionStateMutability === 'view' ||
                            context.currentFunctionStateMutability === 'pure';
       if (isViewOrPure) {
-        return { kind: 'identifier', name: 'account' };
+        return { kind: 'identifier', name: signerName(context) };
       } else {
         context.usedModules.add('std::signer');
         return {
           kind: 'call',
           function: 'signer::address_of',
-          args: [{ kind: 'identifier', name: 'account' }],
+          args: [{ kind: 'identifier', name: signerName(context) }],
         };
       }
 
     case 'value':
-      context.warnings.push({
-        message: 'msg.value has no direct equivalent in Move',
-        severity: 'warning',
-      });
+      warnOrError(context, 'msg.value has no direct equivalent in Move');
       return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
 
     default:
-      context.warnings.push({
-        message: `msg.${expr.property} is not supported`,
-        severity: 'warning',
-      });
+      warnOrError(context, `msg.${expr.property} is not supported`);
       return { kind: 'literal', type: 'number', value: 0 };
   }
 }
@@ -2773,10 +3009,7 @@ function transformBlockAccess(expr: any, context: TranspileContext): MoveExpress
       };
 
     default:
-      context.warnings.push({
-        message: `block.${expr.property} is not supported`,
-        severity: 'warning',
-      });
+      warnOrError(context, `block.${expr.property} is not supported`);
       return { kind: 'literal', type: 'number', value: 0 };
   }
 }
@@ -2845,10 +3078,7 @@ function transformTypeMember(expr: any, context: TranspileContext): MoveExpressi
     }
   }
 
-  context.warnings.push({
-    message: `type(${expr.typeName}).${member} not supported`,
-    severity: 'warning',
-  });
+  warnOrError(context, `type(${expr.typeName}).${member} not supported`);
   return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
 }
 
@@ -2856,10 +3086,7 @@ function transformTypeMember(expr: any, context: TranspileContext): MoveExpressi
  * Transform tx.origin, tx.gasprice
  */
 function transformTxAccess(expr: any, context: TranspileContext): MoveExpression {
-  context.warnings.push({
-    message: `tx.${expr.property} is not supported in Move`,
-    severity: 'warning',
-  });
+  warnOrError(context, `tx.${expr.property} is not supported in Move`);
   return { kind: 'literal', type: 'number', value: 0 };
 }
 
@@ -3520,17 +3747,14 @@ function transformERC20Call(
         function: 'coin::transfer',
         typeArgs: [{ kind: 'generic', name: 'CoinType' }],
         args: [
-          { kind: 'identifier', name: 'account' },
+          { kind: 'identifier', name: signerName(context) },
           args[0], // to
           args[1], // amount
         ],
       };
 
     case 'transferFrom':
-      context.warnings.push({
-        message: 'ERC20.transferFrom requires FA transfer_with_ref or alternative pattern',
-        severity: 'warning',
-      });
+      warnOrError(context, 'ERC20.transferFrom requires FA transfer_with_ref or alternative pattern');
       return {
         kind: 'call',
         function: 'coin::transfer_from',
@@ -3543,10 +3767,7 @@ function transformERC20Call(
       };
 
     case 'approve':
-      context.warnings.push({
-        message: 'ERC20.approve not directly supported - use capability pattern',
-        severity: 'warning',
-      });
+      warnOrError(context, 'ERC20.approve not directly supported - use capability pattern');
       return { kind: 'literal', type: 'bool', value: true };
 
     case 'balanceOf':
@@ -3558,10 +3779,7 @@ function transformERC20Call(
       };
 
     case 'allowance':
-      context.warnings.push({
-        message: 'ERC20.allowance not directly supported in Aptos coin',
-        severity: 'warning',
-      });
+      warnOrError(context, 'ERC20.allowance not directly supported in Aptos coin');
       return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
 
     case 'totalSupply':
@@ -3600,7 +3818,7 @@ function transformERC721Call(
         kind: 'call',
         function: 'object::transfer',
         args: [
-          { kind: 'identifier', name: 'account' },
+          { kind: 'identifier', name: signerName(context) },
           args[2], // token_id (object)
           args[1], // to
         ],
@@ -3614,24 +3832,15 @@ function transformERC721Call(
       };
 
     case 'balanceOf':
-      context.warnings.push({
-        message: 'ERC721.balanceOf requires custom implementation in Aptos',
-        severity: 'warning',
-      });
+      warnOrError(context, 'ERC721.balanceOf requires custom implementation in Aptos');
       return { kind: 'literal', type: 'number', value: 0, suffix: 'u64' };
 
     case 'approve':
-      context.warnings.push({
-        message: 'ERC721.approve - use object::generate_linear_transfer_ref',
-        severity: 'warning',
-      });
+      warnOrError(context, 'ERC721.approve - use object::generate_linear_transfer_ref');
       return { kind: 'literal', type: 'bool', value: true };
 
     case 'setApprovalForAll':
-      context.warnings.push({
-        message: 'ERC721.setApprovalForAll not directly supported',
-        severity: 'warning',
-      });
+      warnOrError(context, 'ERC721.setApprovalForAll not directly supported');
       return { kind: 'literal', type: 'bool', value: true };
 
     case 'tokenURI':
@@ -3706,10 +3915,7 @@ function transformUsingForCall(
 
   // Address library: addr.isContract() → (not supported, return false)
   if (method === 'isContract') {
-    context.warnings.push({
-      message: 'address.isContract() not available in Move, using false',
-      severity: 'warning',
-    });
+    warnOrError(context, 'address.isContract() not available in Move, using false');
     return { kind: 'literal', type: 'bool', value: false };
   }
 
@@ -3730,10 +3936,10 @@ function transformUsingForCall(
 
     if (method === 'contains') {
       if (objIsTable) {
-        context.usedModules.add('aptos_std::table');
+        context.usedModules.add(tableModulePath(context));
         return {
           kind: 'call',
-          function: 'table::contains',
+          function: `${tableModule(context)}::contains`,
           args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
         };
       } else {
@@ -3748,10 +3954,10 @@ function transformUsingForCall(
 
     if (method === 'add') {
       if (objIsTable) {
-        context.usedModules.add('aptos_std::table');
+        context.usedModules.add(tableModulePath(context));
         return {
           kind: 'call',
-          function: 'table::add',
+          function: `${tableModule(context)}::add`,
           args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
         };
       } else {
@@ -3766,10 +3972,10 @@ function transformUsingForCall(
 
     if (method === 'remove') {
       if (objIsTable) {
-        context.usedModules.add('aptos_std::table');
+        context.usedModules.add(tableModulePath(context));
         return {
           kind: 'call',
-          function: 'table::remove',
+          function: `${tableModule(context)}::remove`,
           args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
         };
       } else {
@@ -3783,34 +3989,34 @@ function transformUsingForCall(
     }
 
     if (method === 'get') {
-      context.usedModules.add('aptos_std::table');
+      context.usedModules.add(tableModulePath(context));
       return {
         kind: 'dereference',
         value: {
           kind: 'call',
-          function: 'table::borrow',
+          function: `${tableModule(context)}::borrow`,
           args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
         },
       };
     }
 
     if (method === 'set') {
-      context.usedModules.add('aptos_std::table');
+      context.usedModules.add(tableModulePath(context));
       return {
         kind: 'call',
-        function: 'table::upsert',
+        function: `${tableModule(context)}::upsert`,
         args: [{ kind: 'borrow', mutable: true, value: obj }, ...args],
       };
     }
 
     if (method === 'at') {
       if (objIsTable) {
-        context.usedModules.add('aptos_std::table');
+        context.usedModules.add(tableModulePath(context));
         return {
           kind: 'dereference',
           value: {
             kind: 'call',
-            function: 'table::borrow',
+            function: `${tableModule(context)}::borrow`,
             args: [{ kind: 'borrow', mutable: false, value: obj }, ...args],
           },
         };
@@ -3829,10 +4035,10 @@ function transformUsingForCall(
 
     if (method === 'length') {
       if (objIsTable) {
-        context.usedModules.add('aptos_std::table');
+        context.usedModules.add(tableModulePath(context));
         return {
           kind: 'call',
-          function: 'table::length',
+          function: `${tableModule(context)}::length`,
           args: [{ kind: 'borrow', mutable: false, value: obj }],
           inferredType: { kind: 'primitive', name: 'u64' },
         };

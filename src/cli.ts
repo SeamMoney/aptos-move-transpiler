@@ -34,6 +34,28 @@ program
   .option('--compile-check', 'Verify output compiles with aptos move compile (requires Aptos CLI)')
   .option('--specs', 'Generate Move Specification Language (MSL) spec blocks')
   .option('--optimize <level>', 'Parallelization optimization level: low, medium, high', 'low')
+  .option('--strict', 'Strict mode: fail on unsupported patterns instead of emitting stubs')
+  .option('--reentrancy-pattern <pattern>', 'Reentrancy guard pattern: mutex (default), none', 'mutex')
+  .option('--string-type <type>', 'String representation: string (default), bytes', 'string')
+  .option('--inline-functions', 'Mark small private helper functions as inline')
+  .option('--source-comments', 'Include original Solidity source references as comments')
+  .option('--view-behavior <mode>', 'View function handling: annotate (default), skip', 'annotate')
+  .option('--error-style <style>', 'Error translation: abort-codes (default), abort-verbose', 'abort-codes')
+  .option('--enum-style <style>', 'Enum representation: native-enum (default), u8-constants', 'native-enum')
+  .option('--constructor-pattern <pattern>', 'Init pattern: resource-account (default), deployer-direct, named-object', 'resource-account')
+  .option('--internal-visibility <vis>', 'Internal function visibility: public-package (default), public-friend, private', 'public-package')
+  .option('--overflow-behavior <behavior>', 'Arithmetic overflow: abort (default), wrapping', 'abort')
+  .option('--mapping-type <type>', 'Mapping data structure: table (default), smart-table', 'table')
+  .option('--access-control <mode>', 'Access control: inline-assert (default), capability', 'inline-assert')
+  .option('--upgradeability <mode>', 'Upgrade support: immutable (default), resource-account', 'immutable')
+  .option('--optional-values <mode>', 'Nullable values: sentinel (default), option-type', 'sentinel')
+  .option('--call-style <style>', 'Call syntax: module-qualified (default), receiver', 'module-qualified')
+  .option('--event-pattern <pattern>', 'Event emission: native (default), event-handle, none', 'native')
+  .option('--signer-param-name <name>', 'Signer parameter name: account (default), signer', 'account')
+  .option('--no-all-error-constants', 'Only emit referenced error constants (default: emit all)')
+  .option('--error-code-type <type>', 'Error encoding: u64 (default), aptos-error-module', 'u64')
+  .option('--index-notation', 'Use v[i] index notation instead of vector::borrow (Move 2.0+)')
+  .option('--acquires-style <style>', 'Acquires annotations: explicit (default), inferred', 'explicit')
   .action(async (file: string, options: any) => {
     try {
       if (!existsSync(file)) {
@@ -55,6 +77,28 @@ program
         format: options.format || false,
         generateSpecs: options.specs || false,
         optimizationLevel: options.optimize || 'low',
+        strictMode: options.strict || false,
+        reentrancyPattern: options.reentrancyPattern || 'mutex',
+        stringType: options.stringType || 'string',
+        useInlineFunctions: options.inlineFunctions || false,
+        emitSourceComments: options.sourceComments || false,
+        viewFunctionBehavior: options.viewBehavior || 'annotate',
+        errorStyle: options.errorStyle || 'abort-codes',
+        enumStyle: options.enumStyle || 'native-enum',
+        constructorPattern: options.constructorPattern || 'resource-account',
+        internalVisibility: options.internalVisibility || 'public-package',
+        overflowBehavior: options.overflowBehavior || 'abort',
+        mappingType: options.mappingType || 'table',
+        accessControl: options.accessControl || 'inline-assert',
+        upgradeability: options.upgradeability || 'immutable',
+        optionalValues: options.optionalValues || 'sentinel',
+        callStyle: options.callStyle || 'module-qualified',
+        eventPattern: options.eventPattern || 'native',
+        signerParamName: options.signerParamName || 'account',
+        emitAllErrorConstants: options.allErrorConstants !== false,
+        errorCodeType: options.errorCodeType || 'u64',
+        indexNotation: options.indexNotation || false,
+        acquiresStyle: options.acquiresStyle || 'explicit',
       });
 
       if (!result.success) {

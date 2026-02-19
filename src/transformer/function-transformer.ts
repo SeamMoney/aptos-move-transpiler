@@ -6,7 +6,15 @@
 import type { MoveFunction, MoveFunctionParam, MoveStatement, MoveType, MoveVisibility } from '../types/move-ast.js';
 import type { IRFunction, IRConstructor, IRFunctionParam, IRStateVariable, IRStatement, TranspileContext } from '../types/ir.js';
 import { MoveTypes } from '../types/move-ast.js';
-import { transformStatement } from './expression-transformer.js';
+import { transformStatement, wrapErrorCode } from './expression-transformer.js';
+
+/**
+ * Get the configured signer parameter name from context.
+ * Returns 'account' (default) or 'signer' depending on the signerParamName flag.
+ */
+function signerName(context: TranspileContext): string {
+  return context.signerParamName || 'account';
+}
 
 /**
  * Transform a Solidity function to a Move function
@@ -20,7 +28,7 @@ export function transformFunction(
   context.currentFunctionStateMutability = fn.stateMutability;
 
   // Determine visibility
-  const visibility = mapVisibility(fn.visibility, fn.stateMutability);
+  const visibility = mapVisibility(fn.visibility, fn.stateMutability, context.internalVisibility);
 
   // Check if function body uses msg.sender (needed for view functions)
   const usesMsgSender = bodyUsesMsgSender(fn.body);
@@ -39,7 +47,7 @@ export function transformFunction(
   const returnType = transformReturnType(fn.returnParams, context);
 
   // Check if modifiers need state access
-  const modifiersNeedState = modifiersRequireState(fn.modifiers || []);
+  const modifiersNeedState = modifiersRequireState(fn.modifiers || [], context);
 
   // Build the function body in correct order:
   // 1. Borrow state (if needed by modifiers or body)
@@ -88,6 +96,7 @@ export function transformFunction(
         }
       } else {
         // Public function: borrow each needed resource group
+        const borrowAddr = buildStateBorrowAddress(context);
         for (const groupName of allNeeded) {
           const isMut = fnProfile.writesResources.has(groupName);
           const localName = groupNameToLocal(groupName);
@@ -99,7 +108,7 @@ export function transformFunction(
               kind: 'call',
               function: isMut ? 'borrow_global_mut' : 'borrow_global',
               typeArgs: [{ kind: 'struct', name: groupName }],
-              args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
+              args: [borrowAddr],
             },
           });
         }
@@ -120,13 +129,13 @@ export function transformFunction(
         writesPerUser = functionWritesPerUserVar(fn, perUserVarNames);
       }
       if (writesPerUser) {
-        // ensure_user_state(account) — the signer param is always the first param named 'account'
+        // ensure_user_state(signer) — the signer param name is configurable
         fullBody.push({
           kind: 'expression',
           expression: {
             kind: 'call',
             function: 'ensure_user_state',
-            args: [{ kind: 'identifier', name: 'account' }],
+            args: [{ kind: 'identifier', name: signerName(context) }],
           },
         });
       }
@@ -148,6 +157,7 @@ export function transformFunction(
 
     // Add state borrow FIRST (before modifiers) - only for public/external functions
     if (needsState && !receiveStateAsParam) {
+      const borrowAddress = buildStateBorrowAddress(context);
       fullBody.push({
         kind: 'let',
         pattern: 'state',
@@ -156,7 +166,7 @@ export function transformFunction(
           kind: 'call',
           function: needsMutableState ? 'borrow_global_mut' : 'borrow_global',
           typeArgs: [{ kind: 'struct', name: `${context.contractName}State` }],
-          args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
+          args: [borrowAddress],
         },
       });
     }
@@ -171,7 +181,7 @@ export function transformFunction(
       kind: 'let',
       pattern: toSnakeCase(param.name),
       mutable: true,
-      value: getDefaultValueForType(moveType),
+      value: getDefaultValueForType(moveType, context),
     });
     // Add to local variables so assignments know it's already declared
     // Use snake_case name to match how lookupVariableType queries
@@ -269,10 +279,21 @@ export function transformFunction(
     isEntry: shouldBeEntry(fn),
     // Only mark as #[view] if the function actually reads state via borrow_global
     // Pure library functions should NOT be marked #[view]
-    isView: (fn.stateMutability === 'view') && needsState && !(context as any).isLibrary,
+    isView: context.viewFunctionBehavior !== 'skip' && (fn.stateMutability === 'view') && needsState && !(context as any).isLibrary,
     params,
     body: fullBody,
   };
+
+  // Mark private functions with simple bodies as inline when flag is enabled
+  // Criteria: private visibility, no state access, ≤5 statements, not entry
+  if (context.useInlineFunctions && visibility === 'private' && !needsState && !moveFunc.isEntry && fullBody.length <= 5) {
+    moveFunc.isInline = true;
+  }
+
+  // Attach source comment if flag is enabled
+  if (context.emitSourceComments) {
+    moveFunc.sourceComment = `Solidity: ${fn.name}(${(fn.params || []).map((p: any) => p.type?.solidity || '').join(', ')})`;
+  }
 
   if (returnType) {
     moveFunc.returnType = returnType;
@@ -288,11 +309,28 @@ export function transformFunction(
 }
 
 /**
- * Check if any modifiers require state access
+ * Check if any modifiers require state access.
+ * In capability mode, onlyOwner and onlyRole use exists<> which does not need state borrow.
  */
-function modifiersRequireState(modifiers: Array<{ name: string; args?: any[] }>): boolean {
-  const stateModifiers = ['onlyOwner', 'nonReentrant', 'whenNotPaused', 'whenPaused', 'onlyRole'];
-  return modifiers.some(m => stateModifiers.includes(m.name) || m.name.startsWith('only'));
+function modifiersRequireState(
+  modifiers: Array<{ name: string; args?: any[] }>,
+  context: TranspileContext
+): boolean {
+  // Modifiers that always require state access (regardless of accessControl mode)
+  const alwaysStateModifiers = ['nonReentrant', 'whenNotPaused', 'whenPaused'];
+  // Modifiers that only require state in inline-assert mode (not capability mode)
+  const accessControlModifiers = ['onlyOwner', 'onlyRole'];
+
+  return modifiers.some(m => {
+    if (alwaysStateModifiers.includes(m.name)) return true;
+    if (accessControlModifiers.includes(m.name)) {
+      // In capability mode, these use exists<> and don't need state
+      return context.accessControl !== 'capability';
+    }
+    // Generic 'only*' modifiers: assume they need state
+    if (m.name.startsWith('only')) return true;
+    return false;
+  });
 }
 
 /**
@@ -343,6 +381,10 @@ function getModifierPostStatementsForModifier(
   // Built-in modifiers with cleanup
   switch (name) {
     case 'nonReentrant': {
+      // When reentrancyPattern is 'none', skip cleanup
+      if (context.reentrancyPattern === 'none') {
+        return [];
+      }
       // Reset reentrancy status after function body
       const reentrancyObj = resolveStateObject('reentrancy_status', context);
       return [{
@@ -381,6 +423,10 @@ function transformModifier(
       return generateOnlyOwnerCheck(context);
 
     case 'nonReentrant':
+      // When reentrancyPattern is 'none', skip guard (Move ownership prevents reentrancy)
+      if (context.reentrancyPattern === 'none') {
+        return [];
+      }
       return generateReentrancyGuard(context);
 
     case 'whenNotPaused':
@@ -429,6 +475,30 @@ function transformModifier(
 function generateOnlyOwnerCheck(context: TranspileContext): MoveStatement[] {
   context.usedModules.add('std::signer');
 
+  // Capability pattern: assert!(exists<OwnerCapability>(signer::address_of(account)), E_UNAUTHORIZED)
+  if (context.accessControl === 'capability') {
+    return [{
+      kind: 'expression',
+      expression: {
+        kind: 'call',
+        function: 'assert!',
+        args: [
+          {
+            kind: 'call',
+            function: 'exists<OwnerCapability>',
+            args: [{
+              kind: 'call',
+              function: 'signer::address_of',
+              args: [{ kind: 'identifier', name: signerName(context) }],
+            }],
+          },
+          wrapErrorCode('E_UNAUTHORIZED', context),
+        ],
+      },
+    }];
+  }
+
+  // Default inline-assert pattern: assert!(signer::address_of(account) == state.owner, E_UNAUTHORIZED)
   const ownerObj = resolveStateObject('owner', context);
 
   return [{
@@ -443,7 +513,7 @@ function generateOnlyOwnerCheck(context: TranspileContext): MoveStatement[] {
           left: {
             kind: 'call',
             function: 'signer::address_of',
-            args: [{ kind: 'identifier', name: 'account' }],
+            args: [{ kind: 'identifier', name: signerName(context) }],
           },
           right: {
             kind: 'field_access',
@@ -451,7 +521,7 @@ function generateOnlyOwnerCheck(context: TranspileContext): MoveStatement[] {
             field: 'owner',
           },
         },
-        { kind: 'identifier', name: 'E_UNAUTHORIZED' },
+        wrapErrorCode('E_UNAUTHORIZED', context),
       ],
     },
   }];
@@ -481,7 +551,7 @@ function generateReentrancyGuard(context: TranspileContext): MoveStatement[] {
             },
             right: { kind: 'literal', type: 'number', value: 2, suffix: 'u8' },
           },
-          { kind: 'identifier', name: 'E_REENTRANCY' },
+          wrapErrorCode('E_REENTRANCY', context),
         ],
       },
     },
@@ -524,7 +594,7 @@ function generatePausedCheck(requirePaused: boolean, context: TranspileContext):
                 field: 'paused',
               },
             },
-        { kind: 'identifier', name: 'E_PAUSED' },
+        wrapErrorCode('E_PAUSED', context),
       ],
     },
   }];
@@ -535,10 +605,46 @@ function generatePausedCheck(requirePaused: boolean, context: TranspileContext):
  */
 function generateRoleCheck(roleArg: any, context: TranspileContext): MoveStatement[] {
   context.usedModules.add('std::signer');
-  context.usedModules.add('aptos_std::table');
+
+  // Derive the role name for capability struct naming
+  const roleName = roleArg
+    ? String(roleArg.value || roleArg.name || 'ADMIN_ROLE')
+    : 'ADMIN_ROLE';
+
+  // Capability pattern: assert!(exists<RoleCapability>(signer::address_of(account)), E_UNAUTHORIZED)
+  if (context.accessControl === 'capability') {
+    // Convert role name to PascalCase capability struct name
+    // e.g., ADMIN_ROLE -> AdminRoleCapability, MINTER_ROLE -> MinterRoleCapability
+    const capName = roleNameToCapabilityStruct(roleName);
+
+    return [{
+      kind: 'expression',
+      expression: {
+        kind: 'call',
+        function: 'assert!',
+        args: [
+          {
+            kind: 'call',
+            function: `exists<${capName}>`,
+            args: [{
+              kind: 'call',
+              function: 'signer::address_of',
+              args: [{ kind: 'identifier', name: signerName(context) }],
+            }],
+          },
+          wrapErrorCode('E_UNAUTHORIZED', context),
+        ],
+      },
+    }];
+  }
+
+  // Default inline-assert pattern: table::contains check
+  const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+  const tblModPrefix = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+  context.usedModules.add(tblModPath);
 
   const roleExpr = roleArg
-    ? { kind: 'identifier', name: toSnakeCase(String(roleArg.value || roleArg.name || 'ADMIN_ROLE')) }
+    ? { kind: 'identifier', name: toSnakeCase(roleName) }
     : { kind: 'identifier', name: 'ADMIN_ROLE' };
 
   return [{
@@ -549,7 +655,7 @@ function generateRoleCheck(roleArg: any, context: TranspileContext): MoveStateme
       args: [
         {
           kind: 'call',
-          function: 'table::contains',
+          function: `${tblModPrefix}::contains`,
           args: [
             {
               kind: 'borrow',
@@ -563,14 +669,32 @@ function generateRoleCheck(roleArg: any, context: TranspileContext): MoveStateme
             {
               kind: 'call',
               function: 'signer::address_of',
-              args: [{ kind: 'identifier', name: 'account' }],
+              args: [{ kind: 'identifier', name: signerName(context) }],
             },
           ],
         },
-        { kind: 'identifier', name: 'E_UNAUTHORIZED' },
+        wrapErrorCode('E_UNAUTHORIZED', context),
       ],
     },
   }];
+}
+
+/**
+ * Convert a role name (e.g., ADMIN_ROLE, MINTER_ROLE) to a PascalCase capability struct name.
+ * ADMIN_ROLE -> AdminRoleCapability
+ * MINTER_ROLE -> MinterRoleCapability
+ * myRole -> MyRoleCapability
+ */
+function roleNameToCapabilityStruct(roleName: string): string {
+  // Handle SCREAMING_SNAKE_CASE (e.g., ADMIN_ROLE)
+  if (/^[A-Z][A-Z0-9_]*$/.test(roleName)) {
+    const parts = roleName.split('_').filter(Boolean);
+    const pascal = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('');
+    return `${pascal}Capability`;
+  }
+  // Handle camelCase or PascalCase
+  const pascal = roleName.charAt(0).toUpperCase() + roleName.slice(1);
+  return `${pascal}Capability`;
 }
 
 /**
@@ -872,28 +996,81 @@ export function transformConstructor(
       };
     });
 
-  // Add signer_cap field to the struct (resource account pattern)
-  stateFields.push({
-    name: 'signer_cap',
-    value: { kind: 'identifier', name: 'signer_cap' },
-  });
+  const constructorPattern = context.constructorPattern || 'resource-account';
+
+  // Add pattern-specific field to the struct
+  if (constructorPattern === 'resource-account') {
+    stateFields.push({
+      name: 'signer_cap',
+      value: { kind: 'identifier', name: 'signer_cap' },
+    });
+  } else if (constructorPattern === 'named-object') {
+    stateFields.push({
+      name: 'extend_ref',
+      value: { kind: 'identifier', name: 'extend_ref' },
+    });
+  }
+  // deployer-direct: no extra field
 
   const body: MoveStatement[] = [];
 
-  // Create resource account: let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"seed");
-  context.usedModules.add('aptos_framework::account');
-  body.push({
-    kind: 'let',
-    pattern: ['resource_signer', 'signer_cap'],
-    value: {
-      kind: 'call',
-      function: 'account::create_resource_account',
-      args: [
-        { kind: 'identifier', name: 'deployer' },
-        { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
-      ],
-    },
-  });
+  // Generate pattern-specific preamble
+  if (constructorPattern === 'resource-account') {
+    // Create resource account: let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"seed");
+    context.usedModules.add('aptos_framework::account');
+    body.push({
+      kind: 'let',
+      pattern: ['resource_signer', 'signer_cap'],
+      value: {
+        kind: 'call',
+        function: 'account::create_resource_account',
+        args: [
+          { kind: 'identifier', name: 'deployer' },
+          { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+        ],
+      },
+    });
+  } else if (constructorPattern === 'named-object') {
+    // let constructor_ref = object::create_named_object(deployer, b"contract_name");
+    context.usedModules.add('aptos_framework::object');
+    body.push({
+      kind: 'let',
+      pattern: 'constructor_ref',
+      value: {
+        kind: 'call',
+        function: 'object::create_named_object',
+        args: [
+          { kind: 'identifier', name: 'deployer' },
+          { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+        ],
+      },
+    });
+    // let object_signer = object::generate_signer(&constructor_ref);
+    body.push({
+      kind: 'let',
+      pattern: 'object_signer',
+      value: {
+        kind: 'call',
+        function: 'object::generate_signer',
+        args: [
+          { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'constructor_ref' } },
+        ],
+      },
+    });
+    // let extend_ref = object::generate_extend_ref(&constructor_ref);
+    body.push({
+      kind: 'let',
+      pattern: 'extend_ref',
+      value: {
+        kind: 'call',
+        function: 'object::generate_extend_ref',
+        args: [
+          { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'constructor_ref' } },
+        ],
+      },
+    });
+  }
+  // deployer-direct: no preamble needed
 
   // Separate constructor body into:
   // 1. Regular statements (before move_to)
@@ -907,14 +1084,21 @@ export function transformConstructor(
   // Add regular statements (if any)
   body.push(...regularStatements);
 
-  // Add move_to to create the resource (use &resource_signer instead of deployer)
+  // Determine the move_to target based on constructor pattern
+  const moveToTarget = constructorPattern === 'resource-account'
+    ? { kind: 'borrow' as const, mutable: false, value: { kind: 'identifier' as const, name: 'resource_signer' } }
+    : constructorPattern === 'named-object'
+    ? { kind: 'borrow' as const, mutable: false, value: { kind: 'identifier' as const, name: 'object_signer' } }
+    : { kind: 'identifier' as const, name: 'deployer' }; // deployer-direct
+
+  // Add move_to to create the resource
   body.push({
     kind: 'expression',
     expression: {
       kind: 'call',
       function: 'move_to',
       args: [
-        { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
+        moveToTarget as any,
         {
           kind: 'struct',
           name: stateName,
@@ -926,6 +1110,9 @@ export function transformConstructor(
 
   // If there are mapping assignments, borrow state and add them
   if (mappingAssignments.length > 0) {
+    // Build the borrow address based on the constructor pattern
+    const borrowAddress = buildBorrowAddress(constructorPattern, contractName, context);
+
     // Borrow state mutably
     body.push({
       kind: 'let',
@@ -934,13 +1121,7 @@ export function transformConstructor(
         kind: 'call',
         function: 'borrow_global_mut',
         typeArgs: [{ kind: 'struct', name: stateName }],
-        args: [
-          {
-            kind: 'call',
-            function: 'signer::address_of',
-            args: [{ kind: 'identifier', name: 'deployer' }],
-          },
-        ],
+        args: [borrowAddress],
       },
     });
 
@@ -958,6 +1139,37 @@ export function transformConstructor(
     isEntry: hasParams,
     params,
     body,
+  };
+}
+
+/**
+ * Build the borrow address expression based on the constructor pattern.
+ * - resource-account: signer::address_of(deployer)  (state is on resource account, but after move_to we use deployer's address to borrow)
+ * - deployer-direct: signer::address_of(deployer)
+ * - named-object: object::create_object_address(@module_address, b"seed")
+ */
+function buildBorrowAddress(
+  pattern: string,
+  contractName: string,
+  context: TranspileContext
+): any {
+  if (pattern === 'named-object') {
+    context.usedModules.add('aptos_framework::object');
+    return {
+      kind: 'call',
+      function: 'object::create_object_address',
+      args: [
+        { kind: 'literal', type: 'address', value: `@${context.moduleAddress}` },
+        { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+      ],
+    };
+  }
+  // resource-account and deployer-direct both use signer::address_of(deployer)
+  context.usedModules.add('std::signer');
+  return {
+    kind: 'call',
+    function: 'signer::address_of',
+    args: [{ kind: 'identifier', name: 'deployer' }],
   };
 }
 
@@ -994,14 +1206,17 @@ function addReturnVarCasts(stmts: any[], returnVarTypes: Map<string, any>): void
  */
 function mapVisibility(
   visibility: string,
-  stateMutability: string
+  stateMutability: string,
+  internalVisibility?: 'public-package' | 'public-friend' | 'private'
 ): MoveVisibility {
   switch (visibility) {
     case 'public':
     case 'external':
       return 'public';
     case 'internal':
-      return 'public(package)';
+      if (internalVisibility === 'public-friend') return 'public(friend)';
+      if (internalVisibility === 'private') return 'private';
+      return 'public(package)'; // default
     case 'private':
     default:
       return 'private';
@@ -1052,13 +1267,13 @@ function transformParams(
   // Add signer parameter for non-view functions that are public or use msg.sender
   if (stateMutability !== 'view' && stateMutability !== 'pure' && needsSigner) {
     moveParams.push({
-      name: 'account',
+      name: signerName(context),
       type: MoveTypes.ref(MoveTypes.signer()),
     });
   } else if (usesMsgSender) {
     // View/pure functions that use msg.sender need an address parameter
     moveParams.push({
-      name: 'account',
+      name: signerName(context),
       type: MoveTypes.address(),
     });
   }
@@ -1271,6 +1486,7 @@ function transformFunctionBody(
     // Check if we need mutable borrow
     const needsMut = statementsModifyState(statements, context);
     if (needsMut) {
+      const borrowAddr = buildStateBorrowAddress(context);
       moveStatements.push({
         kind: 'let',
         pattern: 'state',
@@ -1279,12 +1495,13 @@ function transformFunctionBody(
           kind: 'call',
           function: 'borrow_global_mut',
           typeArgs: [{ kind: 'struct', name: `${context.contractName}State` }],
-          args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
+          args: [borrowAddr],
         },
       });
     }
   } else if (accessesState(statements, context)) {
     // View function that reads state
+    const borrowAddr = buildStateBorrowAddress(context);
     moveStatements.push({
       kind: 'let',
       pattern: 'state',
@@ -1293,7 +1510,7 @@ function transformFunctionBody(
         kind: 'call',
         function: 'borrow_global',
         typeArgs: [{ kind: 'struct', name: `${context.contractName}State` }],
-        args: [{ kind: 'literal', type: 'address', value: `@${context.moduleAddress}` }],
+        args: [borrowAddr],
       },
     });
   }
@@ -1428,13 +1645,15 @@ function transformMappingAssignmentForConstructor(
   // Transform the value
   const value = transformConstructorExpression(stmt.value, context);
 
-  // Generate table::add call
-  context.usedModules.add('aptos_std::table');
+  // Generate table::add or smart_table::add call
+  const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+  const tblModPrefix = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+  context.usedModules.add(tblModPath);
   return {
     kind: 'expression',
     expression: {
       kind: 'call',
-      function: 'table::add',
+      function: `${tblModPrefix}::add`,
       args: [
         {
           kind: 'borrow',
@@ -1878,10 +2097,12 @@ function getDefaultValue(
   context: TranspileContext
 ): any {
   if (variable.isMapping) {
-    context.usedModules.add('aptos_std::table');
+    const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
+    const tblModPrefix = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+    context.usedModules.add(tblModPath);
     return {
       kind: 'call',
-      function: 'table::new',
+      function: `${tblModPrefix}::new`,
       args: [],
     };
   }
@@ -1905,6 +2126,11 @@ function getDefaultValue(
         case 'bool':
           return { kind: 'literal', type: 'bool', value: false };
         case 'address':
+          // optionalValues='option-type': default address → option::none<address>()
+          if (context.optionalValues === 'option-type') {
+            context.usedModules.add('std::option');
+            return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
+          }
           return { kind: 'literal', type: 'address', value: '@0x0' };
         default:
           return { kind: 'literal', type: 'number', value: 0 };
@@ -1921,7 +2147,7 @@ function getDefaultValue(
 /**
  * Get default value for a Move type
  */
-function getDefaultValueForType(moveType: any): any {
+function getDefaultValueForType(moveType: any, context?: TranspileContext): any {
   if (!moveType) {
     return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
   }
@@ -1932,6 +2158,11 @@ function getDefaultValueForType(moveType: any): any {
         case 'bool':
           return { kind: 'literal', type: 'bool', value: false };
         case 'address':
+          // optionalValues='option-type': default address → option::none<address>()
+          if (context?.optionalValues === 'option-type') {
+            context.usedModules.add('std::option');
+            return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
+          }
           return { kind: 'literal', type: 'address', value: '@0x0' };
         default:
           // Numeric types (u8, u64, u128, u256, etc.)
@@ -1950,6 +2181,28 @@ function getDefaultValueForType(moveType: any): any {
 /**
  * Convert to snake_case
  */
+/**
+ * Build the address expression used for borrow_global/borrow_global_mut calls.
+ * - resource-account: @module_address (state stored at resource account, address is the module address)
+ * - deployer-direct: @module_address (state stored at deployer, which is the module publisher address)
+ * - named-object: object::create_object_address(@module_address, b"seed") (state on named object)
+ */
+function buildStateBorrowAddress(context: TranspileContext): any {
+  if (context.constructorPattern === 'named-object') {
+    context.usedModules.add('aptos_framework::object');
+    return {
+      kind: 'call',
+      function: 'object::create_object_address',
+      args: [
+        { kind: 'literal', type: 'address', value: `@${context.moduleAddress}` },
+        { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(context.contractName)}"` },
+      ],
+    };
+  }
+  // resource-account and deployer-direct both use @module_address
+  return { kind: 'literal', type: 'address', value: `@${context.moduleAddress}` };
+}
+
 /**
  * Resolve which local variable holds a given state variable.
  * Returns 'state' for low optimization, or the appropriate group local name
