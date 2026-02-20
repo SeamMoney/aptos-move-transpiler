@@ -181,12 +181,67 @@ export interface TranspileOutput {
   warnings: string[];
 }
 
+const EVM_COMPAT_MODULE_NAME = 'evm_compat';
+const EVM_COMPAT_USE_PATH = 'transpiler::evm_compat';
+
+// Embedded helper module so published builds don't depend on source-file reads.
+const EVM_COMPAT_MODULE_SOURCE = `module transpiler::evm_compat {
+    use std::vector;
+    use aptos_std::bcs;
+    use aptos_std::from_bcs;
+
+    public fun address_to_u256(addr: address): u256 {
+        let bytes = bcs::to_bytes(&addr);
+        bytes_to_u256(bytes)
+    }
+
+    fun bytes_to_u256(bytes: vector<u8>): u256 {
+        let len = vector::length(&bytes);
+        let value: u256 = 0;
+        let i = 0;
+        while (i < len && i < 32) {
+            value = (value << 8) | (*vector::borrow(&bytes, i) as u256);
+            i = i + 1;
+        };
+        value
+    }
+
+    public fun to_address(value: u256): address {
+        let bytes = bcs::to_bytes(&value);
+        let addr_bytes = vector::empty<u8>();
+        let len = vector::length(&bytes);
+        let start = if (len > 32) { len - 32 } else { 0 };
+        let i = start;
+        while (i < len) {
+            vector::push_back(&mut addr_bytes, *vector::borrow(&bytes, i));
+            i = i + 1;
+        };
+        while (vector::length(&addr_bytes) < 32) {
+            vector::push_back(&mut addr_bytes, 0u8);
+        };
+        from_bcs::to_address(addr_bytes)
+    }
+}
+`;
+
+function moduleUsesEvmCompat(module: MoveModule): boolean {
+  return module.uses.some(use => use.module === EVM_COMPAT_USE_PATH);
+}
+
 /**
  * Transpile Solidity source code to Move
  */
 export function transpile(
   source: string,
   options: TranspileOptions = {}
+): TranspileOutput {
+  return transpileInternal(source, options);
+}
+
+function transpileInternal(
+  source: string,
+  options: TranspileOptions,
+  targetContractName?: string
 ): TranspileOutput {
   const {
     moduleAddress = '0x1',
@@ -236,6 +291,8 @@ export function transpile(
 
   // Track if any module uses Digital Assets (for Move.toml dependencies)
   let usesTokenObjects = false;
+  // Track if any generated module references transpiler::evm_compat helpers.
+  let usesEvmCompat = false;
 
   // Parse Solidity
   const parseResult = parseSolidity(source);
@@ -257,6 +314,17 @@ export function transpile(
     return output;
   }
 
+  if (targetContractName) {
+    const targetContract = contracts.find(
+      c => c.name === targetContractName && c.kind !== 'interface'
+    );
+    if (!targetContract) {
+      output.success = false;
+      output.errors.push(`Contract '${targetContractName}' not found`);
+      return output;
+    }
+  }
+
   // Build IR for all contracts first (needed for inheritance flattening)
   const allContractsIR = new Map<string, ReturnType<typeof contractToIR>>();
   for (const contract of contracts) {
@@ -264,8 +332,10 @@ export function transpile(
     try {
       allContractsIR.set(contract.name, contractToIR(contract));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      output.warnings.push(`Could not parse ${contract.name} for inheritance: ${message}`);
+      if (!targetContractName || contract.name === targetContractName) {
+        const message = error instanceof Error ? error.message : String(error);
+        output.warnings.push(`Could not parse ${contract.name} for inheritance: ${message}`);
+      }
     }
   }
 
@@ -289,9 +359,15 @@ export function transpile(
 
   // Transpile each contract
   for (const contract of contracts) {
+    if (targetContractName && contract.name !== targetContractName) {
+      continue;
+    }
+
     // Skip interfaces for now (they don't generate modules)
     if (contract.kind === 'interface') {
-      output.warnings.push(`Skipping interface: ${contract.name}`);
+      if (!targetContractName) {
+        output.warnings.push(`Skipping interface: ${contract.name}`);
+      }
       continue;
     }
 
@@ -411,6 +487,8 @@ export function transpile(
           ast: result.module,
         });
 
+        usesEvmCompat = usesEvmCompat || moduleUsesEvmCompat(result.module);
+
         // Add warnings
         output.warnings.push(...result.warnings.map(w => w.message));
       }
@@ -421,10 +499,36 @@ export function transpile(
     }
   }
 
+  if (usesEvmCompat) {
+    const helperNameCollision = output.modules.some(
+      module => module.name === EVM_COMPAT_MODULE_NAME
+    );
+    if (helperNameCollision) {
+      output.errors.push(
+        "Helper module name conflict: generated source includes a module named 'evm_compat', " +
+        "which collides with required transpiler helper 'transpiler::evm_compat'. " +
+        "Rename the Solidity contract/module or avoid address/u256 conversion helpers."
+      );
+      output.success = false;
+    } else {
+      let helperCode = EVM_COMPAT_MODULE_SOURCE;
+      if (format) {
+        const fmtResult = formatMoveCode(helperCode, formatOptions);
+        if (fmtResult.formatted) helperCode = fmtResult.code;
+      }
+      output.modules.push({
+        name: EVM_COMPAT_MODULE_NAME,
+        code: helperCode,
+        ast: {} as MoveModule,
+      });
+    }
+  }
+
   // Generate Move.toml if requested
   if (generateToml && output.modules.length > 0) {
     output.moveToml = generateMoveToml(packageName, moduleAddress, {
       includeTokenObjects: usesTokenObjects,
+      includeEvmCompat: usesEvmCompat,
     });
   }
 
@@ -439,40 +543,7 @@ export function transpileContract(
   contractName: string,
   options: TranspileOptions = {}
 ): TranspileOutput {
-  const parseResult = parseSolidity(source);
-
-  if (!parseResult.success || !parseResult.ast) {
-    return {
-      success: false,
-      modules: [],
-      errors: parseResult.errors.map(e => e.message),
-      warnings: [],
-    };
-  }
-
-  const contracts = extractContracts(parseResult.ast);
-  const contract = contracts.find(c => c.name === contractName);
-
-  if (!contract) {
-    return {
-      success: false,
-      modules: [],
-      errors: [`Contract '${contractName}' not found`],
-      warnings: [],
-    };
-  }
-
-  // Create a new source with just this contract
-  // For now, we'll just use the full source and filter
-  const output = transpile(source, options);
-
-  return {
-    ...output,
-    modules: output.modules.filter(m =>
-      m.name === contractName.toLowerCase() ||
-      m.name === toSnakeCase(contractName)
-    ),
-  };
+  return transpileInternal(source, options, contractName);
 }
 
 /**

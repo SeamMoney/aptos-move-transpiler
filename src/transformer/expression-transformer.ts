@@ -2350,13 +2350,27 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
     }
   }
 
-  // If calling an internal/private function that takes state, append state arg
-  // This prevents double mutable borrow - internal functions receive state as param
   if (funcName && funcName !== 'unknown') {
     const originalName = expr.function?.name;
-    if (originalName && isInternalStateFunction(originalName, context)) {
-      args.push({ kind: 'identifier', name: 'state' });
+    if (originalName) {
+      const internalInfo = getInternalFunctionCallInfo(originalName, context);
+      if (internalInfo) {
+        // Internal helper needs signer/address propagated as the first argument.
+        if (internalInfo.signerParamKind !== 'none') {
+          const signerArg = buildSignerArgForInternalCall(internalInfo.signerParamKind, context);
+          if (signerArg) args.unshift(signerArg);
+        }
+        // Internal helper accesses state via trailing `state` parameter.
+        if (internalInfo.accessesState) {
+          args.push({ kind: 'identifier', name: 'state' });
+        }
+      }
     }
+  }
+
+  // In strict mode, surface unresolved direct identifier calls at transpile time.
+  if (expr.function?.kind === 'identifier' && funcName && !isKnownCallable(funcName, context)) {
+    warnOrError(context, `Unresolved function call: ${funcName}`);
   }
 
   // Look up return type from function signature registry
@@ -4153,32 +4167,87 @@ function transformUsingForCall(
 }
 
 /**
- * Check if a function is an internal/private function that accesses state.
- * These functions receive state as a parameter to avoid double mutable borrow.
+ * Get internal-call metadata from function registry.
  */
-function isInternalStateFunction(name: string, context: TranspileContext): boolean {
-  // Libraries have no state, so no function in a library receives state as param
-  if ((context as any).isLibrary) return false;
+function getInternalFunctionCallInfo(
+  name: string,
+  context: TranspileContext
+): { accessesState: boolean; signerParamKind: 'none' | 'signer-ref' | 'address' } | null {
+  if ((context as any).isLibrary) return null;
+  const registry = (context as any).functionRegistry as Map<string, {
+    visibility: string;
+    accessesState: boolean;
+    signerParamKind: 'none' | 'signer-ref' | 'address';
+  }> | undefined;
+  if (!registry) return null;
 
-  // Look up the function in the contract's IR to check visibility
-  const contractFunctions = context.inheritedContracts?.values();
-  if (!contractFunctions) {
-    // Check if it's in the stateVariables context (heuristic: if the function
-    // name matches an internal function we've seen, assume it accesses state)
-    // A more precise approach would store function metadata in context
-    return false;
-  }
+  const normalized = toSnakeCase(name);
+  const info = registry.get(name) || registry.get(normalized);
+  if (!info) return null;
+  if (info.visibility !== 'private' && info.visibility !== 'internal') return null;
 
-  // If we have a functionRegistry in context, use it
-  const registry = (context as any).functionRegistry as Map<string, { visibility: string; accessesState: boolean }> | undefined;
-  if (registry) {
-    const info = registry.get(name);
-    if (info) {
-      return (info.visibility === 'private' || info.visibility === 'internal') && info.accessesState;
+  return {
+    accessesState: info.accessesState,
+    signerParamKind: info.signerParamKind || 'none',
+  };
+}
+
+/**
+ * Determine if a direct function identifier is known/resolvable at transpile time.
+ */
+function isKnownCallable(name: string, context: TranspileContext): boolean {
+  if (name.includes('::')) return true;
+  if (context.functionSignatures?.has(name)) return true;
+  // Builtins and compiler intrinsics that may not appear in functionSignatures.
+  const known = new Set([
+    'assert!',
+    'abort',
+    'move_to',
+    'move_from',
+    'borrow_global',
+    'borrow_global_mut',
+    'exists',
+    'range',
+    'vector::empty',
+  ]);
+  return known.has(name);
+}
+
+/**
+ * Build the argument used to satisfy propagated signer/address parameters
+ * on internal helper calls.
+ */
+function buildSignerArgForInternalCall(
+  expected: 'signer-ref' | 'address',
+  context: TranspileContext
+): MoveExpression | null {
+  const currentKind = (context as any).currentFunctionSignerKind as ('none' | 'signer-ref' | 'address' | undefined) || 'none';
+
+  if (expected === 'signer-ref') {
+    if (currentKind === 'signer-ref') {
+      return { kind: 'identifier', name: signerName(context) };
     }
+    warnOrError(context, 'Internal call requires signer context but caller has no signer parameter');
+    return { kind: 'identifier', name: signerName(context) };
   }
 
-  return false;
+  if (expected === 'address') {
+    if (currentKind === 'address') {
+      return { kind: 'identifier', name: signerName(context) };
+    }
+    if (currentKind === 'signer-ref') {
+      context.usedModules.add('std::signer');
+      return {
+        kind: 'call',
+        function: 'signer::address_of',
+        args: [{ kind: 'identifier', name: signerName(context) }],
+      };
+    }
+    warnOrError(context, 'Internal call requires address context but caller has no signer/address parameter');
+    return { kind: 'literal', type: 'address', value: '@0x0' };
+  }
+
+  return null;
 }
 
 /**

@@ -13,7 +13,6 @@ import { transformFunction, transformConstructor } from './function-transformer.
 import { transformEvent } from './event-transformer.js';
 import { createIRType } from '../mapper/type-mapper.js';
 import { solidityStatementToIR, solidityExpressionToIR, wrapErrorCode } from './expression-transformer.js';
-import { createHash } from 'node:crypto';
 
 /**
  * Get the configured signer parameter name from context.
@@ -346,7 +345,10 @@ function stmtReferencesAny(stmt: any, names: Set<string>): boolean {
  * Move doesn't support function overloading, so rename duplicates.
  * E.g., two `mint` functions become `mint` and `mint_address_u256`.
  */
-function deduplicateOverloadedFunctions(functions: IRFunction[]): IRFunction[] {
+function deduplicateOverloadedFunctions(functions: IRFunction[]): {
+  functions: IRFunction[];
+  hasAmbiguousArityOverloads: boolean;
+} {
   const nameCounts = new Map<string, number>();
   for (const fn of functions) {
     nameCounts.set(fn.name, (nameCounts.get(fn.name) || 0) + 1);
@@ -358,22 +360,50 @@ function deduplicateOverloadedFunctions(functions: IRFunction[]): IRFunction[] {
     if (count > 1) duplicateNames.add(name);
   }
 
-  if (duplicateNames.size === 0) return functions;
+  if (duplicateNames.size === 0) {
+    return {
+      functions,
+      hasAmbiguousArityOverloads: false,
+    };
+  }
+
+  // Count overloads by arity so we only rewrite call sites when arity is unique.
+  const arityCounts = new Map<string, Map<number, number>>();
+  for (const fn of functions) {
+    let byArity = arityCounts.get(fn.name);
+    if (!byArity) {
+      byArity = new Map<number, number>();
+      arityCounts.set(fn.name, byArity);
+    }
+    const arity = fn.params.length;
+    byArity.set(arity, (byArity.get(arity) || 0) + 1);
+  }
 
   const result: IRFunction[] = [];
   const usedNames = new Set<string>();
+  const callRewriteMap = new Map<string, string>(); // key: originalName#arity -> dedupedName
+  let hasAmbiguousArityOverloads = false;
 
   for (const fn of functions) {
+    const originalName = fn.name;
+    const arity = fn.params.length;
     if (!duplicateNames.has(fn.name)) {
-      result.push(fn);
+      result.push({ ...fn, originalName } as any);
       usedNames.add(fn.name);
+      callRewriteMap.set(`${originalName}#${arity}`, fn.name);
       continue;
     }
 
     // First occurrence keeps the original name
     if (!usedNames.has(fn.name)) {
       usedNames.add(fn.name);
-      result.push(fn);
+      result.push({ ...fn, originalName } as any);
+      const arityCount = arityCounts.get(originalName)?.get(arity) || 0;
+      if (arityCount === 1) {
+        callRewriteMap.set(`${originalName}#${arity}`, fn.name);
+      } else {
+        hasAmbiguousArityOverloads = true;
+      }
       continue;
     }
 
@@ -401,10 +431,251 @@ function deduplicateOverloadedFunctions(functions: IRFunction[]): IRFunction[] {
     }
     usedNames.add(newName);
 
-    result.push({ ...fn, name: newName });
+    const arityCount = arityCounts.get(originalName)?.get(arity) || 0;
+    if (arityCount === 1) {
+      callRewriteMap.set(`${originalName}#${arity}`, newName);
+    } else {
+      hasAmbiguousArityOverloads = true;
+    }
+
+    result.push({ ...fn, name: newName, originalName } as any);
   }
 
-  return result;
+  const rewrittenFunctions = result.map(fn => ({
+    ...fn,
+    body: rewriteFunctionCallsInStatements(fn.body as any[], callRewriteMap),
+  })) as IRFunction[];
+
+  return {
+    functions: rewrittenFunctions,
+    hasAmbiguousArityOverloads,
+  };
+}
+
+function rewriteFunctionCallsInStatements(statements: any[], rewriteMap: Map<string, string>): any[] {
+  return (statements || []).map(stmt => rewriteFunctionCallsInStatement(stmt, rewriteMap));
+}
+
+function rewriteFunctionCallsInStatement(stmt: any, rewriteMap: Map<string, string>): any {
+  if (!stmt || typeof stmt !== 'object') return stmt;
+  const out: any = { ...stmt };
+
+  switch (stmt.kind) {
+    case 'variable_declaration':
+      if (stmt.initialValue) out.initialValue = rewriteFunctionCallsInExpression(stmt.initialValue, rewriteMap);
+      break;
+    case 'assignment':
+      out.target = rewriteFunctionCallsInExpression(stmt.target, rewriteMap);
+      out.value = rewriteFunctionCallsInExpression(stmt.value, rewriteMap);
+      break;
+    case 'expression':
+      out.expression = rewriteFunctionCallsInExpression(stmt.expression, rewriteMap);
+      break;
+    case 'if':
+      out.condition = rewriteFunctionCallsInExpression(stmt.condition, rewriteMap);
+      out.thenBlock = rewriteFunctionCallsInStatements(stmt.thenBlock || [], rewriteMap);
+      if (stmt.elseBlock) out.elseBlock = rewriteFunctionCallsInStatements(stmt.elseBlock, rewriteMap);
+      break;
+    case 'for':
+      if (stmt.init) out.init = rewriteFunctionCallsInStatement(stmt.init, rewriteMap);
+      if (stmt.condition) out.condition = rewriteFunctionCallsInExpression(stmt.condition, rewriteMap);
+      if (stmt.update) out.update = rewriteFunctionCallsInExpression(stmt.update, rewriteMap);
+      out.body = rewriteFunctionCallsInStatements(stmt.body || [], rewriteMap);
+      break;
+    case 'while':
+    case 'do_while':
+      out.condition = rewriteFunctionCallsInExpression(stmt.condition, rewriteMap);
+      out.body = rewriteFunctionCallsInStatements(stmt.body || [], rewriteMap);
+      break;
+    case 'return':
+      if (stmt.value) out.value = rewriteFunctionCallsInExpression(stmt.value, rewriteMap);
+      break;
+    case 'emit':
+      out.args = (stmt.args || []).map((a: any) => rewriteFunctionCallsInExpression(a, rewriteMap));
+      break;
+    case 'require':
+      out.condition = rewriteFunctionCallsInExpression(stmt.condition, rewriteMap);
+      if (stmt.error) out.error = rewriteFunctionCallsInExpression(stmt.error, rewriteMap);
+      break;
+    case 'revert':
+      if (stmt.error) out.error = rewriteFunctionCallsInExpression(stmt.error, rewriteMap);
+      out.args = (stmt.args || []).map((a: any) => rewriteFunctionCallsInExpression(a, rewriteMap));
+      break;
+    case 'block':
+      out.statements = rewriteFunctionCallsInStatements(stmt.statements || [], rewriteMap);
+      break;
+    case 'unchecked':
+      out.statements = rewriteFunctionCallsInStatements(stmt.statements || [], rewriteMap);
+      break;
+    case 'try':
+      out.expression = rewriteFunctionCallsInExpression(stmt.expression, rewriteMap);
+      out.body = rewriteFunctionCallsInStatements(stmt.body || [], rewriteMap);
+      if (stmt.catchClauses) {
+        out.catchClauses = stmt.catchClauses.map((c: any) => ({
+          ...c,
+          body: rewriteFunctionCallsInStatements(c.body || [], rewriteMap),
+        }));
+      }
+      break;
+  }
+
+  return out;
+}
+
+function rewriteFunctionCallsInExpression(expr: any, rewriteMap: Map<string, string>): any {
+  if (!expr || typeof expr !== 'object') return expr;
+
+  // Rewrite direct identifier calls by original name + arity.
+  if (expr.kind === 'function_call' && expr.function?.kind === 'identifier') {
+    const arity = (expr.args || []).length;
+    const key = `${expr.function.name}#${arity}`;
+    const mapped = rewriteMap.get(key);
+    if (mapped) {
+      return {
+        ...expr,
+        function: { ...expr.function, name: mapped },
+        args: (expr.args || []).map((a: any) => rewriteFunctionCallsInExpression(a, rewriteMap)),
+      };
+    }
+  }
+
+  const out: any = Array.isArray(expr) ? [] : { ...expr };
+  for (const key of Object.keys(out)) {
+    const value = out[key];
+    if (Array.isArray(value)) {
+      out[key] = value.map(v =>
+        (v && typeof v === 'object')
+          ? rewriteFunctionCallsInExpression(v, rewriteMap)
+          : v
+      );
+    } else if (value && typeof value === 'object') {
+      out[key] = rewriteFunctionCallsInExpression(value, rewriteMap);
+    }
+  }
+  return out;
+}
+
+function expressionUsesMsgSender(expr: any): boolean {
+  if (!expr) return false;
+  if (expr.kind === 'msg_access' && expr.property === 'sender') return true;
+  if (expr.kind === 'binary') return expressionUsesMsgSender(expr.left) || expressionUsesMsgSender(expr.right);
+  if (expr.kind === 'unary') return expressionUsesMsgSender(expr.operand);
+  if (expr.kind === 'function_call') return expressionUsesMsgSender(expr.function) || (expr.args || []).some(expressionUsesMsgSender);
+  if (expr.kind === 'member_access') return expressionUsesMsgSender(expr.object);
+  if (expr.kind === 'index_access') return expressionUsesMsgSender(expr.base) || expressionUsesMsgSender(expr.index);
+  if (expr.kind === 'conditional') {
+    return expressionUsesMsgSender(expr.condition) ||
+      expressionUsesMsgSender(expr.trueExpression) ||
+      expressionUsesMsgSender(expr.falseExpression);
+  }
+  if (expr.kind === 'tuple') return (expr.elements || []).some(expressionUsesMsgSender);
+  if (expr.kind === 'type_conversion') return expressionUsesMsgSender(expr.expression) || expressionUsesMsgSender(expr.value);
+  return false;
+}
+
+function functionUsesMsgSender(fn: IRFunction): boolean {
+  const stmtUses = (stmt: any): boolean => {
+    if (!stmt) return false;
+    switch (stmt.kind) {
+      case 'variable_declaration': return stmt.initialValue ? expressionUsesMsgSender(stmt.initialValue) : false;
+      case 'assignment': return expressionUsesMsgSender(stmt.target) || expressionUsesMsgSender(stmt.value);
+      case 'expression': return expressionUsesMsgSender(stmt.expression);
+      case 'if': return expressionUsesMsgSender(stmt.condition) || (stmt.thenBlock || []).some(stmtUses) || (stmt.elseBlock || []).some(stmtUses);
+      case 'for': return (stmt.init ? stmtUses(stmt.init) : false) || expressionUsesMsgSender(stmt.condition) || expressionUsesMsgSender(stmt.update) || (stmt.body || []).some(stmtUses);
+      case 'while':
+      case 'do_while': return expressionUsesMsgSender(stmt.condition) || (stmt.body || []).some(stmtUses);
+      case 'return': return stmt.value ? expressionUsesMsgSender(stmt.value) : false;
+      case 'emit': return (stmt.args || []).some(expressionUsesMsgSender);
+      case 'require': return expressionUsesMsgSender(stmt.condition) || expressionUsesMsgSender(stmt.error);
+      case 'revert': return expressionUsesMsgSender(stmt.error) || (stmt.args || []).some(expressionUsesMsgSender);
+      case 'block': return (stmt.statements || []).some(stmtUses);
+      case 'unchecked': return (stmt.statements || []).some(stmtUses);
+      case 'try': return expressionUsesMsgSender(stmt.expression) || (stmt.body || []).some(stmtUses) || (stmt.catchClauses || []).some((c: any) => (c.body || []).some(stmtUses));
+      default: return false;
+    }
+  };
+  return (fn.body || []).some(stmtUses);
+}
+
+function mergeSignerNeed(
+  a: 'none' | 'signer-ref' | 'address',
+  b: 'none' | 'signer-ref' | 'address'
+): 'none' | 'signer-ref' | 'address' {
+  if (a === 'signer-ref' || b === 'signer-ref') return 'signer-ref';
+  if (a === 'address' || b === 'address') return 'address';
+  return 'none';
+}
+
+function collectCalledFunctionNames(statements: any[]): Set<string> {
+  const calls = new Set<string>();
+
+  const scanExpr = (expr: any): void => {
+    if (!expr) return;
+    if (expr.kind === 'function_call' && expr.function?.kind === 'identifier') {
+      calls.add(expr.function.name);
+      for (const arg of expr.args || []) scanExpr(arg);
+      scanExpr(expr.function);
+      return;
+    }
+    if (Array.isArray(expr)) {
+      for (const e of expr) scanExpr(e);
+      return;
+    }
+    if (typeof expr === 'object') {
+      for (const key of Object.keys(expr)) {
+        if (key === 'kind') continue;
+        const value = expr[key];
+        if (value && typeof value === 'object') scanExpr(value);
+      }
+    }
+  };
+
+  const scanStmt = (stmt: any): void => {
+    if (!stmt) return;
+    switch (stmt.kind) {
+      case 'variable_declaration': scanExpr(stmt.initialValue); break;
+      case 'assignment': scanExpr(stmt.target); scanExpr(stmt.value); break;
+      case 'expression': scanExpr(stmt.expression); break;
+      case 'if':
+        scanExpr(stmt.condition);
+        for (const s of stmt.thenBlock || []) scanStmt(s);
+        for (const s of stmt.elseBlock || []) scanStmt(s);
+        break;
+      case 'for':
+        if (stmt.init) scanStmt(stmt.init);
+        scanExpr(stmt.condition);
+        scanExpr(stmt.update);
+        for (const s of stmt.body || []) scanStmt(s);
+        break;
+      case 'while':
+      case 'do_while':
+      case 'loop':
+        scanExpr(stmt.condition);
+        for (const s of stmt.body || []) scanStmt(s);
+        break;
+      case 'return': scanExpr(stmt.value); break;
+      case 'emit': for (const a of stmt.args || []) scanExpr(a); break;
+      case 'require': scanExpr(stmt.condition); scanExpr(stmt.error); break;
+      case 'revert':
+        scanExpr(stmt.error);
+        for (const a of stmt.args || []) scanExpr(a);
+        break;
+      case 'block':
+      case 'unchecked':
+        for (const s of stmt.statements || []) scanStmt(s);
+        break;
+      case 'try':
+        scanExpr(stmt.expression);
+        for (const s of stmt.body || []) scanStmt(s);
+        for (const c of stmt.catchClauses || []) {
+          for (const s of c.body || []) scanStmt(s);
+        }
+        break;
+    }
+  };
+
+  for (const stmt of statements || []) scanStmt(stmt);
+  return calls;
 }
 
 /**
@@ -444,16 +715,61 @@ export function irToMoveModule(
 ): TranspileResult {
   // Flatten inheritance if parent contracts are provided
   const flattenedIR = allContracts ? flattenInheritance(ir, allContracts) : ir;
+  const dedupResult = deduplicateOverloadedFunctions(flattenedIR.functions);
+  const deduplicatedFunctions = dedupResult.functions;
 
   // Build function registry for detecting internal state-accessing functions
   // This enables the double-mutable-borrow prevention strategy
   const stateVarNames = new Set(flattenedIR.stateVariables.map(v => v.name));
-  const functionRegistry = new Map<string, { visibility: string; accessesState: boolean }>();
-  for (const fn of flattenedIR.functions) {
+  const functionByName = new Map<string, IRFunction>();
+  const directSignerNeeds = new Map<string, 'none' | 'signer-ref' | 'address'>();
+  const directCalls = new Map<string, Set<string>>();
+  for (const fn of deduplicatedFunctions) {
+    functionByName.set(fn.name, fn);
+    directCalls.set(fn.name, collectCalledFunctionNames(fn.body));
+    const usesMsgSender = functionUsesMsgSender(fn);
+    directSignerNeeds.set(
+      fn.name,
+      usesMsgSender
+        ? ((fn.stateMutability === 'view' || fn.stateMutability === 'pure') ? 'address' : 'signer-ref')
+        : 'none'
+    );
+  }
+
+  // Propagate signer requirements through internal call graph.
+  const propagatedSignerNeeds = new Map<string, 'none' | 'signer-ref' | 'address'>(directSignerNeeds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const fn of deduplicatedFunctions) {
+      const fnName = fn.name;
+      let currentNeed = propagatedSignerNeeds.get(fnName) || 'none';
+      for (const callee of directCalls.get(fnName) || []) {
+        const calleeFn = functionByName.get(callee);
+        if (!calleeFn || (calleeFn.visibility !== 'private' && calleeFn.visibility !== 'internal')) continue;
+        const calleeNeed = propagatedSignerNeeds.get(callee) || 'none';
+        const merged = mergeSignerNeed(currentNeed, calleeNeed);
+        if (merged !== currentNeed) {
+          currentNeed = merged;
+          propagatedSignerNeeds.set(fnName, merged);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  const functionRegistry = new Map<string, {
+    visibility: string;
+    accessesState: boolean;
+    signerParamKind: 'none' | 'signer-ref' | 'address';
+  }>();
+  for (const fn of deduplicatedFunctions) {
     const accessesStateVars = fn.body.some(stmt => stmtReferencesAny(stmt, stateVarNames));
+    const signerParamKind = propagatedSignerNeeds.get(fn.name) || 'none';
     functionRegistry.set(fn.name, {
       visibility: fn.visibility,
       accessesState: accessesStateVars,
+      signerParamKind,
     });
   }
 
@@ -498,6 +814,12 @@ export function irToMoveModule(
 
   // Attach function registry for borrow checker prevention
   (context as any).functionRegistry = functionRegistry;
+  if (dedupResult.hasAmbiguousArityOverloads) {
+    context.warnings.push({
+      message: 'Detected overloaded functions with identical arity; call-site remapping may require manual review',
+      severity: 'warning',
+    });
+  }
 
   // Pass using-for declarations for library method inlining
   context.usingFor = flattenedIR.usingFor;
@@ -526,7 +848,7 @@ export function irToMoveModule(
   const functionSignatures = new Map<string, FunctionSignature>();
 
   // 1. Local functions from this contract
-  for (const fn of flattenedIR.functions) {
+  for (const fn of deduplicatedFunctions) {
     const fnName = toSnakeCase(fn.name);
     const paramTypes = fn.params.map(p => p.type.move || { kind: 'primitive' as const, name: 'u256' as const });
     const returnType = fn.returnParams.length === 0
@@ -841,14 +1163,22 @@ export function irToMoveModule(
 
   // Pre-compute whether we need OwnerCapability move_to in init functions
   const needsOwnerCap = context.accessControl === 'capability' && contractUsesOwnerModifier(flattenedIR);
+  const roleCapsToGrant = context.accessControl === 'capability' && !isLibrary
+    ? Array.from(contractUsesRoleModifiers(flattenedIR)).map(roleNameToCapabilityStruct)
+    : [];
 
   // Transform constructor to init_module (skip for libraries)
   if (!isLibrary) {
     if (flattenedIR.constructor) {
       const initFn = transformConstructor(flattenedIR.constructor, flattenedIR.name, flattenedIR.stateVariables, context);
-      // Append OwnerCapability move_to at the end of the constructor body
-      if (needsOwnerCap) {
-        initFn.body.push(generateCapabilityMoveTo({ kind: 'identifier', name: 'deployer' }));
+      // Append capability grants at the end of constructor body.
+      if (needsOwnerCap || roleCapsToGrant.length > 0) {
+        const capabilityStructs = new Set<string>();
+        if (needsOwnerCap) capabilityStructs.add('OwnerCapability');
+        for (const capName of roleCapsToGrant) capabilityStructs.add(capName);
+        for (const capName of capabilityStructs) {
+          initFn.body.push(generateCapabilityMoveTo({ kind: 'identifier', name: 'deployer' }, capName));
+        }
       }
       module.functions.push(initFn);
     } else if (flattenedIR.stateVariables.length > 0) {
@@ -863,9 +1193,14 @@ export function irToMoveModule(
       } else {
         initFn = generateDefaultInit(flattenedIR.name, flattenedIR.stateVariables, context);
       }
-      // Append OwnerCapability move_to at the end of init_module body
-      if (needsOwnerCap) {
-        initFn.body.push(generateCapabilityMoveTo({ kind: 'identifier', name: 'deployer' }));
+      // Append capability grants at the end of init_module body.
+      if (needsOwnerCap || roleCapsToGrant.length > 0) {
+        const capabilityStructs = new Set<string>();
+        if (needsOwnerCap) capabilityStructs.add('OwnerCapability');
+        for (const capName of roleCapsToGrant) capabilityStructs.add(capName);
+        for (const capName of capabilityStructs) {
+          initFn.body.push(generateCapabilityMoveTo({ kind: 'identifier', name: 'deployer' }, capName));
+        }
       }
       module.functions.push(initFn);
     }
@@ -875,10 +1210,6 @@ export function irToMoveModule(
       injectEventHandleInitFields(module, flattenedIR.events, context);
     }
   }
-
-  // Deduplicate overloaded functions before transformation
-  // Move doesn't support function overloading, so rename duplicates
-  const deduplicatedFunctions = deduplicateOverloadedFunctions(flattenedIR.functions);
 
   // Transform functions BEFORE generating error constants
   // This allows error codes from require/assert messages to be discovered first
@@ -910,7 +1241,7 @@ export function irToMoveModule(
       for (const v of sourceContract.stateVariables) {
         if (v.mutability !== 'constant') continue;
         const mt = v.type.move || { kind: 'primitive', name: 'u256' };
-        const val = v.initialValue ? transformConstantValue(v.initialValue, mt, srcConstants) : getDefaultConstantValue(mt);
+        const val = v.initialValue ? transformConstantValue(v.initialValue, mt, srcConstants, context) : getDefaultConstantValue(mt);
         srcConstants.set(v.name, { type: mt, value: val });
       }
       sourceConstantsCache.set(source, srcConstants);
@@ -1009,6 +1340,7 @@ const STDLIB_MODULES: Record<string, string> = {
   'type_info': 'aptos_std::type_info',
   'coin': 'aptos_framework::coin',
   'account': 'aptos_framework::account',
+  'block': 'aptos_framework::block',
   'timestamp': 'aptos_framework::timestamp',
   'event': 'aptos_framework::event',
   'object': 'aptos_framework::object',
@@ -1226,14 +1558,15 @@ function generateOptimizedInit(
   const plan = context.resourcePlan;
   if (!plan) throw new Error('resourcePlan required for optimized init');
 
-  context.usedModules.add('aptos_framework::account');
-  context.usedModules.add('std::string');
+  const constructorPattern = context.constructorPattern || 'resource-account';
+  const body: MoveStatement[] = [];
 
-  const body: MoveStatement[] = [
-    // Create resource account
-    {
+  // Pattern-specific preamble
+  if (constructorPattern === 'resource-account') {
+    context.usedModules.add('aptos_framework::account');
+    body.push({
       kind: 'let',
-      pattern: ['resource_signer', 'signer_cap'],
+      pattern: ['_resource_signer', 'signer_cap'],
       value: {
         kind: 'call',
         function: 'account::create_resource_account',
@@ -1242,8 +1575,44 @@ function generateOptimizedInit(
           { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
         ],
       },
-    },
-  ];
+    });
+  } else if (constructorPattern === 'named-object') {
+    context.usedModules.add('aptos_framework::object');
+    body.push({
+      kind: 'let',
+      pattern: 'constructor_ref',
+      value: {
+        kind: 'call',
+        function: 'object::create_named_object',
+        args: [
+          { kind: 'identifier', name: 'deployer' },
+          { kind: 'literal', type: 'bytestring', value: `b"${toSnakeCase(contractName)}"` },
+        ],
+      },
+    });
+    body.push({
+      kind: 'let',
+      pattern: 'object_signer',
+      value: {
+        kind: 'call',
+        function: 'object::generate_signer',
+        args: [
+          { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'constructor_ref' } },
+        ],
+      },
+    });
+    body.push({
+      kind: 'let',
+      pattern: 'extend_ref',
+      value: {
+        kind: 'call',
+        function: 'object::generate_extend_ref',
+        args: [
+          { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'constructor_ref' } },
+        ],
+      },
+    });
+  }
 
   // Generate one move_to() per resource group
   for (const group of plan.groups) {
@@ -1304,13 +1673,28 @@ function generateOptimizedInit(
       }
     }
 
-    // Primary group gets signer_cap
+    // Primary group gets pattern-specific capability/reference field
     if (group.isPrimary) {
-      fields.push({
-        name: 'signer_cap',
-        value: { kind: 'identifier', name: 'signer_cap' },
-      });
+      if (constructorPattern === 'resource-account') {
+        fields.push({
+          name: 'signer_cap',
+          value: { kind: 'identifier', name: 'signer_cap' },
+        });
+      } else if (constructorPattern === 'named-object') {
+        fields.push({
+          name: 'extend_ref',
+          value: { kind: 'identifier', name: 'extend_ref' },
+        });
+      }
     }
+
+    // Keep runtime reads/writes consistent with borrow_global(@module_address):
+    // store optimized resources at deployer/module address for resource-account
+    // and deployer-direct modes.
+    const moveToTarget =
+      constructorPattern === 'named-object'
+        ? { kind: 'borrow' as const, mutable: false, value: { kind: 'identifier' as const, name: 'object_signer' } }
+        : { kind: 'identifier' as const, name: 'deployer' };
 
     body.push({
       kind: 'expression',
@@ -1318,7 +1702,7 @@ function generateOptimizedInit(
         kind: 'call',
         function: 'move_to',
         args: [
-          { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
+          moveToTarget,
           {
             kind: 'struct',
             name: group.name,
@@ -1442,7 +1826,7 @@ function generateDefaultInit(
       // Create resource account: let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"seed");
       {
         kind: 'let',
-        pattern: ['resource_signer', 'signer_cap'],
+        pattern: ['_resource_signer', 'signer_cap'],
         value: {
           kind: 'call',
           function: 'account::create_resource_account',
@@ -1459,7 +1843,7 @@ function generateDefaultInit(
           kind: 'call',
           function: 'move_to',
           args: [
-            { kind: 'borrow', mutable: false, value: { kind: 'identifier', name: 'resource_signer' } },
+            { kind: 'identifier', name: 'deployer' },
             {
               kind: 'struct',
               name: stateName,
@@ -1937,7 +2321,7 @@ function generateStateConstants(
     // Pass context.constants so references to previously-defined constants can be inlined
     let value: any;
     if (variable.initialValue) {
-      value = transformConstantValue(variable.initialValue, moveType, context.constants);
+      value = transformConstantValue(variable.initialValue, moveType, context.constants, context);
     } else {
       value = getDefaultConstantValue(moveType);
     }
@@ -1963,7 +2347,12 @@ function generateStateConstants(
  * Move constants CANNOT reference other constants, so we try to evaluate
  * constant expressions at transpile time and inline literal values.
  */
-function transformConstantValue(expr: any, targetType: any, constants?: Map<string, any>): any {
+function transformConstantValue(
+  expr: any,
+  targetType: any,
+  constants?: Map<string, any>,
+  context?: TranspileContext
+): any {
   if (!expr) return getDefaultConstantValue(targetType);
 
   // Handle literals
@@ -1993,8 +2382,8 @@ function transformConstantValue(expr: any, targetType: any, constants?: Map<stri
   // Handle binary operations (for compile-time constant expressions)
   // Try to evaluate to a literal if both sides are literals
   if (expr.kind === 'binary') {
-    const left = transformConstantValue(expr.left, targetType, constants);
-    const right = transformConstantValue(expr.right, targetType, constants);
+    const left = transformConstantValue(expr.left, targetType, constants, context);
+    const right = transformConstantValue(expr.right, targetType, constants, context);
 
     // Try to evaluate if both sides are number literals
     const leftVal = extractBigInt(left);
@@ -2023,7 +2412,7 @@ function transformConstantValue(expr: any, targetType: any, constants?: Map<stri
 
   // Handle type conversions (e.g., uint8(128))
   if (expr.kind === 'type_conversion') {
-    const inner = transformConstantValue(expr.expression, targetType, constants);
+    const inner = transformConstantValue(expr.expression, targetType, constants, context);
     const val = extractBigInt(inner);
     if (val !== null) {
       const suffix = getMoveTypeSuffix(targetType);
@@ -2035,44 +2424,24 @@ function transformConstantValue(expr: any, targetType: any, constants?: Map<stri
   // Handle function calls in constant context (e.g., keccak256("string"))
   if (expr.kind === 'function_call') {
     const funcName = expr.function?.name || (expr.function?.kind === 'identifier' ? expr.function.name : null);
-    // keccak256 of a string literal → compute hash at transpile time
+    // keccak256 requires Ethereum's Keccak-256 (not NIST SHA3-256).
+    // We intentionally avoid approximating with SHA3 to prevent wrong constants.
     if (funcName === 'keccak256' && expr.args?.length === 1) {
       const arg = expr.args[0];
-      if (arg.kind === 'literal' && arg.type === 'string') {
-        // Compute keccak256 hash of the string → u256
-        // Use a deterministic hash approach: convert string to bytes, hash
-        const hashValue = computeKeccak256AsU256(String(arg.value));
-        const suffix = getMoveTypeSuffix(targetType);
-        return { kind: 'literal', type: 'number', value: hashValue, suffix };
-      }
-      // For abi.encodePacked and other non-literal args, emit placeholder
       const suffix = getMoveTypeSuffix(targetType);
+      const msg = 'keccak256 constant folding is unsupported (exact Keccak-256 unavailable); emitted 0 placeholder';
+      if (context?.strictMode) {
+        context.errors.push({ message: msg, severity: 'error' });
+      } else if (context) {
+        context.warnings.push({ message: msg, severity: 'warning' });
+      }
+      // For literal and non-literal cases, emit deterministic placeholder.
       return { kind: 'literal', type: 'number', value: '0', suffix };
     }
   }
 
   // Default: return as-is with suffix
   return expr;
-}
-
-/**
- * Compute keccak256 hash of a string and return as a u256 decimal string.
- * Uses Node.js crypto (sha3-256 is keccak256 in Ethereum context).
- * Note: Ethereum's keccak256 is slightly different from standard SHA3-256,
- * but for constant identification purposes the exact value matters less
- * than having a consistent, deterministic output.
- */
-function computeKeccak256AsU256(input: string): string {
-  // Ethereum uses the original Keccak-256, not NIST SHA3-256
-  // Node.js doesn't have keccak natively, so we use sha3-256 as a reasonable approximation
-  // The exact hash value doesn't affect correctness since this is used for constant IDs
-  try {
-    const hash = createHash('sha3-256').update(input).digest('hex');
-    return BigInt('0x' + hash).toString();
-  } catch {
-    // Fallback: return 0
-    return '0';
-  }
 }
 
 /**
@@ -2356,7 +2725,7 @@ function getDefaultValue(type: any, context?: TranspileContext): any {
           context.usedModules.add('std::option');
           return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
         }
-        return { kind: 'call', function: '@0x0', args: [] };
+        return { kind: 'literal', type: 'address', value: '@0x0' };
       default:
         if (type.move.name.startsWith('u') || type.move.name.startsWith('i')) {
           return { kind: 'literal', type: 'number', value: 0 };
@@ -2381,7 +2750,7 @@ function getDefaultValueForType(moveType: any, context?: TranspileContext): any 
           context.usedModules.add('std::option');
           return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
         }
-        return { kind: 'call', function: '@0x0', args: [] };
+        return { kind: 'literal', type: 'address', value: '@0x0' };
       default:
         if (moveType.name.startsWith('u') || moveType.name.startsWith('i')) {
           return { kind: 'literal', type: 'number', value: 0 };
@@ -2440,10 +2809,10 @@ function roleNameToCapabilityStruct(roleName: string): string {
 }
 
 /**
- * Generate a move_to statement that grants an OwnerCapability to the deployer.
+ * Generate a move_to statement that grants a capability to the deployer.
  * Used in init_module / constructor when accessControl === 'capability'.
  */
-function generateCapabilityMoveTo(signerExpr: any): MoveStatement {
+function generateCapabilityMoveTo(signerExpr: any, capabilityStruct: string = 'OwnerCapability'): MoveStatement {
   return {
     kind: 'expression',
     expression: {
@@ -2453,7 +2822,7 @@ function generateCapabilityMoveTo(signerExpr: any): MoveStatement {
         signerExpr,
         {
           kind: 'struct',
-          name: 'OwnerCapability',
+          name: capabilityStruct,
           fields: [],
         },
       ],

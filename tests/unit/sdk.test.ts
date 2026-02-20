@@ -2,7 +2,7 @@
  * Tests for the unified Sol2Move SDK
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Sol2Move } from '../../src/sdk.js';
 
 const COUNTER_SOL = `
@@ -220,6 +220,19 @@ describe('Sol2Move SDK', () => {
       expect(result.transpile.success).toBe(false);
       expect(result.moveValidation).toBeNull();
       expect(result.allValid).toBe(false);
+    });
+
+    it('should keep allValid true when parser is unavailable but transpilation succeeds', async () => {
+      const sdk = new Sol2Move({ moduleAddress: '0x1', generateToml: false });
+      const parserSpy = vi.spyOn(sdk, 'isMoveParserAvailable').mockResolvedValue(false);
+
+      const result = await sdk.transpileAndValidate(COUNTER_SOL);
+
+      expect(result.transpile.success).toBe(true);
+      expect(result.moveValidation).toBeNull();
+      expect(result.allValid).toBe(true);
+
+      parserSpy.mockRestore();
     });
 
     it('should validate multiple modules from a multi-contract source', async () => {

@@ -468,11 +468,19 @@ export class Sol2Move {
   ): Promise<TranspileAndValidateResult> {
     const transpileResult = this.transpile(source, overrides);
 
-    if (!transpileResult.success || !(await this.isMoveParserAvailable())) {
+    if (!transpileResult.success) {
       return {
         transpile: transpileResult,
-        moveValidation: transpileResult.success ? null : null,
+        moveValidation: null,
         allValid: false,
+      };
+    }
+
+    if (!(await this.isMoveParserAvailable())) {
+      return {
+        transpile: transpileResult,
+        moveValidation: null,
+        allValid: true,
       };
     }
 

@@ -1,141 +1,170 @@
-# Solidity to Aptos Move Transpiler - Status
+# Sol2Move — Project Status
 
-## Current State (February 2025)
+> Last updated: Feb 2026
 
-**All 173 tests passing** (170 pass, 3 require `aptos` CLI not installed in CI)
-
-### Feature Coverage
-
-Based on comprehensive analysis of 125 Solidity features:
-- **57% fully implemented** (71 features)
-- **15% partially implemented** (19 features)
-- **28% not implemented** (35 features - some fundamentally impossible in Move)
-
-### Verified Compiling
-- Counter contract
-- SimpleStorage
-- ERC-20 with Fungible Asset standard
-- ERC-721 with Digital Asset standard
+Two repos, one product:
+- **`aptos-move-transpiler/`** — Core SDK + CLI (Solidity to Aptos Move v2)
+- **`sol2move-app/`** — Next.js web frontend ($0.25/transpilation via x402 + CDP)
 
 ---
 
-## Compilation Blockers - ALL FIXED
+## Transpiler — PRODUCTION READY
 
-These 8 issues previously prevented DeFi contract output from compiling with `aptos move compile`:
+**265 tests pass** | 22/22 DLMM eval | 3 Aptos CLI compile checks | 18 Tier 1 flag tests
 
-| # | Bug | Fix | Location |
-|---|-----|-----|----------|
-| 1 | `i++` → `(i + 1);` (infinite loops) | Emit `i = i + 1;` for increment in statement position | `expression-transformer.ts` |
-| 2 | Double mutable borrow | Internal fns receive `&mut State` param instead of re-borrowing | `function-transformer.ts` |
-| 3 | Copy vs reference (mutations lost) | Mapping writes use `table::borrow_mut_with_default` | `expression-transformer.ts` |
-| 4 | `entry` functions with return values | Check `returnParams.length` in `shouldBeEntry()` | `function-transformer.ts` |
-| 5 | `type(uint256).max` → placeholder | `transformTypeMember` emits actual max value literals | `expression-transformer.ts` |
-| 6 | `table::borrow` aborts on missing key | Reads use `table::borrow_with_default` with Solidity zero-defaults | `expression-transformer.ts` |
-| 7 | `(, , , x)` invalid destructuring | Null elements become `_0`, `_1`, `_2` placeholders | `expression-transformer.ts` |
-| 8 | Function name collisions | `deduplicateOverloadedFunctions` appends type-based suffixes | `contract-transformer.ts` |
+### Features Complete
 
----
+| Category | Feature | Status |
+|----------|---------|--------|
+| **Core** | Solidity AST -> IR -> Move AST -> Move source (3-stage pipeline) | Done |
+| **Core** | Inheritance flattening (multi-level, override resolution) | Done |
+| **Core** | Cross-file context (libraries, imports via `contextSources`) | Done |
+| **Core** | Type inference system (19 expression types with `inferredType`) | Done |
+| **Core** | EVM pattern translation (abi.encode, assembly, selectors) | Done |
+| **Core** | Modifier inlining (onlyOwner, nonReentrant, whenNotPaused, custom) | Done |
+| **Core** | Borrow checker strategy (internal fns receive `&mut State`) | Done |
+| **Types** | uint8-256, int8-256 (Move 2.3+ signed integers) | Done |
+| **Types** | OpenZeppelin collection types (UintToUintMap, AddressSet, etc.) | Done |
+| **Types** | Fixed-size bytes (bytes1-bytes32 -> u8-u256) | Done |
+| **Types** | Structs, enums, arrays, mappings (-> Table) | Done |
+| **Standards** | Fungible Asset (ERC-20 -> FA with MintRef/BurnRef/TransferRef) | Done |
+| **Standards** | Digital Asset (ERC-721 -> Token Objects) | Done |
+| **Tools** | `aptos move fmt` integration (movefmt) | Done |
+| **Tools** | `aptos move compile` validation | Done |
+| **Tools** | MSL spec generation (aborts_if, modifies, invariants) | Done |
+| **Tools** | tree-sitter Move parser (optional native dep) | Done |
+| **Optimization** | Block-STM parallelization (low/medium/high) | Done |
+| **Optimization** | Aggregators, snapshots, is_at_least | Done |
+| **Optimization** | Event-trackable variables | Done |
+| **Optimization** | Per-user resources (high level) | Done |
+| **Flags** | 7 Tier 1 transpilation flags (see below) | Done |
 
-## What's Complete
+### Tier 1 Flags (all implemented + tested)
 
-### Phase 1: Core Transpilation (DONE)
-- Types: uint8-256, int8-256, bool, address, bytes, string, arrays, mappings, structs, enums
-- Functions: public/private/internal/external visibility, view/pure modifiers
-- Control flow: if/else, for, while, do-while, break, continue
-- Error handling: require, assert, revert, custom errors
-- Events: Full support with `#[event]` structs
-- Modifiers: onlyOwner, nonReentrant, whenNotPaused, custom modifiers
-- Math helpers: sqrt, mulDiv, exp, addmod, mulmod, keccak256
+| Flag | CLI | Default | What it does |
+|------|-----|---------|-------------|
+| `strictMode` | `--strict` | `false` | Errors instead of stubs for unsupported patterns |
+| `reentrancyPattern` | `--reentrancy-pattern` | `mutex` | `mutex` or `none` (skip guards) |
+| `stringType` | `--string-type` | `string` | `string` (String) or `bytes` (vector\<u8\>) |
+| `useInlineFunctions` | `--inline-functions` | `false` | Mark small private helpers as `inline` |
+| `emitSourceComments` | `--source-comments` | `false` | Add Solidity source references as comments |
+| `viewFunctionBehavior` | `--view-behavior` | `annotate` | `annotate` (#[view]) or `skip` |
+| `errorStyle` | `--error-style` | `abort-codes` | `abort-codes` or `abort-verbose` |
 
-### Phase 2: Inheritance & Libraries (DONE)
-- [x] Inheritance flattening wired up in main transpiler (allContracts passed to irToMoveModule)
-- [x] Merge inherited functions with override resolution (virtual/override respected)
-- [x] `super.method()` calls → direct function call (parent already flattened in)
-- [x] `using X for Y` → library method inlining (SafeMath add/sub/mul/div/mod → operators)
-- [ ] C3 linearization (simplified DFS, not full C3)
-- [ ] Multi-file inheritance (cross-file imports)
+### Known Limitations (not blockers)
 
-### Phase 3: Token Standards (DONE)
-- [x] ERC-20 detection → Fungible Asset template (compilable)
-- [x] ERC-721 detection → Digital Asset template (compilable)
-- [x] MintRef/BurnRef/TransferRef storage
-- [x] primary_fungible_store integration
+- Digital Asset `totalSupply`/`tokenId` returns 0 (needs Aptos indexer)
+- DLMM: `safe_call` in hooks.move still has EVM selector logic
+- DLMM: Flash loan callback uses `call()` stub
+- Some SCREAMING_SNAKE cross-module constants have mangled names
+- C3 linearization is simplified DFS (not full C3)
 
-### Phase 4: Resource Account Pattern (DONE)
-- [x] `init_module` creates resource account with `account::create_resource_account`
-- [x] `SignerCapability` stored in state struct
-- [x] Resource signer available for protocol operations
+### Fundamentally Impossible in Move
 
-### Phase 5: Fail-Fast Errors (DONE)
-- [x] `delegatecall` → error with clear message
-- [x] Inline assembly → error with clear message
-- [x] `receive()` → stub with UNSUPPORTED message
-- [x] `fallback()` → stub with UNSUPPORTED message
-- [x] `try/catch` → basic transpilation support
-
-### Borrow Checker Strategy (DONE)
-- [x] Internal/private functions receive `&mut State` as parameter
-- [x] Callers pass existing state reference instead of re-borrowing
-- [x] `functionRegistry` tracks which functions access state
-- [x] `acquires` clause omitted for internal functions (they don't borrow globally)
+delegatecall, dynamic dispatch, proxy upgrades, receive/fallback, inline assembly (Yul), selfdestruct, tx.origin, msg.value (native), contract factories (new Contract)
 
 ---
 
-## What's Left (Future Work)
+## Frontend — FUNCTIONAL, NEEDS POLISH
 
-### Multi-file Support
-- [ ] Cross-file import resolution
-- [ ] Full C3 linearization for complex inheritance
-- [ ] Interface implementation verification
+### What Works
 
-### Advanced DeFi Templates
-- [ ] AMM template (Uniswap V2 → Aptos DEX)
-- [ ] Lending protocol template (Aave/Compound)
-- [ ] Staking template (Synthetix)
-- [ ] ERC-4626 Vault template
+- Landing page with paste code / GitHub URL input modes
+- Options panel with all transpile options (12+ flags exposed)
+- CDP wallet auth (Smart Wallet, email, Google, X)
+- x402 USDC payment on Base ($0.25/transpilation)
+- Async transpilation worker (7-step pipeline with progress)
+- Progress polling + animated timeline + progress bar
+- Result page: code comparison, diagnostics, specs, parallelism analysis
+- Download ZIP (all modules + Move.toml)
+- GitHub URL -> discover .sol files -> multi-file transpile
+- All API routes functional (transpile, github, result, status, history)
+- Graceful degradation without CDP env vars
 
-### Compilation Validation
-- [ ] Add `aptos move compile` step to CI
-- [ ] Automated compilation testing for all DeFi fixtures
-- [ ] Source map generation for debugging
+### What's Missing / Needs Work
+
+| Item | Priority | Effort | Notes |
+|------|----------|--------|-------|
+| Syntax highlighting in code blocks | Medium | Small | `prism-react-renderer` installed but not wired into MoveCodeBlock |
+| History page verification | Medium | Small | `/result` page exists but needs testing with real data |
+| Public assets | Low | Trivial | Missing favicon.ico, og.png, logo.svg |
+| Mobile responsiveness | Low | Medium | Not tested on small viewports |
+| Payment settlement error surfacing | Low | Small | Settlement failures are fire-and-forget |
+
+---
+
+## Proposed Future Work
+
+### Tier 2 Flags — Medium Complexity
+
+| Flag | What | Notes |
+|------|------|-------|
+| `targetMoveVersion` | Emit Move 2.0 vs 2.2 vs 2.3 syntax | Receiver syntax, match expressions |
+| `overflowBehavior` | checked/wrapping/saturating arithmetic | Move is unchecked by default |
+| `enumStyle` | Move native enum vs const pattern | Move 2.2+ has native enums |
+| `resourceAccountInit` | Resource account vs deployer-owned init | init_module pattern variants |
+| `generateTests` | Scaffold Move unit tests from contract | #[test] functions with assertions |
+| `entryFunctionStrategy` | Which public fns become entry | Currently auto-detects |
+| `eventEmission` | Event generation pattern | Named events vs generic |
+
+### Tier 3 Flags — High Complexity
+
+| Flag | What | Notes |
+|------|------|-------|
+| `accessControlPattern` | RBAC / ownable / capability | Full ACL system generation |
+| `objectModel` | Full Aptos Object Model integration | Replace resource account pattern |
+| `receiverStyle` | Method-style syntax (Move 2.2+) | `self.method()` instead of `module::method(self)` |
+| `generateMigrationScript` | Migration helpers for live contracts | State migration scripts |
+
+### Other Ideas
+
+- AMM / Lending / Staking DeFi templates
+- Source map generation for debugging
+- CI compilation testing for all fixtures
+- Multi-file import resolution improvements
+- Interface implementation verification
 
 ---
 
-## Fundamentally Impossible Features
+## Quick Reference
 
-| Feature | Why Impossible |
-|---------|----------------|
-| `delegatecall` | Move has no execution context switching |
-| Dynamic dispatch | Move is statically typed, no runtime resolution |
-| Proxy upgrades | Requires delegatecall |
-| `receive()`/`fallback()` | No catch-all function mechanism |
-| Inline assembly (Yul) | No low-level bytecode access |
-| `selfdestruct` | Move modules are permanent |
-| `tx.origin` | Different security model |
-| `msg.value` | Different value transfer model |
-| Contract factories (`new Contract()`) | No dynamic deployment |
+```bash
+# ─── Transpiler ───
+cd aptos-move-transpiler
+npm run build                                    # Compile TypeScript
+npx vitest run                                   # All tests (~150s)
+npx vitest run tests/unit/tier1-flags.test.ts    # Just flag tests
+npx vitest run tests/eval/dlmm-eval.test.ts      # DLMM eval (22 contracts)
 
----
+# ─── Frontend ───
+cd sol2move-app
+npm run dev                                      # Dev server (works without env vars)
+npx next build                                   # Production build
+# Requires: MONGODB_URI, NEXT_PUBLIC_CDP_PROJECT_ID, CDP_API_KEY_ID/SECRET
+
+# ─── CLI ───
+sol2move convert contract.sol -o output/
+sol2move convert contract.sol --strict --string-type bytes --source-comments
+sol2move validate contract.sol
+sol2move analyze contract.sol
+```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/transpiler.ts` | Main entry point, inheritance wiring |
-| `src/transformer/contract-transformer.ts` | Contract/inheritance/overloading/resource account |
-| `src/transformer/function-transformer.ts` | Function transformation, borrow checker strategy |
-| `src/transformer/expression-transformer.ts` | Expression/statement/increment/table defaults |
-| `src/codegen/move-generator.ts` | Move code generation |
-| `src/codegen/fungible-asset-generator.ts` | ERC-20 → Fungible Asset template |
-| `src/codegen/digital-asset-generator.ts` | ERC-721 → Digital Asset template |
-| `src/stdlib/evm_compat.move` | EVM compatibility helpers |
-| `src/mapper/type-mapper.ts` | Solidity to Move type mapping |
-
-## Running Tests
-
-```bash
-npm test                          # Run all tests
-npm test -- --watch               # Watch mode
-npm test -- --coverage            # Coverage report
-npx tsx scripts/test_counter.ts   # Test specific contract
-```
+| `src/transpiler.ts` | TranspileOptions, orchestration, toSnakeCase |
+| `src/sdk.ts` | Sol2Move class (unified public API) |
+| `src/cli.ts` | Commander CLI (convert/validate/analyze) |
+| `src/types/ir.ts` | IRContract, TranspileContext, FunctionSignature |
+| `src/types/move-ast.ts` | MoveModule, MoveFunction, MoveExpression (19 kinds) |
+| `src/types/optimization.ts` | ResourcePlan, StateVariableAnalysis |
+| `src/transformer/contract-transformer.ts` | irToMoveModule, inheritance, resource groups |
+| `src/transformer/function-transformer.ts` | transformFunction, modifiers, borrow strategy |
+| `src/transformer/expression-transformer.ts` | transformExpression, require/revert, EVM patterns |
+| `src/codegen/move-generator.ts` | generateMoveCode, generateFunction, generateStatement |
+| `src/codegen/spec-generator.ts` | MSL spec generation |
+| `src/mapper/type-mapper.ts` | Solidity -> Move type mapping |
+| `src/analyzer/state-analyzer.ts` | Block-STM parallelization analysis |
+| `src/compiler/move-compiler.ts` | aptos move compile wrapper |
+| `src/formatter/move-formatter.ts` | aptos move fmt wrapper |

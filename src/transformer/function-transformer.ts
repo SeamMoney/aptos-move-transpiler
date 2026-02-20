@@ -32,9 +32,19 @@ export function transformFunction(
 
   // Check if function body uses msg.sender (needed for view functions)
   const usesMsgSender = bodyUsesMsgSender(fn.body);
+  const signerRequirementFromCalls = bodyCallsSignerDependentInternalFunction(fn.body, context);
 
   // Transform parameters
-  const params = transformParams(fn.params, fn.stateMutability, fn.visibility, context, usesMsgSender);
+  const params = transformParams(
+    fn.params,
+    fn.stateMutability,
+    fn.visibility,
+    context,
+    usesMsgSender,
+    signerRequirementFromCalls
+  );
+  const functionSignerKind = inferFunctionSignerKind(params, context);
+  (context as any).currentFunctionSignerKind = functionSignerKind;
 
   // Track function parameters in localVariables for type-aware transformations
   // (e.g., cross-type comparison upcasting in SafeCast)
@@ -69,13 +79,14 @@ export function transformFunction(
   // instead of calling borrow_global_mut (prevents double mutable borrow)
   const isInternalFunction = fn.visibility === 'private' || fn.visibility === 'internal';
   const receiveStateAsParam = isInternalFunction && needsState;
+  const profileLookupName = ((fn as any).originalName as string | undefined) || fn.name;
 
   // Multi-resource borrowing for medium/high optimization
   const useMultiResource = context.resourcePlan && context.optimizationLevel !== 'low';
 
   if (useMultiResource) {
     const plan = context.resourcePlan!;
-    const fnProfile = plan.functionProfiles.get(fn.name);
+    const fnProfile = plan.functionProfiles.get(profileLookupName) || plan.functionProfiles.get(fn.name);
 
     if (fnProfile && (fnProfile.readsResources.size > 0 || fnProfile.writesResources.size > 0) && !isPureFunction) {
       const allNeeded = new Set([...fnProfile.readsResources, ...fnProfile.writesResources]);
@@ -120,7 +131,7 @@ export function transformFunction(
     if (plan.perUserResources && !receiveStateAsParam) {
       const perUserVarNames = new Set(plan.perUserResources.fields.map(f => f.varName));
       // Check if this function writes to any per-user variable
-      const fnProfile = plan.functionProfiles.get(fn.name);
+      const fnProfile = plan.functionProfiles.get(profileLookupName) || plan.functionProfiles.get(fn.name);
       let writesPerUser = false;
       if (fnProfile) {
         // Check write resources — but per-user vars aren't in groups.
@@ -195,19 +206,14 @@ export function transformFunction(
   // Get modifier POST-statements (cleanup code)
   const modifierCleanup = getModifiersPostStatements(fn.modifiers || [], context);
   const hasCleanup = modifierCleanup.length > 0;
-  const hasReturnValue = fn.returnParams && fn.returnParams.length > 0;
+  const bodyStatements = transformFunctionBodyStatements(fn.body, context);
 
-  // Transform body statements THIRD (without re-adding state borrow)
-  // If we have cleanup and return values, we need special handling
-  if (hasCleanup && hasReturnValue) {
-    const bodyStatements = transformFunctionBodyStatementsWithCleanup(fn.body, modifierCleanup, context);
-    fullBody.push(...bodyStatements);
+  // Ensure cleanup runs before every explicit return and also on fallthrough.
+  if (hasCleanup) {
+    fullBody.push(...injectCleanupBeforeReturns(bodyStatements, modifierCleanup));
+    fullBody.push(...modifierCleanup.map(cloneMoveStatement));
   } else {
-    const bodyStatements = transformFunctionBodyStatements(fn.body, context);
     fullBody.push(...bodyStatements);
-
-    // Add modifier POST-statements FOURTH (cleanup code after function body)
-    fullBody.push(...modifierCleanup);
   }
 
   // Add return statement for functions with named return params
@@ -305,6 +311,7 @@ export function transformFunction(
 
   context.currentFunction = undefined;
   context.currentFunctionStateMutability = undefined;
+  delete (context as any).currentFunctionSignerKind;
   return moveFunc;
 }
 
@@ -905,8 +912,8 @@ function containsReturn(stmt: any): boolean {
   if (stmt.kind === 'return') return true;
   // Check if blocks
   if (stmt.kind === 'if') {
-    if (stmt.then?.some(containsReturn)) return true;
-    if (stmt.else?.some(containsReturn)) return true;
+    if (stmt.thenBlock?.some(containsReturn)) return true;
+    if (stmt.elseBlock?.some(containsReturn)) return true;
     return false;
   }
   // Check loop bodies
@@ -985,15 +992,23 @@ export function transformConstructor(
   };
 
   // Build the state initialization
+  const stateInitializerValues = new Map<string, any>();
   const stateFields = stateVariables
     .filter(v => v.mutability !== 'constant')
     .map(v => {
+      const initContext = { ...constructorContext, stateInitializerValues } as any;
       // Check if this variable is initialized in the constructor
       // Pass the variable type so we can generate the correct suffix
-      const initValue = findInitializationInBody(v.name, constructor.body, constructorContext, v.type);
+      const initValue = findInitializationInBody(v.name, constructor.body, initContext, v.type);
+      const declInit = v.initialValue
+        ? transformConstructorExpression(v.initialValue, initContext, v.type)
+        : undefined;
+      const resolved = initValue ?? declInit ?? getDefaultValue(v, context);
+      stateInitializerValues.set(v.name, resolved);
+      stateInitializerValues.set(toSnakeCase(v.name), resolved);
       return {
         name: toSnakeCase(v.name),
-        value: initValue || getDefaultValue(v, context),
+        value: resolved,
       };
     });
 
@@ -1021,7 +1036,7 @@ export function transformConstructor(
     context.usedModules.add('aptos_framework::account');
     body.push({
       kind: 'let',
-      pattern: ['resource_signer', 'signer_cap'],
+      pattern: ['_resource_signer', 'signer_cap'],
       value: {
         kind: 'call',
         function: 'account::create_resource_account',
@@ -1087,7 +1102,7 @@ export function transformConstructor(
 
   // Determine the move_to target based on constructor pattern
   const moveToTarget = constructorPattern === 'resource-account'
-    ? { kind: 'borrow' as const, mutable: false, value: { kind: 'identifier' as const, name: 'resource_signer' } }
+    ? { kind: 'identifier' as const, name: 'deployer' }
     : constructorPattern === 'named-object'
     ? { kind: 'borrow' as const, mutable: false, value: { kind: 'identifier' as const, name: 'object_signer' } }
     : { kind: 'identifier' as const, name: 'deployer' }; // deployer-direct
@@ -1255,23 +1270,30 @@ function transformParams(
   stateMutability: string,
   visibility: string,
   context: TranspileContext,
-  usesMsgSender: boolean = false
+  usesMsgSender: boolean = false,
+  signerRequirementFromCalls: 'none' | 'signer-ref' | 'address' = 'none'
 ): MoveFunctionParam[] {
   const moveParams: MoveFunctionParam[] = [];
 
   // Determine if this is a public-facing function that needs a signer
   // Private/internal functions only need signer if they use msg.sender
   const isPublicFunction = visibility === 'public' || visibility === 'external';
+  const needsSignerFromCalls = signerRequirementFromCalls === 'signer-ref';
+  const needsAddressFromCalls = signerRequirementFromCalls === 'address';
   const needsSigner = isPublicFunction ||
-    (usesMsgSender && stateMutability !== 'view' && stateMutability !== 'pure');
+    (usesMsgSender && stateMutability !== 'view' && stateMutability !== 'pure') ||
+    needsSignerFromCalls;
+  const shouldUseSignerRef =
+    signerRequirementFromCalls === 'signer-ref' ||
+    (stateMutability !== 'view' && stateMutability !== 'pure' && needsSigner);
 
   // Add signer parameter for non-view functions that are public or use msg.sender
-  if (stateMutability !== 'view' && stateMutability !== 'pure' && needsSigner) {
+  if (shouldUseSignerRef) {
     moveParams.push({
       name: signerName(context),
       type: MoveTypes.ref(MoveTypes.signer()),
     });
-  } else if (usesMsgSender) {
+  } else if (usesMsgSender || needsAddressFromCalls || needsSignerFromCalls) {
     // View/pure functions that use msg.sender need an address parameter
     moveParams.push({
       name: signerName(context),
@@ -1288,6 +1310,135 @@ function transformParams(
   }
 
   return moveParams;
+}
+
+/**
+ * Infer whether the transformed function has a signer-like parameter and its kind.
+ */
+function inferFunctionSignerKind(
+  params: MoveFunctionParam[],
+  context: TranspileContext
+): 'none' | 'signer-ref' | 'address' {
+  const name = signerName(context);
+  const signerParam = params.find(p => p.name === name);
+  if (!signerParam) return 'none';
+  if (signerParam.type.kind === 'reference' &&
+      signerParam.type.innerType.kind === 'primitive' &&
+      signerParam.type.innerType.name === 'signer') {
+    return 'signer-ref';
+  }
+  if (signerParam.type.kind === 'primitive' && signerParam.type.name === 'address') {
+    return 'address';
+  }
+  return 'none';
+}
+
+/**
+ * Detect whether this function calls internal helpers that require signer/address propagation.
+ */
+function bodyCallsSignerDependentInternalFunction(
+  statements: IRStatement[],
+  context: TranspileContext
+): 'none' | 'signer-ref' | 'address' {
+  const registry = (context as any).functionRegistry as Map<string, {
+    visibility: string;
+    accessesState: boolean;
+    signerParamKind: 'none' | 'signer-ref' | 'address';
+  }> | undefined;
+  if (!registry) return 'none';
+
+  let needs: 'none' | 'signer-ref' | 'address' = 'none';
+
+  const mergeNeeds = (kind: 'none' | 'signer-ref' | 'address') => {
+    if (kind === 'signer-ref') {
+      needs = 'signer-ref';
+      return;
+    }
+    if (kind === 'address' && needs === 'none') {
+      needs = 'address';
+    }
+  };
+
+  const scanExpr = (expr: any): void => {
+    if (!expr || needs === 'signer-ref') return;
+    if (expr.kind === 'function_call' && expr.function?.kind === 'identifier') {
+      const fnName = expr.function.name;
+      const info = registry.get(fnName);
+      if (info && (info.visibility === 'private' || info.visibility === 'internal')) {
+        mergeNeeds(info.signerParamKind || 'none');
+      }
+      for (const arg of expr.args || []) scanExpr(arg);
+      scanExpr(expr.function);
+      return;
+    }
+    if (Array.isArray(expr)) {
+      for (const item of expr) scanExpr(item);
+      return;
+    }
+    if (typeof expr === 'object') {
+      for (const key of Object.keys(expr)) {
+        if (key === 'kind') continue;
+        const value = (expr as any)[key];
+        if (value && typeof value === 'object') scanExpr(value);
+      }
+    }
+  };
+
+  const scanStmt = (stmt: any): void => {
+    if (!stmt || needs === 'signer-ref') return;
+    if (stmt.kind === 'if') {
+      scanExpr(stmt.condition);
+      for (const s of stmt.thenBlock || []) scanStmt(s);
+      for (const s of stmt.elseBlock || []) scanStmt(s);
+      return;
+    }
+    if (stmt.kind === 'for') {
+      if (stmt.init) scanStmt(stmt.init);
+      scanExpr(stmt.condition);
+      scanExpr(stmt.update);
+      for (const s of stmt.body || []) scanStmt(s);
+      return;
+    }
+    if (stmt.kind === 'while' || stmt.kind === 'do_while' || stmt.kind === 'loop') {
+      scanExpr(stmt.condition);
+      for (const s of stmt.body || []) scanStmt(s);
+      return;
+    }
+    if (stmt.kind === 'block' || stmt.kind === 'unchecked') {
+      for (const s of stmt.statements || []) scanStmt(s);
+      return;
+    }
+    if (stmt.kind === 'try') {
+      scanExpr(stmt.expression);
+      for (const s of stmt.body || []) scanStmt(s);
+      for (const c of stmt.catchClauses || []) {
+        for (const s of c.body || []) scanStmt(s);
+      }
+      return;
+    }
+    if (stmt.kind === 'variable_declaration') scanExpr(stmt.initialValue);
+    if (stmt.kind === 'assignment') {
+      scanExpr(stmt.target);
+      scanExpr(stmt.value);
+    }
+    if (stmt.kind === 'expression') scanExpr(stmt.expression);
+    if (stmt.kind === 'return') scanExpr(stmt.value);
+    if (stmt.kind === 'emit') for (const a of stmt.args || []) scanExpr(a);
+    if (stmt.kind === 'require') {
+      scanExpr(stmt.condition);
+      scanExpr(stmt.error);
+    }
+    if (stmt.kind === 'revert') {
+      scanExpr(stmt.error);
+      for (const a of stmt.args || []) scanExpr(a);
+    }
+  };
+
+  for (const stmt of statements) {
+    scanStmt(stmt);
+  }
+
+  return needs;
 }
 
 /**
@@ -1404,71 +1555,73 @@ function transformFunctionBodyStatements(
 }
 
 /**
- * Transform function body with cleanup code inserted before returns
- * This ensures cleanup runs before any return statement
+ * Deep clone a Move statement so cleanup can be inserted across branches safely.
  */
-function transformFunctionBodyStatementsWithCleanup(
-  statements: IRStatement[],
-  cleanupStatements: MoveStatement[],
-  context: TranspileContext
+function cloneMoveStatement<T>(stmt: T): T {
+  return JSON.parse(JSON.stringify(stmt));
+}
+
+/**
+ * Recursively insert cleanup statements before every explicit return statement.
+ */
+function injectCleanupBeforeReturns(
+  statements: MoveStatement[],
+  cleanupStatements: MoveStatement[]
 ): MoveStatement[] {
-  const moveStatements: MoveStatement[] = [];
+  const out: MoveStatement[] = [];
 
-  // Transform each statement, inserting cleanup before returns
-  for (let i = 0; i < statements.length; i++) {
-    const stmt = statements[i];
-    const isLastStatement = i === statements.length - 1;
-
+  for (const stmt of statements) {
     if (stmt.kind === 'return') {
-      // For return statements: save value, run cleanup, then return
-      if (stmt.value) {
-        const transformedValue = transformStatement({ kind: 'expression', expression: stmt.value }, context);
-        // Store the return value
-        moveStatements.push({
-          kind: 'let',
-          pattern: '__return_value',
-          mutable: false,
-          value: transformedValue?.kind === 'expression' ? (transformedValue as any).expression : transformedValue,
-        });
-        // Add cleanup statements
-        moveStatements.push(...cleanupStatements);
-        // Return the stored value
-        moveStatements.push({
-          kind: 'expression',
-          expression: { kind: 'identifier', name: '__return_value' },
-        });
-      } else {
-        // No return value, just add cleanup
-        moveStatements.push(...cleanupStatements);
-      }
-    } else if (isLastStatement && stmt.kind === 'expression') {
-      // Last expression might be an implicit return
-      // Store it, run cleanup, then return it
-      const transformed = transformStatement(stmt, context);
-      if (transformed) {
-        moveStatements.push({
-          kind: 'let',
-          pattern: '__return_value',
-          mutable: false,
-          value: (transformed as any).expression || transformed,
-        });
-        // Add cleanup statements
-        moveStatements.push(...cleanupStatements);
-        // Return the stored value
-        moveStatements.push({
-          kind: 'expression',
-          expression: { kind: 'identifier', name: '__return_value' },
-        });
-      }
-    } else {
-      const transformed = transformStatement(stmt, context);
-      if (transformed) {
-        moveStatements.push(transformed);
-      }
+      out.push(...cleanupStatements.map(cloneMoveStatement));
+      out.push(stmt);
+      continue;
     }
+
+    if (stmt.kind === 'if') {
+      out.push({
+        ...stmt,
+        thenBlock: injectCleanupBeforeReturns(stmt.thenBlock || [], cleanupStatements),
+        elseBlock: stmt.elseBlock ? injectCleanupBeforeReturns(stmt.elseBlock, cleanupStatements) : undefined,
+      });
+      continue;
+    }
+
+    if (stmt.kind === 'while') {
+      out.push({
+        ...stmt,
+        body: injectCleanupBeforeReturns(stmt.body || [], cleanupStatements),
+      });
+      continue;
+    }
+
+    if (stmt.kind === 'loop') {
+      out.push({
+        ...stmt,
+        body: injectCleanupBeforeReturns(stmt.body || [], cleanupStatements),
+      });
+      continue;
+    }
+
+    if (stmt.kind === 'for') {
+      out.push({
+        ...stmt,
+        body: injectCleanupBeforeReturns(stmt.body || [], cleanupStatements),
+      });
+      continue;
+    }
+
+    if (stmt.kind === 'block') {
+      out.push({
+        ...stmt,
+        statements: injectCleanupBeforeReturns(stmt.statements || [], cleanupStatements),
+      });
+      continue;
+    }
+
+    out.push(stmt);
   }
 
-  return moveStatements;
+  return out;
 }
 
 /**
@@ -2032,6 +2185,10 @@ function transformConstructorExpression(expr: any, context: TranspileContext, ta
       // Check if it's a state variable reference
       const stateVar = context.stateVariables?.get(expr.name);
       if (stateVar) {
+        const stateInitMap = (context as any).stateInitializerValues as Map<string, any> | undefined;
+        if (stateInitMap && stateInitMap.has(expr.name)) {
+          return stateInitMap.get(expr.name);
+        }
         // In constructor, before move_to, state vars should be resolved to their init values
         // After move_to (for table::add), use state.field_name
         // For now, check if we're in post-move_to context by checking constructorPhase in context
@@ -2041,13 +2198,6 @@ function transformConstructorExpression(expr: any, context: TranspileContext, ta
             object: { kind: 'identifier', name: 'state' },
             field: toSnakeCase(expr.name),
           };
-        }
-        // Before move_to, try to inline the value if it's a simple literal
-        // This handles cases like totalSupply = _initialSupply * 10 ** decimals
-        // where decimals is a constant 18
-        if (stateVar.name === 'decimals' || expr.name === 'decimals') {
-          // Common pattern: decimals is typically 18 for ERC-20
-          return { kind: 'literal', type: 'number', value: 18, suffix: 'u8' };
         }
       }
       // Fallback: convert to snake_case if it looks like a parameter
@@ -2265,8 +2415,9 @@ function functionWritesPerUserVar(fn: IRFunction, perUserVarNames: Set<string>):
         if (target && perUserVarNames.has(target)) return true;
       }
       if (stmt.body) { if (scanStmts(stmt.body)) return true; }
-      if (stmt.elseBody) { if (scanStmts(stmt.elseBody)) return true; }
-      if (stmt.thenBody) { if (scanStmts(stmt.thenBody)) return true; }
+      if (stmt.thenBlock) { if (scanStmts(stmt.thenBlock)) return true; }
+      if (stmt.elseBlock) { if (scanStmts(stmt.elseBlock)) return true; }
+      if (stmt.statements) { if (scanStmts(stmt.statements)) return true; }
     }
     return false;
   }
