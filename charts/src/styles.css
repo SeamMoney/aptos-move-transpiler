@@ -1,0 +1,69 @@
+/*
+ * @bklit/charts — Default theme variables
+ *
+ * Import this stylesheet in your app root, or copy these variables
+ * into your own CSS / Tailwind config.
+ *
+ * Usage:
+ *   import "@bklit/charts/styles.css";
+ */
+
+:root,
+[data-theme="dark"] {
+  --chart-background: #09090b;
+  --chart-foreground: #fafafa;
+  --chart-foreground-muted: #71717a;
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-crosshair: rgba(255, 255, 255, 0.12);
+
+  /* Candlestick */
+  --chart-bullish: #22c55e;
+  --chart-bullish-muted: rgba(34, 197, 94, 0.15);
+  --chart-bearish: #ef4444;
+  --chart-bearish-muted: rgba(239, 68, 68, 0.15);
+
+  /* Lines */
+  --chart-line-primary: #3b82f6;
+  --chart-line-secondary: #8b5cf6;
+
+  /* Volume */
+  --chart-volume-up: rgba(34, 197, 94, 0.25);
+  --chart-volume-down: rgba(239, 68, 68, 0.25);
+
+  /* Tooltip */
+  --chart-tooltip-bg: rgba(24, 24, 27, 0.95);
+  --chart-tooltip-border: rgba(255, 255, 255, 0.08);
+  --chart-tooltip-text: #fafafa;
+  --chart-tooltip-muted: #a1a1aa;
+
+  /* Ticker / streaming */
+  --chart-ticker-glow: rgba(59, 130, 246, 0.4);
+  --chart-ticker-pulse: rgba(59, 130, 246, 0.15);
+}
+
+[data-theme="light"] {
+  --chart-background: #ffffff;
+  --chart-foreground: #09090b;
+  --chart-foreground-muted: #71717a;
+  --chart-grid: rgba(0, 0, 0, 0.06);
+  --chart-crosshair: rgba(0, 0, 0, 0.08);
+
+  --chart-bullish: #16a34a;
+  --chart-bullish-muted: rgba(22, 163, 74, 0.1);
+  --chart-bearish: #dc2626;
+  --chart-bearish-muted: rgba(220, 38, 38, 0.1);
+
+  --chart-line-primary: #2563eb;
+  --chart-line-secondary: #7c3aed;
+
+  --chart-volume-up: rgba(22, 163, 74, 0.15);
+  --chart-volume-down: rgba(220, 38, 38, 0.15);
+
+  --chart-tooltip-bg: rgba(255, 255, 255, 0.95);
+  --chart-tooltip-border: rgba(0, 0, 0, 0.08);
+  --chart-tooltip-text: #09090b;
+  --chart-tooltip-muted: #71717a;
+
+  --chart-ticker-glow: rgba(37, 99, 235, 0.3);
+  --chart-ticker-pulse: rgba(37, 99, 235, 0.1);
+}
