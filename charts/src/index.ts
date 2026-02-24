@@ -29,6 +29,33 @@ export { useAnimationFrame, lerp, springInterpolate } from "./use-animation-fram
 // ─── Data Generators ────────────────────────────────────────────────────────
 export { generateOHLCData, generateTickerData, createPriceStream } from "./data-generators";
 
+// ─── LiveCandle (combined canvas engine) ────────────────────────────────────
+export { LiveCandle } from "./live-candle";
+export type {
+  LiveCandleHandle,
+  LiveCandleProps,
+  OHLCPoint as LiveCandleOHLC,
+  TickPoint as LiveCandleTick,
+  CandleStyle,
+  CandleBodyStyle,
+  CandleWickStyle,
+  CandleLiveStyle,
+  CandleHoverStyle,
+  VolumeStyle,
+  HoverData,
+  WindowOption,
+  ReferenceLine as LiveCandleReferenceLine,
+  CandleHollowMode,
+  WickColorMode,
+} from "./live-candle";
+export {
+  resolvePalette,
+  lcDarkThemeVars,
+  lcLightThemeVars,
+  resolveCandleStyle,
+  resolveVolumeStyle,
+} from "./live-candle";
+
 // ─── Theming ────────────────────────────────────────────────────────────────
 export { cssVars, darkThemeVars, lightThemeVars } from "./css-vars";
 
