@@ -46,4 +46,9 @@ describe("package exports", () => {
     expect(typeof mod.cssVars.bearish).toBe("string");
     expect(typeof mod.darkThemeVars).toBe("string");
   });
+
+  it("exports Liveline canvas chart", async () => {
+    const mod = await import("../index");
+    expect(mod.Liveline).toBeDefined();
+  });
 });
