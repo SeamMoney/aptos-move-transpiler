@@ -1,6 +1,7 @@
 module 0x1::simple_storage {
 
     use std::signer;
+    use aptos_framework::account;
     use aptos_framework::event;
 
     // Error codes
@@ -27,7 +28,8 @@ module 0x1::simple_storage {
 
     struct SimpleStorageState has key {
         stored_value: u256,
-        owner: address
+        owner: address,
+        signer_cap: account::SignerCapability
     }
 
     #[event]
@@ -38,7 +40,8 @@ module 0x1::simple_storage {
     }
 
     fun init_module(deployer: &signer) {
-        move_to(deployer, SimpleStorageState { stored_value: 0u256, owner: signer::address_of(deployer) });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"simple_storage");
+        move_to(deployer, SimpleStorageState { stored_value: 0u256, owner: signer::address_of(deployer), signer_cap: signer_cap });
     }
 
     public entry fun set_value(account: &signer, new_value: u256) acquires SimpleStorageState {
@@ -51,17 +54,17 @@ module 0x1::simple_storage {
     #[view]
     public fun get_value(): u256 acquires SimpleStorageState {
         let state = borrow_global<SimpleStorageState>(@0x1);
-        state.stored_value
+        return state.stored_value
     }
 
     public entry fun increment(account: &signer) acquires SimpleStorageState {
         let state = borrow_global_mut<SimpleStorageState>(@0x1);
-        state.stored_value += 1u256;
+        state.stored_value += 1;
     }
 
     #[view]
     public fun is_owner(account: address): bool acquires SimpleStorageState {
         let state = borrow_global<SimpleStorageState>(@0x1);
-        (account == state.owner)
+        return (account == state.owner)
     }
 }

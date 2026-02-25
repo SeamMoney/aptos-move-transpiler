@@ -4,3 +4,5 @@ dist/
 .DS_Store
 original-eth2move/
 tests/.output/
+move_output/
+move_output_erc20/

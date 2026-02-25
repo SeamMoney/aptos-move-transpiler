@@ -66,11 +66,8 @@ function transpileAndValidate(
   };
 }
 
-// Clean output directory before tests
+// Ensure output directory exists (don't wipe — other test suites write here in parallel)
 beforeAll(() => {
-  if (existsSync(OUTPUT_DIR)) {
-    rmSync(OUTPUT_DIR, { recursive: true, force: true });
-  }
   mkdirSync(OUTPUT_DIR, { recursive: true });
 });
 

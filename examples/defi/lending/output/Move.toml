@@ -1,10 +1,10 @@
 [package]
-name = "simplestorage"
+name = "lending"
 version = "1.0.0"
 authors = []
 
 [addresses]
-simplestorage = "0x1"
+lending = "0x1"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "main" }

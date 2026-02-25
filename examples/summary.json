@@ -1,0 +1,122 @@
+{
+  "generated": "2026-02-25T23:00:13.555Z",
+  "examples": [
+    {
+      "name": "simple-storage",
+      "category": "basic",
+      "description": "Basic key-value storage with events",
+      "solLines": 41,
+      "moveLines": 70,
+      "functionCount": 5,
+      "structCount": 2,
+      "eventCount": 1,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 1
+    },
+    {
+      "name": "erc20-token",
+      "category": "basic",
+      "description": "ERC-20 fungible token with transfer and approval",
+      "solLines": 53,
+      "moveLines": 98,
+      "functionCount": 4,
+      "structCount": 3,
+      "eventCount": 2,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 1
+    },
+    {
+      "name": "erc721-token",
+      "category": "basic",
+      "description": "ERC-721 NFT collection with mint, burn, and approval",
+      "solLines": 105,
+      "moveLines": 172,
+      "functionCount": 13,
+      "structCount": 4,
+      "eventCount": 3,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 1
+    },
+    {
+      "name": "amm",
+      "category": "defi",
+      "description": "Uniswap-style AMM with constant product formula and LP tokens",
+      "solLines": 231,
+      "moveLines": 220,
+      "functionCount": 12,
+      "structCount": 5,
+      "eventCount": 4,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 1
+    },
+    {
+      "name": "lending",
+      "category": "defi",
+      "description": "Aave/Compound-style lending with interest rates and liquidation",
+      "solLines": 363,
+      "moveLines": 325,
+      "functionCount": 13,
+      "structCount": 10,
+      "eventCount": 6,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 1
+    },
+    {
+      "name": "staking",
+      "category": "defi",
+      "description": "Synthetix-style staking with reward distribution",
+      "solLines": 221,
+      "moveLines": 218,
+      "functionCount": 14,
+      "structCount": 6,
+      "eventCount": 5,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 1
+    },
+    {
+      "name": "vault",
+      "category": "defi",
+      "description": "ERC-4626 yield vault with strategy management",
+      "solLines": 411,
+      "moveLines": 362,
+      "functionCount": 24,
+      "structCount": 9,
+      "eventCount": 7,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 1
+    },
+    {
+      "name": "multisig",
+      "category": "defi",
+      "description": "Gnosis Safe-style multisig wallet",
+      "solLines": 351,
+      "moveLines": 355,
+      "functionCount": 21,
+      "structCount": 10,
+      "eventCount": 8,
+      "errors": 0,
+      "warnings": 1,
+      "modules": 2
+    },
+    {
+      "name": "nova-dex",
+      "category": "defi",
+      "description": "Full-featured DEX with staking, governance, flash loans, and TWAP oracles",
+      "solLines": 424,
+      "moveLines": 479,
+      "functionCount": 22,
+      "structCount": 13,
+      "eventCount": 9,
+      "errors": 0,
+      "warnings": 0,
+      "modules": 2
+    }
+  ]
+}

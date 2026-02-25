@@ -237,7 +237,17 @@ module 0x1::simple_storage {
 
 ## DeFi Protocol Support
 
-The transpiler has been validated against the **DLMM (Liquidity Book) protocol** — a complex DeFi protocol with 22 contracts including math libraries, token standards, factory/router/pair patterns, and OpenZeppelin dependencies. All 22 contracts transpile successfully with zero errors.
+The transpiler has been validated against production DeFi contracts and the **DLMM (Liquidity Book) protocol** — 22 contracts with 317 functions, all transpiling successfully with zero errors. See [`examples/`](examples/) for side-by-side Solidity/Move output.
+
+| Protocol Pattern | Example | Sol LoC | Move LoC | Functions |
+|-----------------|---------|---------|----------|-----------|
+| AMM (Uniswap-style) | [`examples/defi/amm/`](examples/defi/amm/) | 231 | 220 | 12 |
+| Lending (Aave-style) | [`examples/defi/lending/`](examples/defi/lending/) | 363 | 325 | 13 |
+| Staking (Synthetix-style) | [`examples/defi/staking/`](examples/defi/staking/) | 221 | 218 | 14 |
+| Yield Vault (ERC-4626) | [`examples/defi/vault/`](examples/defi/vault/) | 411 | 362 | 24 |
+| MultiSig (Gnosis-style) | [`examples/defi/multisig/`](examples/defi/multisig/) | 351 | 355 | 21 |
+| Full DEX (NovaDEX) | [`examples/defi/nova-dex/`](examples/defi/nova-dex/) | 424 | 479 | 22 |
+| DLMM Protocol (22 contracts) | [`examples/protocol/dlmm/`](examples/protocol/dlmm/) | — | — | 317 |
 
 ```bash
 # Transpile a multi-contract DeFi protocol
@@ -253,29 +263,20 @@ sol2move/
 │   ├── index.ts              # CLI + package exports
 │   ├── sdk.ts                # Unified Sol2Move SDK class
 │   ├── transpiler.ts         # Main transpiler (3-stage pipeline)
-│   ├── parser/
-│   │   ├── solidity-parser.ts    # Solidity parsing
-│   │   └── move-parser/         # Move parsing (tree-sitter)
-│   │       ├── index.ts         # Public API: parseMoveCode, validateMoveCode
-│   │       ├── loader.ts        # Lazy tree-sitter loader
-│   │       ├── node-converter.ts # Tree-sitter → MoveParseNode
-│   │       └── types.ts         # Type abstractions
-│   ├── types/
-│   │   ├── ir.ts             # Intermediate representation types
-│   │   └── move-ast.ts       # Move AST types (with inferredType)
-│   ├── mapper/
-│   │   └── type-mapper.ts    # Solidity → Move type mapping
-│   ├── transformer/
-│   │   ├── contract-transformer.ts    # Module assembly, inheritance flattening
-│   │   ├── function-transformer.ts    # Function bodies, state access, modifiers
-│   │   ├── expression-transformer.ts  # Expressions, library calls, type inference
-│   │   └── type-inference.ts          # Centralized type inference utilities
-│   └── codegen/
-│       └── move-generator.ts # Move source code generation
+│   ├── compiler/             # Move compilation verification (WASM + CLI)
+│   ├── parser/               # Solidity + Move parsing
+│   ├── types/                # IR and Move AST types
+│   ├── mapper/               # Solidity → Move type mapping
+│   ├── transformer/          # AST transformation pipeline
+│   └── codegen/              # Move source code generation
+├── examples/
+│   ├── basic/                # Simple contracts (storage, ERC-20, ERC-721)
+│   ├── defi/                 # DeFi protocols (AMM, lending, vault, staking, multisig, NovaDEX)
+│   └── protocol/             # Protocol-scale eval (DLMM — 22 contracts)
 ├── tests/
-│   ├── unit/                 # Unit tests (116 tests)
-│   ├── integration/          # Integration tests (78 tests)
-│   └── eval/                 # Protocol eval tests (22 DLMM tests)
+│   ├── unit/                 # Unit tests
+│   ├── integration/          # Integration + compilation tests
+│   └── eval/                 # Protocol evaluation framework
 └── dist/                     # Compiled output (npm package)
 ```
 
@@ -296,7 +297,7 @@ sol2move/
 npm install
 
 # Run in development mode
-npm run dev convert examples/simple-storage/SimpleStorage.sol
+npm run dev convert examples/basic/simple-storage/SimpleStorage.sol
 
 # Build
 npm run build
