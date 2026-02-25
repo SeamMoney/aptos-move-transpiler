@@ -16,7 +16,7 @@ module 0x1::lb_factory {
     use 0x1::hooks;
 
     // Error codes
-    const LB_HOOKS_MANAGER_ROLE: u256 = 48806950478657521762066135284732993674703106329049070289623579635572452485516u256;
+    const LB_HOOKS_MANAGER_ROLE: u256 = 0u256;
     const _OFFSET_IS_PRESET_OPEN: u256 = 255u256;
     const _MIN_BIN_STEP: u256 = 1u256;
     const _MAX_FLASHLOAN_FEE: u256 = 100000000000000000u256;
@@ -40,6 +40,27 @@ module 0x1::lb_factory {
     const E_OVERFLOW: u64 = 17u64;
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
+    const E_LB_FACTORY_FLASH_LOAN_FEE_ABOVE_MAX: u64 = 256u64;
+    const E_LB_FACTORY_BIN_STEP_HAS_NO_PRESET: u64 = 257u64;
+    const E_LB_FACTORY_LB_PAIR_SAFETY_CHECK_FAILED: u64 = 258u64;
+    const E_LB_FACTORY_SAME_IMPLEMENTATION: u64 = 259u64;
+    const E_LB_FACTORY_PRESET_IS_LOCKED_FOR_USERS: u64 = 260u64;
+    const E_LB_FACTORY_QUOTE_ASSET_NOT_WHITELISTED: u64 = 261u64;
+    const E_LB_FACTORY_IDENTICAL_ADDRESSES: u64 = 262u64;
+    const E_LB_FACTORY_ADDRESS_ZERO: u64 = 263u64;
+    const E_LB_FACTORY_LB_PAIR_ALREADY_EXISTS: u64 = 264u64;
+    const E_LB_FACTORY_IMPLEMENTATION_NOT_SET: u64 = 265u64;
+    const E_LB_FACTORY_LB_PAIR_DOES_NOT_EXIST: u64 = 266u64;
+    const E_LB_FACTORY_LB_PAIR_IGNORED_IS_ALREADY_IN_THE_SAME_STATE: u64 = 267u64;
+    const E_LB_FACTORY_BIN_STEP_TOO_LOW: u64 = 268u64;
+    const E_LB_FACTORY_PRESET_OPEN_STATE_IS_ALREADY_IN_THE_SAME_STATE: u64 = 269u64;
+    const E_LB_FACTORY_LB_PAIR_NOT_CREATED: u64 = 270u64;
+    const E_LB_FACTORY_INVALID_HOOKS_PARAMETERS: u64 = 271u64;
+    const E_LB_FACTORY_SAME_FLASH_LOAN_FEE: u64 = 272u64;
+    const E_LB_FACTORY_QUOTE_ASSET_ALREADY_WHITELISTED: u64 = 273u64;
+    const E_LB_FACTORY_SAME_FEE_RECIPIENT: u64 = 274u64;
+    const E_LB_FACTORY_SAME_HOOKS_PARAMETERS: u64 = 275u64;
+    const E_LB_FACTORY_CANNOT_GRANT_DEFAULT_ADMIN_ROLE: u64 = 276u64;
 
     struct LBFactoryState has key {
         fee_recipient: address,
@@ -54,13 +75,13 @@ module 0x1::lb_factory {
     }
 
     public entry fun initialize(deployer: &signer, fee_recipient: address, initial_owner: address, flash_loan_fee: u256) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_factory");
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_factory");
         if ((flash_loan_fee > _MAX_FLASHLOAN_FEE)) {
             abort E_LB_FACTORY_FLASH_LOAN_FEE_ABOVE_MAX
         };
         set_fee_recipient(fee_recipient, state);
         event::emit(FlashLoanFeeSet { arg0: 0, arg1: flash_loan_fee });
-        move_to(&resource_signer, LBFactoryState { fee_recipient: @0x0, flash_loan_fee: flash_loan_fee, lb_pair_implementation: @0x0, all_lb_pairs: vector::empty(), lb_pairs_info: table::new(), presets: table::new(), quote_asset_whitelist: vector::empty(), available_lb_pair_bin_steps: table::new(), signer_cap: signer_cap });
+        move_to(deployer, LBFactoryState { fee_recipient: @0x0, flash_loan_fee: flash_loan_fee, lb_pair_implementation: @0x0, all_lb_pairs: vector::empty(), lb_pairs_info: table::new(), presets: table::new(), quote_asset_whitelist: vector::empty(), available_lb_pair_bin_steps: table::new(), signer_cap: signer_cap });
     }
 
     public fun get_min_bin_step(): u256 {
@@ -178,7 +199,7 @@ module 0x1::lb_factory {
             let i: u256;
             while ((i < length)) {
                 let (bin_step, preset) = *table::borrow(&state.presets, i);
-                if (is_preset_open((preset as u256), state)) {
+                if (is_preset_open((preset as u256))) {
                     *vector::borrow_mut(&mut open_bin_step, (index as u64)) = bin_step;
                     index = (index + 1);
                 };
@@ -196,15 +217,15 @@ module 0x1::lb_factory {
         let state = borrow_global<LBFactoryState>(@0x1);
         let lb_pairs_available = vector::empty();
         let (token_a, token_b) = sort_tokens(token_x, token_y);
-        let address_set: vector<u256> = *table::borrow(&*table::borrow_with_default(&state.available_lb_pair_bin_steps, token_a, &0u256), token_b);
+        let address_set: vector<u256> = *table::borrow_with_default(table::borrow(&state.available_lb_pair_bin_steps, token_a), token_b, &vector::empty());
         let length: u256 = vector::length(&address_set);
         if ((length > 0)) {
             lb_pairs_available = vector::empty<unknown>();
-            let lb_pairs_info: aptos_std::table::Table<u256, LBPairInformation> = *table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b);
+            let lb_pairs_info: aptos_std::table::Table<u256, LBPairInformation> = table::borrow(table::borrow(&state.lb_pairs_info, token_a), token_b);
             let i: u256 = 0;
             while ((i < length)) {
                 let bin_step: u16 = safe_cast::safe16(*vector::borrow(&address_set, (i as u64)));
-                *vector::borrow_mut(&mut lb_pairs_available, (i as u64)) = lb_pair_information(bin_step, *table::borrow_with_default(&lb_pairs_info, bin_step, &0u256).lb_pair, *table::borrow_with_default(&lb_pairs_info, bin_step, &0u256).created_by_owner, *table::borrow_with_default(&lb_pairs_info, bin_step, &0u256).ignored_for_routing);
+                *vector::borrow_mut(&mut lb_pairs_available, (i as u64)) = lb_pair_information(bin_step, (*table::borrow_with_default(&lb_pairs_info, bin_step, &0u256)).lb_pair, (*table::borrow_with_default(&lb_pairs_info, bin_step, &0u256)).created_by_owner, (*table::borrow_with_default(&lb_pairs_info, bin_step, &0u256)).ignored_for_routing);
                 i = (i + 1);
             }
         };
@@ -233,7 +254,7 @@ module 0x1::lb_factory {
         };
         let preset: u256 = (*table::borrow(&state.presets, bin_step) as u256);
         let is_owner: bool = (signer::address_of(account) == owner());
-        if ((!is_preset_open(preset, state) && !is_owner)) {
+        if ((!is_preset_open(preset) && !is_owner)) {
             abort E_LB_FACTORY_PRESET_IS_LOCKED_FOR_USERS
         };
         if (!vector::contains(&state.quote_asset_whitelist, &evm_compat::to_address(token_y))) {
@@ -247,17 +268,30 @@ module 0x1::lb_factory {
         if ((evm_compat::to_address(token_a) == @0x0)) {
             abort E_LB_FACTORY_ADDRESS_ZERO
         };
-        if ((evm_compat::to_address(*table::borrow(&*table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b), bin_step).lb_pair) != @0x0)) {
+        if ((evm_compat::to_address((*table::borrow_with_default(table::borrow(table::borrow(&state.lb_pairs_info, token_a), token_b), bin_step, &0u256)).lb_pair) != @0x0)) {
             abort E_LB_FACTORY_LB_PAIR_ALREADY_EXISTS
         };
         let implementation: address = state.lb_pair_implementation;
         if ((implementation == @0x0)) {
             abort E_LB_FACTORY_IMPLEMENTATION_NOT_SET
         };
-        pair = (ilb_pair(immutable_clone::clone_deterministic(implementation, vector::empty<u8>(), aptos_hash::keccak256(vector::empty<u8>()))) as address);
-        *table::borrow_mut(&mut *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.lb_pairs_info, token_a, 0u256), token_b), bin_step) = lb_pair_information(bin_step, pair, is_owner, false);
+        pair = (ilb_pair(immutable_clone::clone_deterministic(implementation, {
+        let __bytes = bcs::to_bytes(&token_x);
+        vector::append(&mut __bytes, bcs::to_bytes(&token_y));
+        vector::append(&mut __bytes, bcs::to_bytes(&bin_step));
+        __bytes
+    }, evm_compat::bytes_to_u256(aptos_hash::keccak256({
+        let __bytes = bcs::to_bytes(&token_a);
+        vector::append(&mut __bytes, bcs::to_bytes(&token_b));
+        vector::append(&mut __bytes, bcs::to_bytes(&bin_step));
+        __bytes
+    })))) as address);
+        if (!table::contains(&state.lb_pairs_info, token_a)) {
+            table::add(&mut state.lb_pairs_info, token_a, table::new());
+        };
+        *table::borrow_mut(&mut *table::borrow_mut(&mut *table::borrow_mut(&mut state.lb_pairs_info, token_a), token_b), bin_step) = lb_pair_information(bin_step, pair, is_owner, false);
         push(state.all_lb_pairs, pair);
-        (*table::borrow(&*table::borrow_with_default(&state.available_lb_pair_bin_steps, token_a, &0u256), token_b) + bin_step);
+        (*table::borrow_with_default(table::borrow(&state.available_lb_pair_bin_steps, token_a), token_b, &vector::empty()) + bin_step);
         event::emit(LBPairCreated { arg0: token_x, arg1: token_y, arg2: bin_step, arg3: pair, arg4: (vector::length(&state.all_lb_pairs) - 1) });
         initialize(pair, pair_parameter_helper::get_base_factor(preset), pair_parameter_helper::get_filter_period(preset), pair_parameter_helper::get_decay_period(preset), pair_parameter_helper::get_reduction_factor(preset), pair_parameter_helper::get_variable_fee_control(preset), pair_parameter_helper::get_protocol_share(preset), pair_parameter_helper::get_max_volatility_accumulator(preset), active_id);
         return pair
@@ -267,21 +301,24 @@ module 0x1::lb_factory {
         let state = borrow_global_mut<LBFactoryState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
         let (token_a, token_b) = sort_tokens(token_x, token_y);
-        let pair_information: LBPairInformation = *table::borrow(&*table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b), bin_step);
+        let pair_information: LBPairInformation = *table::borrow_with_default(table::borrow(table::borrow(&state.lb_pairs_info, token_a), token_b), bin_step, &0u256);
         if ((evm_compat::to_address(pair_information.lb_pair) == @0x0)) {
             abort E_LB_FACTORY_LB_PAIR_DOES_NOT_EXIST
         };
         if ((pair_information.ignored_for_routing == ignored)) {
             abort E_LB_FACTORY_LB_PAIR_IGNORED_IS_ALREADY_IN_THE_SAME_STATE
         };
-        *table::borrow(&*table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b), bin_step).ignored_for_routing = ignored;
+        if (!table::contains(&state.lb_pairs_info, token_a)) {
+            table::add(&mut state.lb_pairs_info, token_a, table::new());
+        };
+        (*table::borrow_mut(&mut *table::borrow_mut(&mut *table::borrow_mut(&mut state.lb_pairs_info, token_a), token_b), bin_step)).ignored_for_routing = ignored;
         event::emit(LBPairIgnoredStateChanged { arg0: pair_information.lb_pair, arg1: ignored });
     }
 
     public entry fun set_preset(account: &signer, bin_step: u16, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, is_open: bool) acquires LBFactoryState {
         let state = borrow_global_mut<LBFactoryState>(@0x1);
         assert!((signer::address_of(account) == state.owner), E_UNAUTHORIZED);
-        if ((bin_step < _MIN_BIN_STEP)) {
+        if (((bin_step as u256) < _MIN_BIN_STEP)) {
             abort E_LB_FACTORY_BIN_STEP_TOO_LOW
         };
         let preset: u256 = pair_parameter_helper::set_static_fee_parameters((0 as u256), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator);
@@ -404,7 +441,7 @@ module 0x1::lb_factory {
     #[view]
     fun get_lb_pair_information(token_a: address, token_b: address, bin_step: u256, state: &LBFactoryState): LBPairInformation {
         (token_a, token_b) = sort_tokens(token_a, token_b);
-        return *table::borrow(&*table::borrow(&*table::borrow_with_default(&state.lb_pairs_info, token_a, &0u256), token_b), bin_step)
+        return *table::borrow_with_default(table::borrow(table::borrow(&state.lb_pairs_info, token_a), token_b), bin_step, &0u256)
     }
 
     fun sort_tokens(token_a: address, token_b: address): (address, address) {

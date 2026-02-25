@@ -675,8 +675,13 @@ function generateExpression(expr: MoveExpression): string {
       }
       return `${methodCall}(${args})`;
 
-    case 'field_access':
-      return `${generateExpression(expr.object)}.${expr.field}`;
+    case 'field_access': {
+      const objStr = generateExpression(expr.object);
+      // Wrap dereferences in parens to ensure correct precedence:
+      // (*table::borrow(...)).field  instead of  *table::borrow(...).field
+      const needsParens = expr.object?.kind === 'dereference';
+      return needsParens ? `(${objStr}).${expr.field}` : `${objStr}.${expr.field}`;
+    }
 
     case 'index':
       return `${generateExpression(expr.object)}[${generateExpression(expr.index)}]`;
@@ -783,6 +788,12 @@ function generateExpression(expr: MoveExpression): string {
 
     case 'copy':
       return `copy ${generateExpression(expr.value)}`;
+
+    case 'block_expr': {
+      const stmts = expr.statements.map((s: any) => generateStatement(s, 8)).join('\n');
+      const val = generateExpression(expr.value);
+      return `{\n${stmts}\n        ${val}\n    }`;
+    }
 
     default:
       return '/* unsupported expression */';

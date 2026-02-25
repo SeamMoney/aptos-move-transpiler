@@ -133,14 +133,14 @@ module 0x1::pair_parameter_helper {
     }
 
     public(package) fun get_base_fee(params: u256, bin_step: u16): u256 {
-        return (((get_base_factor(params) as u256) * bin_step) * 10000000000)
+        return (((get_base_factor(params) as u256) * (bin_step as u256)) * 10000000000)
     }
 
     public(package) fun get_variable_fee(params: u256, bin_step: u16): u256 {
         let variable_fee = 0u256;
         let variable_fee_control: u256 = get_variable_fee_control(params);
         if ((variable_fee_control != 0)) {
-            let prod: u256 = ((get_volatility_accumulator(params) as u256) * bin_step);
+            let prod: u256 = ((get_volatility_accumulator(params) as u256) * (bin_step as u256));
             variable_fee = (((((prod * prod) * variable_fee_control) + 99)) / 100);
         };
         return variable_fee
@@ -212,7 +212,7 @@ module 0x1::pair_parameter_helper {
         let id_reference: u256 = get_id_reference(params);
         let delta_id: u256;
         let vol_acc: u256;
-        delta_id = (if (((active_id as u256) > id_reference)) (active_id - id_reference) else (id_reference - active_id));
+        delta_id = (if (((active_id as u256) > id_reference)) ((active_id as u256) - id_reference) else (id_reference - (active_id as u256)));
         vol_acc = (((get_volatility_reference(params) as u256) + (delta_id * BASIS_POINT_MAX)));
         let max_vol_acc: u256 = get_max_volatility_accumulator(params);
         vol_acc = (if ((vol_acc > max_vol_acc)) max_vol_acc else vol_acc);
@@ -220,7 +220,7 @@ module 0x1::pair_parameter_helper {
     }
 
     public(package) fun update_references(params: u256, timestamp: u256): u256 {
-        let dt: u256 = (timestamp - get_time_of_last_update(params));
+        let dt: u256 = (timestamp - (get_time_of_last_update(params) as u256));
         if ((dt >= (get_filter_period(params) as u256))) {
             params = update_id_reference(params);
             params = (if ((dt < (get_decay_period(params) as u256))) update_volatility_reference(params) else set_volatility_reference(params, 0));

@@ -81,8 +81,8 @@ module 0x1::simple_amm {
     }
 
     public entry fun initialize(deployer: &signer, token0: address, token1: address) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"simple_amm");
-        move_to(&resource_signer, SimpleAMMState { token0: token0, token1: token1, reserve0: 0, reserve1: 0, total_supply: 0, balance_of: table::new(), unlocked: 0, signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"simple_amm");
+        move_to(deployer, SimpleAMMState { token0: token0, token1: token1, reserve0: 0, reserve1: 0, total_supply: 0, balance_of: table::new(), unlocked: 1u256, signer_cap: signer_cap });
     }
 
     public fun mint(account: &signer, to: address): u256 acquires SimpleAMMState {
@@ -108,6 +108,7 @@ module 0x1::simple_amm {
         state.total_supply += liquidity;
         update(balance0, balance1, state);
         event::emit(Mint { sender: signer::address_of(account), amount0: amount0, amount1: amount1 });
+        state.unlocked = 1;
         return liquidity
     }
 
@@ -128,6 +129,7 @@ module 0x1::simple_amm {
         state.total_supply -= liquidity;
         update((balance0 - amount0), (balance1 - amount1), state);
         event::emit(Burn { sender: signer::address_of(account), amount0: amount0, amount1: amount1, to: to });
+        state.unlocked = 1;
         return (amount0, amount1)
     }
 

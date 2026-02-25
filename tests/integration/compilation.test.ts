@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { transpile } from '../../src/transpiler.js';
+import { compileCheckModules, isCompilerAvailable } from '../../src/compiler/move-compiler.js';
 
 const TEST_OUTPUT_DIR = join(__dirname, '../.output');
 const FIXTURES_DIR = join(__dirname, '../fixtures/defi');
@@ -252,5 +253,36 @@ describe('Compilation Verification', () => {
       }
       expect(compileResult.success).toBe(true);
     });
+  });
+
+  describe.runIf(isCompilerAvailable())('NovaDEX End-to-End Compilation', () => {
+    it('should transpile AND compile NovaDEX (all 6 fixes)', () => {
+      const solidityCode = readFileSync(join(FIXTURES_DIR, 'NovaDEX.sol'), 'utf-8');
+
+      const result = transpile(solidityCode, {
+        moduleAddress: '0x1',
+        packageName: 'nova_dex',
+        generateToml: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.modules.length).toBeGreaterThanOrEqual(2); // nova_dex + evm_compat
+
+      // Compile via WASM compiler
+      const modules = result.modules.map(m => ({ name: m.name, code: m.code }));
+      const compileResult = compileCheckModules(modules, {
+        moduleAddress: '0x1',
+        packageName: 'nova_dex',
+        timeout: 120000,
+      });
+
+      if (!compileResult.success) {
+        console.log('NovaDEX compile errors:', compileResult.errors);
+        console.log('Raw output:', compileResult.rawOutput?.slice(0, 1000));
+      }
+
+      expect(compileResult.success).toBe(true);
+      expect(compileResult.errors).toHaveLength(0);
+    }, 120000);
   });
 });

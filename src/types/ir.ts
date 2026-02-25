@@ -387,7 +387,7 @@ export interface TranspileContext {
   localVariables: Map<string, IRType>;
   events: Map<string, IREvent>;  // Event definitions for field name lookup
   modifiers?: Map<string, IRModifier>;  // Modifier definitions for inlining
-  constants?: Map<string, { type: any; value: any }>;  // Constant definitions (not in state)
+  constants?: Map<string, { type: any; value: any; moveType?: any; isStringConstant?: boolean }>;  // Constant definitions (not in state)
   errorCodes?: Map<string, { message: string; code: number }>;  // Error code mappings
   enums?: Map<string, IREnum>;  // Enum definitions for variant lookup
   structs?: Map<string, IRStruct>;  // Struct definitions for constructor detection

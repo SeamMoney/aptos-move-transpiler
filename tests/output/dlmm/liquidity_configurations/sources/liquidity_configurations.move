@@ -48,7 +48,7 @@ module 0x1::liquidity_configurations {
         distribution_x = (encoded::decode_uint64(config, OFFSET_DISTRIBUTION_X) as u64);
         distribution_y = (encoded::decode_uint64(config, OFFSET_DISTRIBUTION_Y) as u64);
         id = (encoded::decode_uint24(config, OFFSET_ID) as u32);
-        if (((((config as u256) > 5708990770823839524233143877797980545530986495) || (distribution_x > PRECISION)) || (distribution_y > PRECISION))) {
+        if (((((config as u256) > 5708990770823839524233143877797980545530986495) || ((distribution_x as u256) > PRECISION)) || ((distribution_y as u256) > PRECISION))) {
             abort E_LIQUIDITY_CONFIGURATIONS_INVALID_CONFIG
         };
         return (distribution_x, distribution_y, id)

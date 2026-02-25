@@ -56,7 +56,7 @@ module 0x1::bin_helper {
         let shares = 0u256;
         let _effective_amounts_in = 0u256;
         let (x, y) = packed_uint128_math::decode(amounts_in);
-        let user_liquidity: u256 = get_liquidity(x, y, price);
+        let user_liquidity: u256 = get_liquidity_u_u_u(x, y, price);
         if ((user_liquidity == 0)) {
             return (0, 0)
         };
@@ -90,7 +90,7 @@ module 0x1::bin_helper {
     public(package) fun get_liquidity(amounts: u256, price: u256): u256 {
         let _liquidity = 0u256;
         let (x, y) = packed_uint128_math::decode(amounts);
-        return get_liquidity(x, y, price)
+        return get_liquidity_u_u_u(x, y, price)
     }
 
     public(package) fun get_liquidity_u_u_u(x: u256, y: u256, price: u256): u256 {
@@ -133,7 +133,6 @@ module 0x1::bin_helper {
                 fees = packed_uint128_math::encode_first(fee_x);
             };
         };
-        return fees
     }
 
     public(package) fun is_empty(bin_reserves: u256, is_x: bool): bool {

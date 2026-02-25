@@ -85,6 +85,15 @@ const ERROR_CATEGORY_MAP: Record<string, string> = {
  * @param context   - The transpile context (reads errorCodeType, writes usedModules)
  */
 export function wrapErrorCode(errorName: string, context: TranspileContext): MoveExpression {
+  // Ensure the error code is registered so a constant is generated
+  if (!context.errorCodes) context.errorCodes = new Map();
+  if (!context.errorCodes.has(errorName)) {
+    context.errorCodes.set(errorName, {
+      message: errorName.replace(/^E_/, '').replace(/_/g, ' ').toLowerCase(),
+      code: context.errorCodes.size + 1,
+    });
+  }
+
   if (context.errorCodeType !== 'aptos-error-module') {
     return { kind: 'identifier', name: errorName };
   }
@@ -596,6 +605,41 @@ function transformVariableDeclaration(
     context.localVariables.set(toSnakeCase(names[0]), stmt.type);
   }
 
+  // Track table copy origins for write-back detection.
+  // When a local is assigned from a mapping dereference (e.g., let pool = pools[id]),
+  // record the mapping name and key so we can emit table::upsert after mutations.
+  if (stmt.initialValue?.kind === 'index_access' && names.length === 1) {
+    const baseName = stmt.initialValue.base?.kind === 'identifier' ? stmt.initialValue.base.name : null;
+    const stateVar = baseName ? context.stateVariables.get(baseName) : null;
+    if (stateVar?.isMapping && !isNestedMappingValue(stateVar)) {
+      // Flat mapping: pools[id] → table::upsert(&mut state.pools, id, local)
+      if (!(context as any)._tableCopyOrigins) (context as any)._tableCopyOrigins = new Map();
+      (context as any)._tableCopyOrigins.set(toSnakeCase(names[0]), {
+        mappingName: baseName,
+        key: transformExpression(stmt.initialValue.index, context),
+        mutated: false,
+      });
+    }
+
+    // Nested mapping: positions[poolId][msg.sender]
+    // AST: index_access { base: index_access { base: identifier("positions"), index: poolId }, index: msg.sender }
+    if (!baseName && stmt.initialValue.base?.kind === 'index_access') {
+      const outerAccess = stmt.initialValue.base;
+      const outerBaseName = outerAccess.base?.kind === 'identifier' ? outerAccess.base.name : null;
+      const outerStateVar = outerBaseName ? context.stateVariables.get(outerBaseName) : null;
+      if (outerStateVar?.isMapping && isNestedMappingValue(outerStateVar)) {
+        if (!(context as any)._tableCopyOrigins) (context as any)._tableCopyOrigins = new Map();
+        (context as any)._tableCopyOrigins.set(toSnakeCase(names[0]), {
+          mappingName: outerBaseName,
+          outerKey: transformExpression(outerAccess.index, context),
+          key: transformExpression(stmt.initialValue.index, context),
+          nested: true,
+          mutated: false,
+        });
+      }
+    }
+  }
+
   return {
     kind: 'let',
     pattern,
@@ -611,13 +655,27 @@ function transformAssignment(
   stmt: any,
   context: TranspileContext
 ): MoveStatement {
+  // Mark table copy origins as mutated when their fields are assigned.
+  // e.g., pool.reserve0 += amount → marks 'pool' as mutated for write-back.
+  if (stmt.target?.kind === 'member_access' && stmt.target.object?.kind === 'identifier') {
+    const localName = toSnakeCase(stmt.target.object.name);
+    const origins = (context as any)._tableCopyOrigins as Map<string, any> | undefined;
+    const origin = origins?.get(localName);
+    if (origin) origin.mutated = true;
+  }
+
   // Check if the target is an index access (mapping/array) - use mutable borrow
   let target: any;
   if (stmt.target?.kind === 'index_access') {
     target = transformIndexAccessMutable(stmt.target, context);
   } else if (stmt.target?.kind === 'member_access') {
-    // Handle state.field assignments
-    target = transformExpression(stmt.target, context);
+    // If the member_access contains a mapping index_access deeper in the tree
+    // (e.g., pools[id].reserveA), use mutable borrow path
+    if (targetContainsMappingIndexAccess(stmt.target, context)) {
+      target = transformMemberAccessMutable(stmt.target, context);
+    } else {
+      target = transformExpression(stmt.target, context);
+    }
   } else {
     target = transformExpression(stmt.target, context);
   }
@@ -689,24 +747,38 @@ function transformAssignment(
   }
 
   // Handle compound assignment
+  let assignStmt: MoveStatement;
   if (stmt.operator && stmt.operator !== '=') {
     // For shift compound assignments, right operand must be u8 in Move
     if (stmt.operator === '<<=' || stmt.operator === '>>=') {
       value = castToU8ForShift(value);
     }
-    return {
+    assignStmt = {
       kind: 'assign',
       target,
       operator: stmt.operator as any,
       value,
     };
+  } else {
+    assignStmt = {
+      kind: 'assign',
+      target,
+      value,
+    };
   }
 
-  return {
-    kind: 'assign',
-    target,
-    value,
-  };
+  // Drain pre-statements injected by nested mapping access patterns
+  // (e.g., if (!table::contains(...)) { table::add(..., table::new()) })
+  const preStmts = (context as any)._preStatements as MoveStatement[] | undefined;
+  if (preStmts && preStmts.length > 0) {
+    (context as any)._preStatements = [];
+    return {
+      kind: 'block',
+      statements: [...preStmts, assignStmt],
+    } as any;
+  }
+
+  return assignStmt;
 }
 
 /**
@@ -1481,12 +1553,23 @@ function transformIdentifier(expr: any, context: TranspileContext): MoveExpressi
   // Check if it's a constant - constants are accessed directly by their SCREAMING_SNAKE_CASE name
   if (context.constants?.has(expr.name)) {
     const constDef = context.constants.get(expr.name);
-    const constType = constDef?.type?.move;
-    return {
+    const constType = constDef?.moveType || constDef?.type?.move;
+    let result: MoveExpression = {
       kind: 'identifier',
       name: toScreamingSnakeCase(expr.name),
       inferredType: constType,
     };
+    // String constants stored as vector<u8> — wrap with string::utf8() at usage
+    if (constDef?.isStringConstant) {
+      context.usedModules.add('std::string');
+      result = {
+        kind: 'call',
+        function: 'string::utf8',
+        args: [result],
+        inferredType: { kind: 'struct', name: 'String', module: 'string' },
+      };
+    }
+    return result;
   }
 
   // Check if it's a state variable (but not a constant)
@@ -1501,11 +1584,15 @@ function transformIdentifier(expr: any, context: TranspileContext): MoveExpressi
       }
     }
 
-    const fieldAccess: MoveExpression = {
+    const fieldAccess: any = {
       kind: 'field_access',
       object: { kind: 'identifier', name: objectName },
       field: name,
     };
+    // Set inferredType from state variable type for arithmetic harmonization
+    if (stateVar.type?.move) {
+      fieldAccess.inferredType = stateVar.type.move;
+    }
 
     // For event-trackable variables: return 0 (value tracked off-chain via events)
     if (context.resourcePlan && context.optimizationLevel !== 'low' &&
@@ -1720,7 +1807,25 @@ function transformBinary(expr: any, context: TranspileContext): MoveExpression {
     return harmonizeComparison(op, left, right, context);
   }
 
-  // Infer type for arithmetic/bitwise operations
+  // Arithmetic/bitwise type harmonization: Move requires both operands to have the same type.
+  // Upcast the narrower operand to the wider type (mirrors comparison harmonization above).
+  if (['+', '-', '*', '/', '%', '&', '|', '^'].includes(op)) {
+    const leftType = getExprInferredType(left);
+    const rightType = getExprInferredType(right);
+    if (leftType && rightType) {
+      const harmonized = harmonizeComparisonTypes(left, right);
+      const resultType = inferBinaryResultType(op, getExprInferredType(harmonized.left), getExprInferredType(harmonized.right));
+      return {
+        kind: 'binary',
+        operator: op as any,
+        left: harmonized.left,
+        right: harmonized.right,
+        inferredType: resultType,
+      };
+    }
+  }
+
+  // Infer type for remaining operations (shift, or when types can't be harmonized)
   const resultType = inferBinaryResultType(op, getExprInferredType(left), getExprInferredType(right));
   return {
     kind: 'binary',
@@ -1827,9 +1932,55 @@ function harmonizeComparison(op: string, left: any, right: any, context: Transpi
 }
 
 /**
+ * Transform delete expression to table::remove or default reset
+ */
+function transformDeleteExpression(operand: any, context: TranspileContext): MoveExpression {
+  // delete mapping[key] → table::remove(&mut state.mapping, key)
+  if (operand.kind === 'index_access') {
+    const baseName = operand.base?.kind === 'identifier' ? operand.base.name : null;
+    const stateVar = baseName ? context.stateVariables.get(baseName) : null;
+    if (stateVar?.isMapping) {
+      const base = transformExpression(operand.base, context);
+      const index = transformExpression(operand.index, context);
+      context.usedModules.add(tableModulePath(context));
+      return {
+        kind: 'call',
+        function: `${tableModule(context)}::remove`,
+        args: [
+          { kind: 'borrow', mutable: true, value: base },
+          index,
+        ],
+      };
+    }
+    // Nested mapping: delete mapping[k1][k2]
+    if (operand.base?.kind === 'index_access') {
+      const outerMut = transformIndexAccessMutable(operand.base, context);
+      const innerIndex = transformExpression(operand.index, context);
+      context.usedModules.add(tableModulePath(context));
+      return {
+        kind: 'call',
+        function: `${tableModule(context)}::remove`,
+        args: [
+          { kind: 'borrow', mutable: true, value: outerMut },
+          innerIndex,
+        ],
+      };
+    }
+  }
+  // Fallback: warn and emit a no-op
+  warnOrError(context, 'delete on non-mapping target replaced with no-op');
+  return { kind: 'literal', type: 'bool', value: true };
+}
+
+/**
  * Transform unary operation
  */
 function transformUnary(expr: any, context: TranspileContext): MoveExpression {
+  // Handle delete operator — must be before transforming operand
+  if (expr.operator === 'delete') {
+    return transformDeleteExpression(expr.operand, context);
+  }
+
   const operand = transformExpression(expr.operand, context);
 
   const operandType = getExprInferredType(operand);
@@ -1890,13 +2041,24 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
   if (expr.function?.kind === 'identifier') {
     const name = expr.function.name;
 
-    // keccak256 -> aptos_hash::keccak256
+    // keccak256 -> aptos_hash::keccak256, wrapped with bytes_to_u256 for u256 result
+    // In Solidity, keccak256 returns bytes32 (mapped to u256).
+    // In Move, aptos_hash::keccak256 returns vector<u8>.
+    // Wrap with evm_compat::bytes_to_u256 for big-endian u256 conversion (matches EVM semantics).
     if (name === 'keccak256') {
       context.usedModules.add('aptos_std::aptos_hash');
-      return {
+      context.usedModules.add('transpiler::evm_compat');
+      const hashCall: MoveExpression = {
         kind: 'call',
         function: 'aptos_hash::keccak256',
         args,
+        inferredType: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } },
+      };
+      return {
+        kind: 'call',
+        function: 'evm_compat::bytes_to_u256',
+        args: [hashCall],
+        inferredType: { kind: 'primitive', name: 'u256' },
       };
     }
 
@@ -1993,7 +2155,34 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
             args: [{ kind: 'borrow', mutable: false, value: dataArgs[0] }],
           };
         }
-        // Multiple or zero data args — use vector::empty placeholder
+        // Multiple data args — serialize and concatenate
+        if (dataArgs.length >= 2) {
+          context.usedModules.add('std::vector');
+          context.usedModules.add('aptos_std::bcs');
+          const statements: any[] = [];
+          statements.push({
+            kind: 'let', pattern: '__bytes', mutable: true,
+            value: { kind: 'call', function: 'bcs::to_bytes', args: [{ kind: 'borrow', mutable: false, value: dataArgs[0] }] },
+          });
+          for (let i = 1; i < dataArgs.length; i++) {
+            statements.push({
+              kind: 'expression',
+              expression: {
+                kind: 'call', function: 'vector::append',
+                args: [
+                  { kind: 'borrow', mutable: true, value: { kind: 'identifier', name: '__bytes' } },
+                  { kind: 'call', function: 'bcs::to_bytes', args: [{ kind: 'borrow', mutable: false, value: dataArgs[i] }] },
+                ],
+              },
+            });
+          }
+          return {
+            kind: 'block_expr', statements,
+            value: { kind: 'identifier', name: '__bytes' },
+            inferredType: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } },
+          };
+        }
+        // Zero data args fallback
         context.usedModules.add('std::vector');
         return {
           kind: 'call',
@@ -2009,8 +2198,47 @@ function transformFunctionCall(expr: any, context: TranspileContext): MoveExpres
             kind: 'call',
             function: 'bcs::to_bytes',
             args: [{ kind: 'borrow', mutable: false, value: args[0] }],
+            inferredType: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } },
           };
         }
+        if (args.length >= 2) {
+          // Multi-arg: serialize each and concatenate via block expression
+          context.usedModules.add('std::vector');
+          context.usedModules.add('aptos_std::bcs');
+          const statements: any[] = [];
+          // let __bytes = bcs::to_bytes(&arg0);
+          statements.push({
+            kind: 'let',
+            pattern: '__bytes',
+            mutable: true,
+            value: {
+              kind: 'call',
+              function: 'bcs::to_bytes',
+              args: [{ kind: 'borrow', mutable: false, value: args[0] }],
+            },
+          });
+          // vector::append(&mut __bytes, bcs::to_bytes(&argN)) for remaining
+          for (let i = 1; i < args.length; i++) {
+            statements.push({
+              kind: 'expression',
+              expression: {
+                kind: 'call',
+                function: 'vector::append',
+                args: [
+                  { kind: 'borrow', mutable: true, value: { kind: 'identifier', name: '__bytes' } },
+                  { kind: 'call', function: 'bcs::to_bytes', args: [{ kind: 'borrow', mutable: false, value: args[i] }] },
+                ],
+              },
+            });
+          }
+          return {
+            kind: 'block_expr',
+            statements,
+            value: { kind: 'identifier', name: '__bytes' },
+            inferredType: { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } },
+          };
+        }
+        // Zero args fallback
         context.usedModules.add('std::vector');
         return {
           kind: 'call',
@@ -2461,11 +2689,46 @@ function transformMemberAccess(expr: any, context: TranspileContext): MoveExpres
     };
   }
 
-  return {
+  // When accessing a field on a table borrow result (e.g., pools[poolId].initialized),
+  // Move doesn't support chaining .field on function call results.
+  // Dereference the borrow to get a local copy, then access the field.
+  // The index_access transformer wraps borrow calls in dereference: dereference(call(...))
+  // We need to detect both: direct call or dereference(call).
+  const innerCall = obj.kind === 'dereference' ? obj.value : obj;
+  const isBorrowCall = innerCall?.kind === 'call' &&
+    typeof innerCall.function === 'string' &&
+    (innerCall.function.includes('::borrow_with_default') || innerCall.function.includes('::borrow'));
+  // If it's already a dereference(borrow(...)), use the dereference as-is (produces *borrow(...))
+  // If it's a direct borrow call, wrap in dereference
+  const effectiveObj = isBorrowCall
+    ? (obj.kind === 'dereference' ? obj : { kind: 'dereference' as const, value: obj })
+    : obj;
+
+  const result: any = {
     kind: 'field_access',
-    object: obj,
+    object: effectiveObj,
     field: toSnakeCase(expr.member),
   };
+
+  // Try to infer the field type from struct definitions
+  // This enables type harmonization for arithmetic on struct fields (e.g., pool.fee_override_bps)
+  const objName = expr.object?.kind === 'identifier' ? expr.object.name : null;
+  if (objName && context.structs) {
+    // Look up the local variable type to find the struct name
+    const localType = context.localVariables?.get(toSnakeCase(objName));
+    const structName = localType?.structName || (localType?.move as any)?.name;
+    if (structName) {
+      const structDef = context.structs.get(structName);
+      if (structDef) {
+        const fieldDef = structDef.fields.find((f: any) => f.name === expr.member);
+        if (fieldDef?.type?.move) {
+          result.inferredType = fieldDef.type.move;
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -2514,6 +2777,19 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
     if (stateVar?.isMapping) {
       context.usedModules.add(tableModulePath(context));
 
+      // Nested mapping: value type is Table (no 'drop' ability).
+      // Can't use borrow_with_default; use table::borrow (caller handles missing key).
+      if (isNestedMappingValue(stateVar)) {
+        return {
+          kind: 'call',
+          function: `${tableModule(context)}::borrow`,
+          args: [
+            { kind: 'borrow', mutable: false, value: base },
+            index,
+          ],
+        };
+      }
+
       // Use table::borrow_with_default for safe access
       // Solidity mappings return 0/false/address(0) for missing keys
       const defaultValue = getDefaultForMappingValue(stateVar, context);
@@ -2558,15 +2834,45 @@ function transformIndexAccess(expr: any, context: TranspileContext): MoveExpress
     const outerAccess = transformIndexAccess(expr.base, context);
     context.usedModules.add(tableModulePath(context));
 
-    // Nested table access - the outer access should give us an inner table
+    // Nested table access - outerAccess is already a &Table from table::borrow,
+    // so pass it directly without wrapping in another & borrow
+    const innerTableArg = (outerAccess as any).kind === 'call' &&
+      ((outerAccess as any).function || '').includes('::borrow')
+      ? outerAccess  // Already returns &Table — don't wrap
+      : { kind: 'borrow' as const, mutable: false, value: outerAccess };
+
+    // Resolve the inner table's VALUE type to decide: borrow vs borrow_with_default
+    // For mapping(K1 => mapping(K2 => V)), the inner table is Table<K2, V>.
+    // If V is another mapping, use borrow (no drop); otherwise use borrow_with_default.
+    const rootBase = expr.base?.base;
+    const rootStateVar = rootBase?.kind === 'identifier' ? context.stateVariables.get(rootBase.name) : null;
+    const innerMappingType = rootStateVar?.mappingValueType; // mapping(K2 => V)
+    const leafValueType = innerMappingType?.valueType; // V
+    const leafIsMapping = leafValueType?.isMapping;
+
+    if (leafIsMapping) {
+      // Leaf is yet another table — can't use borrow_with_default (no drop)
+      return {
+        kind: 'call',
+        function: `${tableModule(context)}::borrow`,
+        args: [innerTableArg, index],
+      };
+    }
+
+    // Leaf value has drop: use borrow_with_default for safe access, with dereference to copy
+    const defaultValue = leafValueType
+      ? getDefaultForMappingValue({ mappingValueType: leafValueType, valueType: leafValueType, type: leafValueType }, context)
+      : { kind: 'literal', type: 'number', value: 0, suffix: 'u256' } as MoveExpression;
+
     return {
       kind: 'dereference',
       value: {
         kind: 'call',
-        function: `${tableModule(context)}::borrow`,
+        function: `${tableModule(context)}::borrow_with_default`,
         args: [
-          { kind: 'borrow', mutable: false, value: outerAccess },
+          innerTableArg,
           index,
+          { kind: 'borrow' as const, mutable: false, value: defaultValue },
         ],
       },
     };
@@ -2753,6 +3059,66 @@ function getDefaultForMoveType(moveType: any, irType: any, context: TranspileCon
 }
 
 /**
+ * Check if a state variable's mapping value type is itself a mapping (Table).
+ * For nested mappings like mapping(K => mapping(K2 => V)), the outer mapping's
+ * value type is Table<K2, V>, which doesn't have 'drop' and can't be used with
+ * borrow_with_default / borrow_mut_with_default.
+ */
+function isNestedMappingValue(stateVar: any): boolean {
+  const valueType = stateVar.mappingValueType || stateVar.valueType;
+  if (!valueType) return false;
+  return valueType.isMapping === true;
+}
+
+/**
+ * Check if an assignment target expression tree contains a mapping index_access.
+ * Used to decide whether to use mutable borrow paths for member_access targets
+ * like `pools[id].reserveA += amount`.
+ */
+function targetContainsMappingIndexAccess(expr: any, context: TranspileContext): boolean {
+  if (!expr) return false;
+  if (expr.kind === 'index_access') {
+    if (expr.base?.kind === 'identifier') {
+      const stateVar = context.stateVariables.get(expr.base.name);
+      if (stateVar?.isMapping) return true;
+      const localName = toSnakeCase(expr.base.name);
+      const localInfo = context.localVariables.get(localName);
+      if (localInfo?.isMapping) return true;
+    }
+    return targetContainsMappingIndexAccess(expr.base, context);
+  }
+  if (expr.kind === 'member_access') {
+    return targetContainsMappingIndexAccess(expr.object, context);
+  }
+  return false;
+}
+
+/**
+ * Transform member_access expression for mutable assignment targets.
+ * When the inner object contains a mapping index_access, uses borrow_mut
+ * instead of the default immutable borrow.
+ * Example: `pools[id].reserveA` → `table::borrow_mut_with_default(...).reserveA`
+ */
+function transformMemberAccessMutable(expr: any, context: TranspileContext): MoveExpression {
+  let obj: MoveExpression;
+  if (expr.object?.kind === 'index_access') {
+    // Use mutable borrow path for the inner index_access
+    obj = transformIndexAccessMutable(expr.object, context);
+  } else if (expr.object?.kind === 'member_access') {
+    // Recursively handle nested member_access chains
+    obj = transformMemberAccessMutable(expr.object, context);
+  } else {
+    obj = transformExpression(expr.object, context);
+  }
+
+  return {
+    kind: 'field_access',
+    object: obj,
+    field: toSnakeCase(expr.member),
+  };
+}
+
+/**
  * Transform index access for mutation (assignment target)
  * Returns a mutable borrow suitable for assignment
  */
@@ -2786,7 +3152,55 @@ export function transformIndexAccessMutable(expr: any, context: TranspileContext
     const stateVar = context.stateVariables.get(expr.base.name);
     if (stateVar?.isMapping) {
       context.usedModules.add(tableModulePath(context));
-      // Use table::upsert pattern: add default if key doesn't exist, then borrow_mut
+
+      // Nested mapping: value type is Table (no 'drop' ability).
+      // Can't use borrow_mut_with_default; use contains + add(table::new()) + borrow_mut.
+      if (isNestedMappingValue(stateVar)) {
+        const containsCheck: MoveExpression = {
+          kind: 'unary',
+          operator: '!',
+          operand: {
+            kind: 'call',
+            function: `${tableModule(context)}::contains`,
+            args: [
+              { kind: 'borrow', mutable: false, value: base },
+              index,
+            ],
+          },
+        };
+        const addStmt: MoveStatement = {
+          kind: 'expression',
+          expression: {
+            kind: 'call',
+            function: `${tableModule(context)}::add`,
+            args: [
+              { kind: 'borrow', mutable: true, value: base },
+              index,
+              { kind: 'call', function: `${tableModule(context)}::new`, args: [] },
+            ],
+          },
+        };
+        if (!(context as any)._preStatements) (context as any)._preStatements = [];
+        (context as any)._preStatements.push({
+          kind: 'if',
+          condition: containsCheck,
+          thenBlock: [addStmt],
+        });
+
+        return {
+          kind: 'dereference',
+          value: {
+            kind: 'call',
+            function: `${tableModule(context)}::borrow_mut`,
+            args: [
+              { kind: 'borrow', mutable: true, value: base },
+              index,
+            ],
+          },
+        };
+      }
+
+      // Use table::borrow_mut_with_default: add default if key doesn't exist, then borrow_mut
       // This mirrors Solidity's behavior where writing to mapping[key] auto-initializes
       return {
         kind: 'dereference',

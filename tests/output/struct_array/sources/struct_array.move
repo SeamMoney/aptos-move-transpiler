@@ -38,8 +38,8 @@ module 0x1::struct_array {
     }
 
     fun init_module(deployer: &signer) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"struct_array");
-        move_to(&resource_signer, StructArrayState { items: vector::empty(), signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"struct_array");
+        move_to(deployer, StructArrayState { items: vector::empty(), signer_cap: signer_cap });
     }
 
     public entry fun add_item(account: &signer, id: u256, name: std::string::String) acquires StructArrayState {

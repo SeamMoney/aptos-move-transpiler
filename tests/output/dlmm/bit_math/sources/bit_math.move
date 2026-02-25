@@ -28,7 +28,7 @@ module 0x1::bit_math {
         let _id = 0u256;
         let shift: u256 = (255 - bit);
         x <<= (shift as u8);
-        return (if (((x == 0))) u256::MAX else (most_significant_bit(x) - shift))
+        return (if (((x == 0))) u256::MAX else ((most_significant_bit(x) as u256) - shift))
     }
 
     public(package) fun closest_bit_left(x: u256, bit: u8): u256 {

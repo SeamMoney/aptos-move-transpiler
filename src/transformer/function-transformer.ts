@@ -205,13 +205,93 @@ export function transformFunction(
 
   // Get modifier POST-statements (cleanup code)
   const modifierCleanup = getModifiersPostStatements(fn.modifiers || [], context);
-  const hasCleanup = modifierCleanup.length > 0;
   const bodyStatements = transformFunctionBodyStatements(fn.body, context);
+
+  // Generate table write-back statements for mutated local copies.
+  // When Solidity code does `Pool storage pool = pools[id]; pool.reserve0 += x;`,
+  // the transpiler creates a local copy. We must write it back via table::upsert.
+  const tableCopyOrigins = (context as any)._tableCopyOrigins as Map<string, {
+    mappingName: string;
+    key: any;
+    outerKey?: any;
+    nested?: boolean;
+    mutated: boolean;
+  }> | undefined;
+  const writeBackStatements: MoveStatement[] = [];
+  if (tableCopyOrigins) {
+    for (const [localName, origin] of tableCopyOrigins) {
+      if (origin.mutated) {
+        const tableModName = context.mappingType === 'smart-table' ? 'smart_table' : 'table';
+        context.usedModules.add(context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table');
+
+        if (origin.nested && origin.outerKey) {
+          // Nested mapping: positions[poolId][user] = pos
+          // → table::upsert(table::borrow_mut(&mut state.positions, poolId), user, pos)
+          writeBackStatements.push({
+            kind: 'expression',
+            expression: {
+              kind: 'call',
+              function: `${tableModName}::upsert`,
+              args: [
+                {
+                  kind: 'call',
+                  function: `${tableModName}::borrow_mut`,
+                  args: [
+                    {
+                      kind: 'borrow',
+                      mutable: true,
+                      value: {
+                        kind: 'field_access',
+                        object: { kind: 'identifier', name: 'state' },
+                        field: toSnakeCase(origin.mappingName),
+                      },
+                    },
+                    origin.outerKey,
+                  ],
+                },
+                origin.key,
+                { kind: 'identifier', name: localName },
+              ],
+            },
+          } as any);
+        } else {
+          // Flat mapping: pools[id] = pool
+          // → table::upsert(&mut state.pools, id, pool)
+          writeBackStatements.push({
+            kind: 'expression',
+            expression: {
+              kind: 'call',
+              function: `${tableModName}::upsert`,
+              args: [
+                {
+                  kind: 'borrow',
+                  mutable: true,
+                  value: {
+                    kind: 'field_access',
+                    object: { kind: 'identifier', name: 'state' },
+                    field: toSnakeCase(origin.mappingName),
+                  },
+                },
+                origin.key,
+                { kind: 'identifier', name: localName },
+              ],
+            },
+          } as any);
+        }
+      }
+    }
+    (context as any)._tableCopyOrigins = undefined;
+  }
+
+  // Merge write-backs into modifier cleanup so they run before reentrancy unlock
+  // and before every explicit return.
+  const allCleanup = [...writeBackStatements, ...modifierCleanup];
+  const hasCleanup = allCleanup.length > 0;
 
   // Ensure cleanup runs before every explicit return and also on fallthrough.
   if (hasCleanup) {
-    fullBody.push(...injectCleanupBeforeReturns(bodyStatements, modifierCleanup));
-    fullBody.push(...modifierCleanup.map(cloneMoveStatement));
+    fullBody.push(...injectCleanupBeforeReturns(bodyStatements, allCleanup));
+    fullBody.push(...allCleanup.map(cloneMoveStatement));
   } else {
     fullBody.push(...bodyStatements);
   }
@@ -991,10 +1071,21 @@ export function transformConstructor(
     paramNameMap, // Add the param name mapping
   };
 
+  // Known Solidity variable names used for reentrancy guards
+  const REENTRANCY_VAR_NAMES = new Set(['_status', 'locked', '_locked', '_not_entered', '_notEntered', 'status', 'reentrancyStatus', '_reentrancyStatus', 'reentrancy_status']);
+
   // Build the state initialization
   const stateInitializerValues = new Map<string, any>();
   const stateFields = stateVariables
-    .filter(v => v.mutability !== 'constant')
+    .filter(v => {
+      if (v.mutability === 'constant') return false;
+      // Skip native reentrancy fields when injecting our own
+      if ((context as any).usesNonReentrant) {
+        const snakeName = toSnakeCase(v.name);
+        if (REENTRANCY_VAR_NAMES.has(snakeName) || REENTRANCY_VAR_NAMES.has(v.name)) return false;
+      }
+      return true;
+    })
     .map(v => {
       const initContext = { ...constructorContext, stateInitializerValues } as any;
       // Check if this variable is initialized in the constructor
@@ -1011,6 +1102,22 @@ export function transformConstructor(
         value: resolved,
       };
     });
+
+  // Inject reentrancy_status field if needed
+  if ((context as any).usesNonReentrant) {
+    // Remove any native reentrancy fields that slipped through
+    for (let i = stateFields.length - 1; i >= 0; i--) {
+      if (REENTRANCY_VAR_NAMES.has(stateFields[i].name)) {
+        stateFields.splice(i, 1);
+      }
+    }
+    if (!stateFields.some(f => f.name === 'reentrancy_status')) {
+      stateFields.push({
+        name: 'reentrancy_status',
+        value: { kind: 'literal', type: 'number', value: 1, suffix: 'u8' },
+      });
+    }
+  }
 
   const constructorPattern = context.constructorPattern || 'resource-account';
 
@@ -2206,6 +2313,55 @@ function transformConstructorExpression(expr: any, context: TranspileContext, ta
       }
       return expr;
 
+    case 'function_call': {
+      // Handle struct constructor calls: StructName(arg1, ...) or StructName({field: val, ...})
+      if (expr.function?.kind === 'identifier') {
+        const structName = expr.function.name;
+        const structDef = context.structs?.get(structName);
+        if (structDef) {
+          const transformedArgs = (expr.args || []).map((a: any) => transformConstructorExpression(a, context));
+          // Named arguments: FeeDistribution({lpShare: 7000, ...})
+          if (expr.names && expr.names.length > 0) {
+            const fields = expr.names.map((name: string, i: number) => ({
+              name: toSnakeCase(name),
+              value: transformedArgs[i] || { kind: 'literal', type: 'number', value: 0, suffix: 'u256' },
+            }));
+            return { kind: 'struct', name: structName, fields };
+          }
+          // Positional arguments
+          const fields = structDef.fields.map((field: any, i: number) => ({
+            name: toSnakeCase(field.name),
+            value: transformedArgs[i] || { kind: 'literal', type: 'number', value: 0, suffix: 'u256' },
+          }));
+          return { kind: 'struct', name: structName, fields };
+        }
+      }
+      // Other function calls — recurse into args
+      return {
+        ...expr,
+        args: (expr.args || []).map((a: any) => transformConstructorExpression(a, context)),
+      };
+    }
+
+    case 'member_access':
+      return {
+        ...expr,
+        object: transformConstructorExpression(expr.object, context),
+      };
+
+    case 'index_access':
+      return {
+        ...expr,
+        base: transformConstructorExpression(expr.base, context),
+        index: transformConstructorExpression(expr.index, context),
+      };
+
+    case 'block_access':
+      if (expr.property === 'number' || expr.property === 'timestamp') {
+        return { kind: 'literal', type: 'number', value: 0, suffix: 'u256' };
+      }
+      return expr;
+
     default:
       return expr;
   }
@@ -2290,9 +2446,78 @@ function getDefaultValue(
     case 'vector':
       return { kind: 'call', function: 'vector::empty', args: [] };
 
+    case 'struct': {
+      // String type
+      if (moveType.module?.includes('string')) {
+        context.usedModules.add('std::string');
+        return { kind: 'call', function: 'string::utf8', args: [{ kind: 'vector', elements: [] }] };
+      }
+      // Table/SmartTable
+      if (moveType.name === 'Table' || moveType.name === 'SmartTable') {
+        const mod = moveType.name === 'SmartTable' ? 'smart_table' : 'table';
+        context.usedModules.add(mod === 'smart_table' ? 'aptos_std::smart_table' : 'aptos_std::table');
+        return { kind: 'call', function: `${mod}::new`, args: [] };
+      }
+      // Custom structs — recursively build with default fields
+      const structDef = context.structs?.get(moveType.name);
+      if (structDef && structDef.fields?.length > 0) {
+        return {
+          kind: 'struct',
+          name: moveType.name,
+          fields: structDef.fields.map((f: any) => ({
+            name: toSnakeCase(f.name),
+            value: getDefaultValueForField(f.type, context, 0),
+          })),
+        };
+      }
+      return { kind: 'literal', type: 'number', value: 0 };
+    }
+
     default:
       return { kind: 'literal', type: 'number', value: 0 };
   }
+}
+
+/**
+ * Get default value for a struct field type (recursive, with depth guard)
+ */
+function getDefaultValueForField(type: any, context: TranspileContext, depth: number): any {
+  if (depth > 5) return { kind: 'literal', type: 'number', value: 0 };
+  const moveType = type?.move || type;
+  if (!moveType) return { kind: 'literal', type: 'number', value: 0 };
+
+  if (moveType.kind === 'primitive') {
+    switch (moveType.name) {
+      case 'bool': return { kind: 'literal', type: 'bool', value: false };
+      case 'address': return { kind: 'literal', type: 'address', value: '@0x0' };
+      default: return { kind: 'literal', type: 'number', value: 0 };
+    }
+  }
+  if (moveType.kind === 'vector') {
+    return { kind: 'call', function: 'vector::empty', args: [] };
+  }
+  if (moveType.kind === 'struct') {
+    if (moveType.module?.includes('string')) {
+      context.usedModules.add('std::string');
+      return { kind: 'call', function: 'string::utf8', args: [{ kind: 'vector', elements: [] }] };
+    }
+    if (moveType.name === 'Table' || moveType.name === 'SmartTable') {
+      const mod = moveType.name === 'SmartTable' ? 'smart_table' : 'table';
+      return { kind: 'call', function: `${mod}::new`, args: [] };
+    }
+    const structDef = context.structs?.get(moveType.name);
+    if (structDef && structDef.fields?.length > 0) {
+      return {
+        kind: 'struct',
+        name: moveType.name,
+        fields: structDef.fields.map((f: any) => ({
+          name: toSnakeCase(f.name),
+          value: getDefaultValueForField(f.type, context, depth + 1),
+        })),
+      };
+    }
+  }
+  return { kind: 'literal', type: 'number', value: 0 };
 }
 
 /**

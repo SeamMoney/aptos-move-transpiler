@@ -78,7 +78,7 @@ module 0x1::sample_math {
 
     public(package) fun get_sample_last_update(sample: u256): u64 {
         let last_update = 0u64;
-        last_update = ((get_sample_creation(sample) + get_sample_lifetime(sample)) as u64);
+        last_update = ((get_sample_creation(sample) + (get_sample_lifetime(sample) as u64)) as u64);
         return last_update
     }
 
@@ -98,11 +98,10 @@ module 0x1::sample_math {
         if ((weight1 == 0)) {
             return ((c_id2 as u64), (c_volatility2 as u64), (c_bin_crossed2 as u64))
         };
-        let total_weight: u256 = ((weight1 as u256) + weight2);
-        weighted_average_id = (((((c_id1 * weight1) + (c_id2 * weight2))) / total_weight) as u64);
-        weighted_average_volatility = (((((c_volatility1 * weight1) + (c_volatility2 * weight2))) / total_weight) as u64);
-        weighted_average_bin_crossed = (((((c_bin_crossed1 * weight1) + (c_bin_crossed2 * weight2))) / total_weight) as u64);
-        return (weighted_average_id, weighted_average_volatility, weighted_average_bin_crossed)
+        let total_weight: u256 = ((weight1 as u256) + (weight2 as u256));
+        weighted_average_id = (((((c_id1 * (weight1 as u256)) + (c_id2 * (weight2 as u256)))) / total_weight) as u64);
+        weighted_average_volatility = (((((c_volatility1 * (weight1 as u256)) + (c_volatility2 * (weight2 as u256)))) / total_weight) as u64);
+        weighted_average_bin_crossed = (((((c_bin_crossed1 * (weight1 as u256)) + (c_bin_crossed2 * (weight2 as u256)))) / total_weight) as u64);
     }
 
     public(package) fun update(sample: u256, delta_time: u64, active_id: u32, volatility_accumulator: u32, bin_crossed: u32): (u64, u64, u64) {

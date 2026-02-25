@@ -31,8 +31,8 @@ module 0x1::ownable {
     }
 
     fun init_module(deployer: &signer) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"ownable");
-        move_to(&resource_signer, OwnableState { owner: signer::address_of(deployer), signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"ownable");
+        move_to(deployer, OwnableState { owner: signer::address_of(deployer), signer_cap: signer_cap });
     }
 
     public entry fun do_something(account: &signer) acquires OwnableState {

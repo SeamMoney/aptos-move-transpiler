@@ -29,13 +29,13 @@ module 0x1::reentrancy_guard {
     const E_DIVISION_BY_ZERO: u64 = 18u64;
 
     struct ReentrancyGuardState has key {
-        status: u256,
+        reentrancy_status: u8,
         signer_cap: account::SignerCapability
     }
 
     fun init_module(deployer: &signer) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"reentrancy_guard");
-        move_to(&resource_signer, ReentrancyGuardState { status: 0, signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"reentrancy_guard");
+        move_to(deployer, ReentrancyGuardState { reentrancy_status: 1u8, signer_cap: signer_cap });
     }
 
     public entry fun withdraw(account: &signer, amount: u256) acquires ReentrancyGuardState {

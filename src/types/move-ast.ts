@@ -272,7 +272,8 @@ export type MoveExpression =
   | MoveBreakExpression
   | MoveContinueExpression
   | MoveMoveExpression
-  | MoveCopyExpression;
+  | MoveCopyExpression
+  | MoveBlockExpression;
 
 export interface MoveLiteralExpression {
   kind: 'literal';
@@ -408,6 +409,13 @@ export interface MoveMoveExpression {
 
 export interface MoveCopyExpression {
   kind: 'copy';
+  value: MoveExpression;
+  inferredType?: MoveType;
+}
+
+export interface MoveBlockExpression {
+  kind: 'block_expr';
+  statements: MoveStatement[];
   value: MoveExpression;
   inferredType?: MoveType;
 }

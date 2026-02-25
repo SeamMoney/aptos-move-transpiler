@@ -74,7 +74,6 @@ module 0x1::oracle_helper {
         let weight_prev: u64 = (sample_math::get_sample_last_update(next_sample) - look_up_timestamp);
         let weight_next: u64 = (look_up_timestamp - sample_math::get_sample_last_update(prev_sample));
         (cumulative_id, cumulative_volatility, cumulative_bin_crossed) = sample_math::get_weighted_average(prev_sample, next_sample, weight_prev, weight_next);
-        return (last_update, cumulative_id, cumulative_volatility, cumulative_bin_crossed)
     }
 
     public(package) fun binary_search(oracle: Oracle, oracle_id: u16, look_up_timestamp: u64, length: u16): (u256, u256) {
@@ -85,7 +84,7 @@ module 0x1::oracle_helper {
         let start_id: u256 = oracle_id;
         while ((low <= high)) {
             let mid: u256 = (((low + high)) >> 1u8);
-            oracle_id = ((start_id + mid) % length);
+            oracle_id = ((start_id + mid) % (length as u256));
             sample = *vector::borrow(&oracle.samples, (oracle_id as u64));
             sample_last_update = sample_math::get_sample_last_update(sample);
             if ((sample_last_update > look_up_timestamp)) {

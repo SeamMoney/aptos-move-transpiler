@@ -62,7 +62,6 @@ module 0x1::uint128x128_math {
             }
         };
         result = (((((result * sign)) as u256) << 1u8) as i256);
-        return result
     }
 
     public(package) fun pow(x: u256, y: i256): u256 {

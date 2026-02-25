@@ -121,67 +121,134 @@ module 0x1::hooks {
 
     public(package) fun on_hooks_set(hooks_parameters: u256, on_hooks_set_data: vector<u8>) {
         if ((hooks_parameters != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&hooks_parameters);
+        vector::append(&mut __bytes, bcs::to_bytes(&on_hooks_set_data));
+        __bytes
+    });
         };
     }
 
     public(package) fun before_swap(hooks_parameters: u256, sender: address, to: address, swap_for_y: bool, amounts_in: u256, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_SWAP_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&swap_for_y));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts_in));
+        __bytes
+    });
         };
     }
 
     public(package) fun after_swap(hooks_parameters: u256, sender: address, to: address, swap_for_y: bool, amounts_out: u256, state: &HooksState) {
         if ((((hooks_parameters & AFTER_SWAP_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&swap_for_y));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts_out));
+        __bytes
+    });
         };
     }
 
     public(package) fun before_flash_loan(hooks_parameters: u256, sender: address, to: address, amounts: u256, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_FLASH_LOAN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts));
+        __bytes
+    });
         };
     }
 
     public(package) fun after_flash_loan(hooks_parameters: u256, sender: address, to: address, fees: u256, fees_received: u256, state: &HooksState) {
         if ((((hooks_parameters & AFTER_FLASH_LOAN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&fees));
+        vector::append(&mut __bytes, bcs::to_bytes(&fees_received));
+        __bytes
+    });
         };
     }
 
     public(package) fun before_mint(hooks_parameters: u256, sender: address, to: address, liquidity_configs: vector<u256>, amounts_received: u256, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_MINT_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&liquidity_configs));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts_received));
+        __bytes
+    });
         };
     }
 
     public(package) fun after_mint(hooks_parameters: u256, sender: address, to: address, liquidity_configs: vector<u256>, amounts_in: u256, state: &HooksState) {
         if ((((hooks_parameters & AFTER_MINT_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&liquidity_configs));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts_in));
+        __bytes
+    });
         };
     }
 
     public(package) fun before_burn(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts_to_burn: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_BURN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&from));
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&ids));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts_to_burn));
+        __bytes
+    });
         };
     }
 
     public(package) fun after_burn(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts_to_burn: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & AFTER_BURN_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&from));
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&ids));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts_to_burn));
+        __bytes
+    });
         };
     }
 
     public(package) fun before_batch_transfer_from(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & BEFORE_TRANSFER_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&from));
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&ids));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts));
+        __bytes
+    });
         };
     }
 
     public(package) fun after_batch_transfer_from(hooks_parameters: u256, sender: address, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &HooksState) {
         if ((((hooks_parameters & AFTER_TRANSFER_FLAG)) != 0)) {
-            safe_call(hooks_parameters, vector::empty<u8>());
+            safe_call(hooks_parameters, {
+        let __bytes = bcs::to_bytes(&sender);
+        vector::append(&mut __bytes, bcs::to_bytes(&from));
+        vector::append(&mut __bytes, bcs::to_bytes(&to));
+        vector::append(&mut __bytes, bcs::to_bytes(&ids));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts));
+        __bytes
+    });
         };
     }
 

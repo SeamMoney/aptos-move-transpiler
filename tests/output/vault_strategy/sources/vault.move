@@ -128,8 +128,8 @@ module 0x1::vault {
     }
 
     public entry fun initialize(deployer: &signer, asset: address, name: std::string::String, symbol: std::string::String) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"vault");
-        move_to(&resource_signer, VaultState { name: name, symbol: symbol, asset: asset, total_supply: 0, balance_of: table::new(), allowance: table::new(), deposit_limit: /* unsupported expression */, total_debt: 0, last_report: /* unsupported expression */, locked_profit: 0, locked_profit_degradation: (46000000000000000000u256 / /* unsupported expression */), performance_fee: 0, management_fee: 0, governance: signer::address_of(deployer), management: signer::address_of(deployer), guardian: signer::address_of(deployer), strategies: table::new(), withdrawal_queue: vector::empty(), debt_ratio: 0, emergency_shutdown: false, signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"vault");
+        move_to(deployer, VaultState { name: name, symbol: symbol, asset: asset, total_supply: 0, balance_of: table::new(), allowance: table::new(), deposit_limit: /* unsupported expression */, total_debt: 0, last_report: 0u256, locked_profit: 0, locked_profit_degradation: (46000000000000000000u256 / /* unsupported expression */), performance_fee: 1000u256, management_fee: 200u256, governance: signer::address_of(deployer), management: signer::address_of(deployer), guardian: signer::address_of(deployer), strategies: table::new(), withdrawal_queue: vector::empty(), debt_ratio: 0, emergency_shutdown: false, signer_cap: signer_cap });
     }
 
     public fun transfer(account: &signer, to: address, amount: u256): bool {
@@ -138,15 +138,21 @@ module 0x1::vault {
 
     public fun approve(account: &signer, spender: address, amount: u256): bool acquires VaultState {
         let state = borrow_global_mut<VaultState>(@0x1);
-        *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.allowance, signer::address_of(account), 0u256), spender) = amount;
+        if (!table::contains(&state.allowance, signer::address_of(account))) {
+            table::add(&mut state.allowance, signer::address_of(account), table::new());
+        };
+        *table::borrow_mut(&mut *table::borrow_mut(&mut state.allowance, signer::address_of(account)), spender) = amount;
         event::emit(Approval { owner: signer::address_of(account), spender: spender, value: amount });
         return true
     }
 
     public fun transfer_from(account: &signer, from: address, to: address, amount: u256): bool acquires VaultState {
         let state = borrow_global_mut<VaultState>(@0x1);
-        if ((*table::borrow(&*table::borrow_with_default(&state.allowance, from, &0u256), signer::address_of(account)) != u256::MAX)) {
-            *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.allowance, from, 0u256), signer::address_of(account)) -= amount;
+        if ((*table::borrow_with_default(table::borrow(&state.allowance, from), signer::address_of(account), &0u256) != u256::MAX)) {
+            if (!table::contains(&state.allowance, from)) {
+                table::add(&mut state.allowance, from, table::new());
+            };
+            *table::borrow_mut(&mut *table::borrow_mut(&mut state.allowance, from), signer::address_of(account)) -= amount;
         };
         return transfer(from, to, amount, state)
     }
@@ -233,9 +239,12 @@ module 0x1::vault {
         let shares = 0u256;
         shares = preview_withdraw(assets);
         if ((signer::address_of(account) != owner)) {
-            let allowed: u256 = *table::borrow(&*table::borrow_with_default(&state.allowance, owner, &0u256), signer::address_of(account));
+            let allowed: u256 = *table::borrow_with_default(table::borrow(&state.allowance, owner), signer::address_of(account), &0u256);
             if ((allowed != u256::MAX)) {
-                *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.allowance, owner, 0u256), signer::address_of(account)) = (allowed - shares);
+                if (!table::contains(&state.allowance, owner)) {
+                    table::add(&mut state.allowance, owner, table::new());
+                };
+                *table::borrow_mut(&mut *table::borrow_mut(&mut state.allowance, owner), signer::address_of(account)) = (allowed - shares);
             };
         };
         burn(owner, shares, state);
@@ -248,9 +257,12 @@ module 0x1::vault {
         let state = borrow_global_mut<VaultState>(@0x1);
         let assets = 0u256;
         if ((signer::address_of(account) != owner)) {
-            let allowed: u256 = *table::borrow(&*table::borrow_with_default(&state.allowance, owner, &0u256), signer::address_of(account));
+            let allowed: u256 = *table::borrow_with_default(table::borrow(&state.allowance, owner), signer::address_of(account), &0u256);
             if ((allowed != u256::MAX)) {
-                *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.allowance, owner, 0u256), signer::address_of(account)) = (allowed - shares);
+                if (!table::contains(&state.allowance, owner)) {
+                    table::add(&mut state.allowance, owner, table::new());
+                };
+                *table::borrow_mut(&mut *table::borrow_mut(&mut state.allowance, owner), signer::address_of(account)) = (allowed - shares);
             };
         };
         assets = convert_to_assets(shares);
@@ -264,7 +276,7 @@ module 0x1::vault {
     public entry fun add_strategy(account: &signer, strategy: address, debt_ratio: u256, min_debt_per_harvest: u256, max_debt_per_harvest: u256) acquires VaultState {
         let state = borrow_global_mut<VaultState>(@0x1);
         assert!((signer::address_of(account) == state.governance), E_UNAUTHORIZED);
-        assert!((*table::borrow_with_default(&state.strategies, strategy, &StrategyParams { activation: 0u256, debt_ratio: 0u256, min_debt_per_harvest: 0u256, max_debt_per_harvest: 0u256, last_report: 0u256, total_debt: 0u256, total_gain: 0u256, total_loss: 0u256 }).activation == 0), E_STRATEGY_ALREADY_ACTIVE);
+        assert!(((*table::borrow_with_default(&state.strategies, strategy, &StrategyParams { activation: 0u256, debt_ratio: 0u256, min_debt_per_harvest: 0u256, max_debt_per_harvest: 0u256, last_report: 0u256, total_debt: 0u256, total_gain: 0u256, total_loss: 0u256 })).activation == 0), E_STRATEGY_ALREADY_ACTIVE);
         assert!(((state.debt_ratio + debt_ratio) <= MAX_BPS), E_INVALID_DEBT_RATIO);
         *table::borrow_mut_with_default(&mut state.strategies, strategy, StrategyParams { activation: 0u256, debt_ratio: 0u256, min_debt_per_harvest: 0u256, max_debt_per_harvest: 0u256, last_report: 0u256, total_debt: 0u256, total_gain: 0u256, total_loss: 0u256 }) = StrategyParams { activation: (timestamp::now_seconds() as u256), debt_ratio: debt_ratio, min_debt_per_harvest: min_debt_per_harvest, max_debt_per_harvest: max_debt_per_harvest, last_report: (timestamp::now_seconds() as u256), total_debt: 0, total_gain: 0, total_loss: 0 };
         state.debt_ratio += debt_ratio;
@@ -296,6 +308,7 @@ module 0x1::vault {
         params.last_report = (timestamp::now_seconds() as u256);
         state.last_report = (timestamp::now_seconds() as u256);
         event::emit(StrategyReported { strategy: signer::address_of(account), gain: gain, loss: loss, total_gain: params.total_gain, total_loss: params.total_loss });
+        table::upsert(&mut state.strategies, signer::address_of(account), params);
         return debt
     }
 

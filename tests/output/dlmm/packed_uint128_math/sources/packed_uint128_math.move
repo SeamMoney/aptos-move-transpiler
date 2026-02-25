@@ -31,13 +31,13 @@ module 0x1::packed_uint128_math {
 
     public(package) fun encode(x1: u128, x2: u128): u256 {
         let z = 0u256;
-        z = ((x1 & MASK_128) | (x2 << (OFFSET as u8)));
+        z = (((x1 as u256) & MASK_128) | ((x2 << (OFFSET as u8)) as u256));
         return z
     }
 
     public(package) fun encode_first(x1: u128): u256 {
         let z = 0u256;
-        z = (x1 & MASK_128);
+        z = ((x1 as u256) & MASK_128);
         return z
     }
 
@@ -125,8 +125,8 @@ module 0x1::packed_uint128_math {
             abort E_PACKED_UINT128_MATH_MULTIPLIER_TOO_LARGE
         };
         let (x1, x2) = decode(x);
-        x1 = ((x1 * multiplier) / BASIS_POINT_MAX);
-        x2 = ((x2 * multiplier) / BASIS_POINT_MAX);
+        x1 = (((x1 * multiplier) as u256) / BASIS_POINT_MAX);
+        x2 = (((x2 * multiplier) as u256) / BASIS_POINT_MAX);
         return encode(x1, x2)
     }
 }

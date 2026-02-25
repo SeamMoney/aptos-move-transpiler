@@ -65,8 +65,8 @@ describe('Advanced DeFi Patterns', () => {
         expect(moveCode).toMatch(/FLASH_LOAN_FEE|flash_loan|premium/i);
       });
 
-      it('should have locked field for reentrancy guard', () => {
-        expect(moveCode).toContain('locked');
+      it('should have reentrancy guard field', () => {
+        expect(moveCode).toMatch(/reentrancy_status|locked/);
       });
 
       it('should have deposit function', () => {
@@ -75,8 +75,8 @@ describe('Advanced DeFi Patterns', () => {
 
       it('should have withdraw function with reentrancy guard', () => {
         expect(moveCode).toMatch(/fun\s+withdraw/);
-        // Check for reentrancy pattern
-        expect(moveCode).toMatch(/assert!.*locked|locked.*assert!/s);
+        // Check for reentrancy pattern (reentrancy_status or locked)
+        expect(moveCode).toMatch(/assert!.*reentrancy_status|reentrancy_status.*assert!|assert!.*locked|locked.*assert!/s);
       });
 
       it('should have flashLoan function', () => {

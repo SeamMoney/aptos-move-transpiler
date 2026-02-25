@@ -54,6 +54,11 @@ import type {
   CompileCheckOptions,
   CompileDiagnostic,
 } from './compiler/move-compiler.js';
+import {
+  wasmCompileCheckModules,
+  isWasmCompilerAvailable,
+} from './compiler/wasm-move-compiler.js';
+import type { WasmCompileCheckOptions } from './compiler/wasm-move-compiler.js';
 import { generateSpecs, renderSpecs } from './codegen/spec-generator.js';
 import type { MoveSpecBlock, MoveSpecCondition } from './types/move-ast.js';
 import { analyzeContract, buildResourcePlan } from './analyzer/state-analyzer.js';
@@ -367,6 +372,46 @@ export class Sol2Move {
       ...options,
     };
     return compileCheckModules(modules, mergedOptions);
+  }
+
+  /**
+   * Async compile-check using WASM compiler (preferred) with CLI fallback.
+   *
+   * Tries the WASM Move compiler first (works without Aptos CLI installed),
+   * falls back to `aptos move compile` if WASM assets aren't available.
+   */
+  async compileCheckModulesAsync(
+    modules: { name: string; code: string }[],
+    options?: CompileCheckOptions & { wasmPath?: string; bytecodesPath?: string }
+  ): Promise<CompileCheckResult> {
+    const mergedOptions: CompileCheckOptions = {
+      moduleAddress: this.options.moduleAddress,
+      packageName: this.options.packageName,
+      ...options,
+    };
+
+    // Try WASM compiler first (requires wasmtime CLI)
+    if (options?.wasmPath && options?.bytecodesPath &&
+        isWasmCompilerAvailable(options.wasmPath, options.bytecodesPath)) {
+      return wasmCompileCheckModules(modules, {
+        ...mergedOptions,
+        wasmPath: options.wasmPath,
+        bytecodesPath: options.bytecodesPath,
+      });
+    }
+
+    // Fall back to CLI compiler
+    return compileCheckModules(modules, mergedOptions);
+  }
+
+  /**
+   * Check if any compiler backend is available (WASM or CLI).
+   */
+  isAnyCompilerAvailable(wasmPath?: string, bytecodesPath?: string): boolean {
+    if (wasmPath && bytecodesPath && isWasmCompilerAvailable(wasmPath, bytecodesPath)) {
+      return true;
+    }
+    return isCompilerAvailable();
   }
 
   // ─── Specification Generation ───────────────────────────────────

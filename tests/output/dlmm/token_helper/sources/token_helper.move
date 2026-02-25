@@ -27,12 +27,21 @@ module 0x1::token_helper {
     const E_TOKEN_HELPER_TRANSFER_FAILED: u64 = 256u64;
 
     public(package) fun safe_transfer_from(token: address, owner: address, recipient: address, amount: u256) {
-        let data: vector<u8> = vector::empty<u8>();
+        let data: vector<u8> = {
+        let __bytes = bcs::to_bytes(&owner);
+        vector::append(&mut __bytes, bcs::to_bytes(&recipient));
+        vector::append(&mut __bytes, bcs::to_bytes(&amount));
+        __bytes
+    };
         call_and_catch(token, data);
     }
 
     public(package) fun safe_transfer(token: address, recipient: address, amount: u256) {
-        let data: vector<u8> = vector::empty<u8>();
+        let data: vector<u8> = {
+        let __bytes = bcs::to_bytes(&recipient);
+        vector::append(&mut __bytes, bcs::to_bytes(&amount));
+        __bytes
+    };
         call_and_catch(token, data);
     }
 

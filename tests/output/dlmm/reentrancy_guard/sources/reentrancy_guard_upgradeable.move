@@ -40,8 +40,8 @@ module 0x1::reentrancy_guard_upgradeable {
     }
 
     fun init_module(deployer: &signer) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"reentrancy_guard_upgradeable");
-        move_to(&resource_signer, ReentrancyGuardUpgradeableState { signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"reentrancy_guard_upgradeable");
+        move_to(deployer, ReentrancyGuardUpgradeableState { signer_cap: signer_cap });
     }
 
     fun get_reentrancy_guard_storage(): ReentrancyGuardStorage {
@@ -52,7 +52,7 @@ module 0x1::reentrancy_guard_upgradeable {
 
     public(package) fun _reentrancy_guard_init(state: &mut ReentrancyGuardUpgradeableState) {
         assert!(true, E_MODIFIER_ONLY_INITIALIZING);
-        _reentrancy_guard_init_unchained(state);
+        _reentrancy_guard_init_unchained();
     }
 
     public(package) fun _reentrancy_guard_init_unchained(state: &mut ReentrancyGuardUpgradeableState) {

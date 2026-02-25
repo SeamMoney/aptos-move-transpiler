@@ -54,6 +54,16 @@ export type {
   CompileDiagnostic,
 } from './compiler/move-compiler.js';
 
+// WASM Move compiler (no CLI required)
+export {
+  wasmCompileCheckModules,
+  isWasmCompilerAvailable,
+  resetWasmCompilerCache,
+} from './compiler/wasm-move-compiler.js';
+export type {
+  WasmCompileCheckOptions,
+} from './compiler/wasm-move-compiler.js';
+
 // MSL spec generation
 export {
   generateSpecs,

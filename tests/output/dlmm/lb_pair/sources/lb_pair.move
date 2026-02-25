@@ -24,7 +24,7 @@ module 0x1::lb_pair {
     const _MAX_TOTAL_FEE: u256 = 100000000000000000u256;
     const MAX_SAMPLE_LIFETIME: u256 = 120u256;
     const SCALE_OFFSET: u8 = 128u8;
-    const CALLBACK_SUCCESS: u256 = 35999145600493609714228594312006990784747406012369540695634741508663724398019u256;
+    const CALLBACK_SUCCESS: u256 = 0u256;
     const PRECISION: u256 = 1000000000000000000u256;
     const E_REVERT: u64 = 0u64;
     const E_REQUIRE_FAILED: u64 = 1u64;
@@ -47,8 +47,24 @@ module 0x1::lb_pair {
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
     const E_MODIFIER_INITIALIZER: u64 = 256u64;
-    const E_MODIFIER_NOT_ADDRESS_ZERO_OR_THIS: u64 = 257u64;
-    const E_MODIFIER_CHECK_APPROVAL: u64 = 258u64;
+    const E_LB_PAIR_INSUFFICIENT_AMOUNT_IN: u64 = 257u64;
+    const E_LB_PAIR_OUT_OF_LIQUIDITY: u64 = 258u64;
+    const E_LB_PAIR_INSUFFICIENT_AMOUNT_OUT: u64 = 259u64;
+    const E_LB_PAIR_ZERO_BORROW_AMOUNT: u64 = 260u64;
+    const E_LB_PAIR_FLASH_LOAN_CALLBACK_FAILED: u64 = 261u64;
+    const E_LB_PAIR_FLASH_LOAN_INSUFFICIENT_AMOUNT: u64 = 262u64;
+    const E_MODIFIER_NOT_ADDRESS_ZERO_OR_THIS: u64 = 263u64;
+    const E_LB_PAIR_EMPTY_MARKET_CONFIGS: u64 = 264u64;
+    const E_MODIFIER_CHECK_APPROVAL: u64 = 265u64;
+    const E_LB_PAIR_INVALID_INPUT: u64 = 266u64;
+    const E_LB_PAIR_ZERO_AMOUNT: u64 = 267u64;
+    const E_LB_PAIR_ZERO_AMOUNTS_OUT: u64 = 268u64;
+    const E_LB_PAIR_ONLY_PROTOCOL_FEE_RECIPIENT: u64 = 269u64;
+    const E_LB_PAIR_INVALID_HOOKS: u64 = 270u64;
+    const E_LB_PAIR_ONLY_FACTORY: u64 = 271u64;
+    const E_LB_PAIR_INVALID_STATIC_FEE_PARAMETERS: u64 = 272u64;
+    const E_LB_PAIR_MAX_TOTAL_FEE_EXCEEDED: u64 = 273u64;
+    const E_LB_PAIR_ZERO_SHARES: u64 = 274u64;
 
     struct LBPairState has key {
         implementation: address,
@@ -60,21 +76,22 @@ module 0x1::lb_pair {
         tree: TreeUint24,
         oracle: Oracle,
         hooks_parameters: u256,
+        reentrancy_status: u8,
         signer_cap: account::SignerCapability
     }
 
     public entry fun initialize(deployer: &signer, factory_: address) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_pair");
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_pair");
         disable_initializers();
-        move_to(&resource_signer, LBPairState { implementation: /* unsupported expression */, factory: factory_, parameters: 0, reserves: 0, protocol_fees: 0, bins: table::new(), tree: 0, oracle: 0, hooks_parameters: 0, signer_cap: signer_cap });
+        move_to(deployer, LBPairState { implementation: /* unsupported expression */, factory: factory_, parameters: 0, reserves: 0, protocol_fees: 0, bins: table::new(), tree: 0, oracle: 0, hooks_parameters: 0, reentrancy_status: 1u8, signer_cap: signer_cap });
     }
 
     public entry fun initialize(account: &signer, base_factor: u16, filter_period: u16, decay_period: u16, reduction_factor: u16, variable_fee_control: u32, protocol_share: u16, max_volatility_accumulator: u32, active_id: u32) acquires LBPairState {
         let state = borrow_global_mut<LBPairState>(@0x1);
-        only_factory(state);
+        only_factory(signer::address_of(account));
         assert!(true, E_MODIFIER_INITIALIZER);
         _reentrancy_guard_init();
-        set_static_fee_parameters(pair_parameter_helper::update_id_reference(pair_parameter_helper::set_active_id(state.parameters, active_id)), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, state);
+        set_static_fee_parameters(account, pair_parameter_helper::update_id_reference(pair_parameter_helper::set_active_id(state.parameters, active_id)), base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, state);
     }
 
     #[view]
@@ -227,7 +244,6 @@ module 0x1::lb_pair {
             cumulative_id += (((pair_parameter_helper::get_active_id(parameters) as u64) * delta_time) as u64);
             cumulative_volatility += (((pair_parameter_helper::get_volatility_accumulator(parameters) as u64) * delta_time) as u64);
         };
-        return (cumulative_id, cumulative_volatility, cumulative_bin_crossed)
     }
 
     public fun get_price_from_id(id: u32): u256 {
@@ -385,10 +401,18 @@ module 0x1::lb_pair {
         };
         let hooks_parameters: u256 = state.hooks_parameters;
         let reserves_before: u256 = state.reserves;
-        let total_fees: u256 = get_flash_loan_fees(amounts, state);
+        let total_fees: u256 = get_flash_loan_fees(amounts);
         hooks::before_flash_loan(hooks_parameters, signer::address_of(account), evm_compat::to_address(receiver), amounts);
         bin_helper::transfer(amounts, token_x(), token_y(), evm_compat::to_address(receiver));
-        let (success, r_data) = call(evm_compat::to_address(receiver), vector::empty<u8>());
+        let (success, r_data) = call(evm_compat::to_address(receiver), {
+        let __bytes = bcs::to_bytes(&signer::address_of(account));
+        vector::append(&mut __bytes, bcs::to_bytes(&token_x()));
+        vector::append(&mut __bytes, bcs::to_bytes(&token_y()));
+        vector::append(&mut __bytes, bcs::to_bytes(&amounts));
+        vector::append(&mut __bytes, bcs::to_bytes(&total_fees));
+        vector::append(&mut __bytes, bcs::to_bytes(&data));
+        __bytes
+    });
         if (((!success || (vector::length(&r_data) != 32)) || (bcs::from_bytes(r_data) != CALLBACK_SUCCESS))) {
             abort E_LB_PAIR_FLASH_LOAN_CALLBACK_FAILED
         };
@@ -419,7 +443,7 @@ module 0x1::lb_pair {
         let reserves: u256 = state.reserves;
         amounts_received = bin_helper::received(reserves, token_x(), token_y());
         hooks::before_mint(hooks_parameters, signer::address_of(account), to, liquidity_configs, amounts_received);
-        amounts_left = mint_bins(liquidity_configs, amounts_received, to, arrays, state);
+        amounts_left = mint_bins(account, liquidity_configs, amounts_received, to, arrays, state);
         state.reserves = (reserves + (amounts_received - amounts_left));
         liquidity_minted = arrays.liquidity_minted;
         event::emit(TransferBatch { arg0: signer::address_of(account), arg1: @0x0, arg2: to, arg3: arrays.ids, arg4: liquidity_minted });
@@ -495,6 +519,7 @@ module 0x1::lb_pair {
             event::emit(CollectedProtocolFees { arg0: signer::address_of(account), arg1: collected_protocol_fees });
             bin_helper::transfer(collected_protocol_fees, token_x(), token_y(), signer::address_of(account));
         };
+        state.reentrancy_status = 1u8;
         return collected_protocol_fees
     }
 
@@ -517,8 +542,8 @@ module 0x1::lb_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
-        only_factory(state);
-        set_static_fee_parameters(state.parameters, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, state);
+        only_factory(signer::address_of(account));
+        set_static_fee_parameters(account, state.parameters, base_factor, filter_period, decay_period, reduction_factor, variable_fee_control, protocol_share, max_volatility_accumulator, state);
         state.reentrancy_status = 1u8;
     }
 
@@ -526,7 +551,7 @@ module 0x1::lb_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
-        only_factory(state);
+        only_factory(signer::address_of(account));
         state.hooks_parameters = hooks_parameters;
         let hooks: address = ilb_hooks(hooks::get_hooks(hooks_parameters));
         event::emit(HooksParametersSet { arg0: signer::address_of(account), arg1: hooks_parameters });
@@ -541,7 +566,7 @@ module 0x1::lb_pair {
         let state = borrow_global_mut<LBPairState>(@0x1);
         assert!((state.reentrancy_status != 2u8), E_REENTRANCY);
         state.reentrancy_status = 2u8;
-        only_factory(state);
+        only_factory(signer::address_of(account));
         let parameters: u256 = state.parameters;
         state.parameters = pair_parameter_helper::update_volatility_reference(pair_parameter_helper::update_id_reference(parameters));
         event::emit(ForcedDecay { arg0: signer::address_of(account), arg1: pair_parameter_helper::get_id_reference(parameters), arg2: pair_parameter_helper::get_volatility_reference(parameters) });
@@ -586,8 +611,8 @@ module 0x1::lb_pair {
         let fee: u128 = (get_flash_loan_fee(state.factory) as u128);
         let (x, y) = packed_uint128_math::decode(amounts);
         let precision_sub_one: u256 = (PRECISION - 1);
-        x = safe_cast::safe128(((((((x as u256) * fee) + precision_sub_one)) / PRECISION)));
-        y = safe_cast::safe128(((((((y as u256) * fee) + precision_sub_one)) / PRECISION)));
+        x = safe_cast::safe128(((((((x as u256) * (fee as u256)) + precision_sub_one)) / PRECISION)));
+        y = safe_cast::safe128(((((((y as u256) * (fee as u256)) + precision_sub_one)) / PRECISION)));
         return packed_uint128_math::encode(x, y)
     }
 
@@ -606,7 +631,7 @@ module 0x1::lb_pair {
         event::emit(StaticFeeParametersSet { arg0: signer::address_of(account), arg1: base_factor, arg2: filter_period, arg3: decay_period, arg4: reduction_factor, arg5: variable_fee_control, arg6: protocol_share, arg7: max_volatility_accumulator });
     }
 
-    fun mint_bins(liquidity_configs: vector<u256>, amounts_received: u256, to: address, arrays: MintArrays, state: &mut LBPairState): u256 {
+    fun mint_bins(account: &signer, liquidity_configs: vector<u256>, amounts_received: u256, to: address, arrays: MintArrays, state: &mut LBPairState): u256 {
         let amounts_left = 0u256;
         let bin_step: u16 = bin_step();
         let parameters: u256 = state.parameters;
@@ -615,7 +640,7 @@ module 0x1::lb_pair {
         let i: u256;
         while ((i < (vector::length(&liquidity_configs) as u256))) {
             let (max_amounts_in_to_bin, id) = get_amounts_and_id(*vector::borrow(&liquidity_configs, (i as u64)), amounts_received);
-            let (shares, amounts_in, amounts_in_to_bin) = update_bin(bin_step, active_id, id, max_amounts_in_to_bin, parameters, state);
+            let (shares, amounts_in, amounts_in_to_bin) = update_bin(account, bin_step, active_id, id, max_amounts_in_to_bin, parameters, state);
             amounts_left = (amounts_left - amounts_in);
             *vector::borrow_mut(&mut arrays.ids, (i as u64)) = id;
             *vector::borrow_mut(&mut arrays.amounts, (i as u64)) = amounts_in_to_bin;

@@ -14,6 +14,35 @@ import { transformEvent } from './event-transformer.js';
 import { createIRType } from '../mapper/type-mapper.js';
 import { solidityStatementToIR, solidityExpressionToIR, wrapErrorCode } from './expression-transformer.js';
 
+/** Known Solidity variable names used for reentrancy guards (OZ and custom patterns) */
+const REENTRANCY_VAR_NAMES = new Set(['_status', 'locked', '_locked', '_not_entered', '_notEntered', 'status', 'reentrancyStatus', '_reentrancyStatus', 'reentrancy_status']);
+
+/**
+ * Inject reentrancy_status init field into constructor stateFields when nonReentrant is used.
+ * Also filters out any native Solidity reentrancy variables to avoid duplication.
+ */
+function injectReentrancyInitField(
+  stateFields: { name: string; value: any }[],
+  context: TranspileContext
+): void {
+  if (!(context as any).usesNonReentrant) return;
+
+  // Remove native reentrancy fields that mapped from Solidity
+  for (let i = stateFields.length - 1; i >= 0; i--) {
+    if (REENTRANCY_VAR_NAMES.has(stateFields[i].name)) {
+      stateFields.splice(i, 1);
+    }
+  }
+
+  // Add reentrancy_status: 1u8 (NOT_ENTERED)
+  if (!stateFields.some(f => f.name === 'reentrancy_status')) {
+    stateFields.push({
+      name: 'reentrancy_status',
+      value: { kind: 'literal', type: 'number', value: 1, suffix: 'u8' },
+    });
+  }
+}
+
 /**
  * Get the configured signer parameter name from context.
  * Returns 'account' (default) or 'signer' depending on the signerParamName flag.
@@ -720,7 +749,11 @@ export function irToMoveModule(
 
   // Build function registry for detecting internal state-accessing functions
   // This enables the double-mutable-borrow prevention strategy
-  const stateVarNames = new Set(flattenedIR.stateVariables.map(v => v.name));
+  const stateVarNames = new Set(
+    flattenedIR.stateVariables
+      .filter(v => v.mutability !== 'constant' && v.mutability !== 'immutable')
+      .map(v => v.name)
+  );
   const functionByName = new Map<string, IRFunction>();
   const directSignerNeeds = new Map<string, 'none' | 'signer-ref' | 'address'>();
   const directCalls = new Map<string, Set<string>>();
@@ -786,6 +819,7 @@ export function irToMoveModule(
     warnings: [],
     usedModules: new Set(),
     acquiredResources: new Set(),
+    errorCodes: new Map(),
     inheritedContracts: allContracts,
     optimizationLevel: options?.optimizationLevel || 'low',
     strictMode: options?.strictMode || false,
@@ -811,6 +845,12 @@ export function irToMoveModule(
     indexNotation: options?.indexNotation || false,
     acquiresStyle: options?.acquiresStyle || 'explicit',
   };
+
+  // Detect if any function uses nonReentrant modifier — needed for struct field injection
+  (context as any).usesNonReentrant = context.reentrancyPattern === 'mutex' &&
+    flattenedIR.functions.some((fn: any) =>
+      fn.modifiers?.some((m: any) => m.name === 'nonReentrant')
+    );
 
   // Attach function registry for borrow checker prevention
   (context as any).functionRegistry = functionRegistry;
@@ -1500,8 +1540,22 @@ function transformStateVariablesToResource(
       continue;
     }
 
+    // Skip native Solidity reentrancy fields — replaced by injected reentrancy_status
+    if ((context as any).usesNonReentrant) {
+      const snakeName = toSnakeCase(variable.name);
+      if (REENTRANCY_VAR_NAMES.has(snakeName) || REENTRANCY_VAR_NAMES.has(variable.name)) continue;
+    }
+
     const field = transformStateVariable(variable, context);
     struct.fields.push(field);
+  }
+
+  // Inject reentrancy_status: u8 field when nonReentrant is used
+  if ((context as any).usesNonReentrant) {
+    struct.fields.push({
+      name: 'reentrancy_status',
+      type: { kind: 'primitive', name: 'u8' },
+    });
   }
 
   return struct;
@@ -1526,6 +1580,12 @@ function transformResourceGroup(
     const variable = analysis.variable;
     if (variable.mutability === 'constant') continue;
 
+    // Skip native reentrancy fields when injecting our own
+    if ((context as any).usesNonReentrant) {
+      const snakeName = toSnakeCase(variable.name);
+      if (REENTRANCY_VAR_NAMES.has(snakeName) || REENTRANCY_VAR_NAMES.has(variable.name)) continue;
+    }
+
     // For aggregatable variables at medium+, use Aggregator type
     if (analysis.category === 'aggregatable' && context.optimizationLevel !== 'low') {
       struct.fields.push({
@@ -1541,6 +1601,14 @@ function transformResourceGroup(
       const field = transformStateVariable(variable, context);
       struct.fields.push(field);
     }
+  }
+
+  // Inject reentrancy_status into primary resource group
+  if (group.isPrimary && (context as any).usesNonReentrant) {
+    struct.fields.push({
+      name: 'reentrancy_status',
+      type: { kind: 'primitive', name: 'u8' },
+    });
   }
 
   return struct;
@@ -1622,6 +1690,12 @@ function generateOptimizedInit(
       const v = analysis.variable;
       if (v.mutability === 'constant') continue;
 
+      // Skip native reentrancy fields when injecting our own
+      if ((context as any).usesNonReentrant) {
+        const snakeName = toSnakeCase(v.name);
+        if (REENTRANCY_VAR_NAMES.has(snakeName) || REENTRANCY_VAR_NAMES.has(v.name)) continue;
+      }
+
       if (analysis.category === 'aggregatable' && context.optimizationLevel !== 'low') {
         // Initialize unbounded Aggregator (no max_value limit, better parallelism)
         context.usedModules.add('aptos_framework::aggregator_v2');
@@ -1673,8 +1747,10 @@ function generateOptimizedInit(
       }
     }
 
-    // Primary group gets pattern-specific capability/reference field
+    // Primary group gets reentrancy init and pattern-specific capability/reference field
     if (group.isPrimary) {
+      injectReentrancyInitField(fields, context);
+
       if (constructorPattern === 'resource-account') {
         fields.push({
           name: 'signer_cap',
@@ -1787,7 +1863,15 @@ function generateDefaultInit(
   context.usedModules.add('std::string');
 
   const stateFields = stateVariables
-    .filter(v => v.mutability !== 'constant')
+    .filter(v => {
+      if (v.mutability === 'constant') return false;
+      // Skip native reentrancy fields when injecting our own
+      if ((context as any).usesNonReentrant) {
+        const snakeName = toSnakeCase(v.name);
+        if (REENTRANCY_VAR_NAMES.has(snakeName) || REENTRANCY_VAR_NAMES.has(v.name)) return false;
+      }
+      return true;
+    })
     .map(v => {
       if (v.isMapping) {
         const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
@@ -1811,6 +1895,9 @@ function generateDefaultInit(
           getDefaultValue(v.type, context),
       };
     });
+
+  // Inject reentrancy init field if needed
+  injectReentrancyInitField(stateFields, context);
 
   // Add signer_cap field
   stateFields.push({
@@ -1869,7 +1956,15 @@ function generateDeployerDirectInit(
   const stateName = `${contractName}State`;
 
   const stateFields = stateVariables
-    .filter(v => v.mutability !== 'constant')
+    .filter(v => {
+      if (v.mutability === 'constant') return false;
+      // Skip native reentrancy fields when injecting our own
+      if ((context as any).usesNonReentrant) {
+        const snakeName = toSnakeCase(v.name);
+        if (REENTRANCY_VAR_NAMES.has(snakeName) || REENTRANCY_VAR_NAMES.has(v.name)) return false;
+      }
+      return true;
+    })
     .map(v => {
       if (v.isMapping) {
         const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
@@ -1893,6 +1988,9 @@ function generateDeployerDirectInit(
           getDefaultValue(v.type, context),
       };
     });
+
+  // Inject reentrancy init field if needed
+  injectReentrancyInitField(stateFields, context);
 
   return {
     name: 'init_module',
@@ -1934,7 +2032,15 @@ function generateNamedObjectInit(
   context.usedModules.add('aptos_framework::object');
 
   const stateFields = stateVariables
-    .filter(v => v.mutability !== 'constant')
+    .filter(v => {
+      if (v.mutability === 'constant') return false;
+      // Skip native reentrancy fields when injecting our own
+      if ((context as any).usesNonReentrant) {
+        const snakeName = toSnakeCase(v.name);
+        if (REENTRANCY_VAR_NAMES.has(snakeName) || REENTRANCY_VAR_NAMES.has(v.name)) return false;
+      }
+      return true;
+    })
     .map(v => {
       if (v.isMapping) {
         const tblModPath = context.mappingType === 'smart-table' ? 'aptos_std::smart_table' : 'aptos_std::table';
@@ -1958,6 +2064,9 @@ function generateNamedObjectInit(
           getDefaultValue(v.type, context),
       };
     });
+
+  // Inject reentrancy init field if needed
+  injectReentrancyInitField(stateFields, context);
 
   // Add extend_ref field to the struct initialization
   stateFields.push({
@@ -2315,7 +2424,7 @@ function generateStateConstants(
     if (variable.mutability !== 'constant') continue;
 
     // Get the Move type for this constant
-    const moveType = variable.type.move || { kind: 'primitive', name: 'u256' };
+    let moveType = variable.type.move || { kind: 'primitive', name: 'u256' };
 
     // Transform the initial value to a Move expression
     // Pass context.constants so references to previously-defined constants can be inlined
@@ -2326,11 +2435,30 @@ function generateStateConstants(
       value = getDefaultConstantValue(moveType);
     }
 
+    // String constants must use vector<u8> — Move doesn't support String in const
+    const isStringConstant = (moveType.kind === 'struct' && moveType.module?.includes('string'))
+      || variable.type.solidity === 'string';
+    if (isStringConstant) {
+      moveType = { kind: 'vector', elementType: { kind: 'primitive', name: 'u8' } };
+      // Convert string::utf8(b"...") → b"..." or string literal → b"..."
+      if (value?.kind === 'call' && value.function === 'string::utf8') {
+        value = value.args?.[0] || { kind: 'literal', type: 'bytestring', value: 'b""' };
+      } else if (value?.kind === 'literal' && value.type === 'string') {
+        value = { kind: 'literal', type: 'bytestring', value: `b"${value.value}"` };
+      }
+    }
+
     // Add to context so expression transformer knows this is a constant
+    // Track original Solidity type for string constants (used to wrap with string::utf8 at usage)
     if (!context.constants) {
       context.constants = new Map();
     }
-    context.constants.set(variable.name, { type: moveType, value });
+    context.constants.set(variable.name, {
+      type: variable.type,
+      moveType,
+      value,
+      isStringConstant,
+    });
 
     constants.push({
       name: toScreamingSnakeCase(variable.name),
@@ -2715,7 +2843,7 @@ function transformIRExpressionToMove(expr: any): any {
   return expr;
 }
 
-function getDefaultValue(type: any, context?: TranspileContext): any {
+function getDefaultValue(type: any, context?: TranspileContext, depth = 0): any {
   if (type.move?.kind === 'primitive') {
     switch (type.move.name) {
       case 'bool': return { kind: 'literal', type: 'bool', value: false };
@@ -2735,17 +2863,40 @@ function getDefaultValue(type: any, context?: TranspileContext): any {
   if (type.move?.kind === 'vector') {
     return { kind: 'call', function: 'vector::empty', args: [] };
   }
+  // Struct types: recursively build struct literal with default fields
+  if (type.move?.kind === 'struct' && context && depth < 5) {
+    const moveType = type.move;
+    if (moveType.module?.includes('string')) {
+      context.usedModules.add('std::string');
+      return { kind: 'call', function: 'string::utf8', args: [{ kind: 'vector', elements: [] }] };
+    }
+    if (moveType.name === 'Table' || moveType.name === 'SmartTable') {
+      const mod = moveType.name === 'SmartTable' ? 'smart_table' : 'table';
+      context.usedModules.add(mod === 'smart_table' ? 'aptos_std::smart_table' : 'aptos_std::table');
+      return { kind: 'call', function: `${mod}::new`, args: [] };
+    }
+    const structDef = context.structs?.get(moveType.name);
+    if (structDef && structDef.fields?.length > 0) {
+      return {
+        kind: 'struct',
+        name: moveType.name,
+        fields: structDef.fields.map((f: any) => ({
+          name: toSnakeCase(f.name),
+          value: getDefaultValue(f.type || { move: f.type }, context, depth + 1),
+        })),
+      };
+    }
+  }
   return { kind: 'literal', type: 'number', value: 0 };
 }
 
 /** Get default value for a MoveType (not IRType). Used by per-user resource generation. */
-function getDefaultValueForType(moveType: any, context?: TranspileContext): any {
+function getDefaultValueForType(moveType: any, context?: TranspileContext, depth = 0): any {
   if (!moveType) return { kind: 'literal', type: 'number', value: 0 };
   if (moveType.kind === 'primitive') {
     switch (moveType.name) {
       case 'bool': return { kind: 'literal', type: 'bool', value: false };
       case 'address':
-        // optionalValues='option-type': default address → option::none<address>()
         if (context?.optionalValues === 'option-type') {
           context.usedModules.add('std::option');
           return { kind: 'call', function: 'option::none', typeArgs: [{ kind: 'primitive', name: 'address' }], args: [] };
@@ -2759,6 +2910,28 @@ function getDefaultValueForType(moveType: any, context?: TranspileContext): any 
   }
   if (moveType.kind === 'vector') {
     return { kind: 'call', function: 'vector::empty', args: [] };
+  }
+  if (moveType.kind === 'struct' && context && depth < 5) {
+    if (moveType.module?.includes('string')) {
+      context.usedModules.add('std::string');
+      return { kind: 'call', function: 'string::utf8', args: [{ kind: 'vector', elements: [] }] };
+    }
+    if (moveType.name === 'Table' || moveType.name === 'SmartTable') {
+      const mod = moveType.name === 'SmartTable' ? 'smart_table' : 'table';
+      context.usedModules.add(mod === 'smart_table' ? 'aptos_std::smart_table' : 'aptos_std::table');
+      return { kind: 'call', function: `${mod}::new`, args: [] };
+    }
+    const structDef = context.structs?.get(moveType.name);
+    if (structDef && structDef.fields?.length > 0) {
+      return {
+        kind: 'struct',
+        name: moveType.name,
+        fields: structDef.fields.map((f: any) => ({
+          name: toSnakeCase(f.name),
+          value: getDefaultValueForType(f.type?.move || f.type || { kind: 'primitive', name: 'u256' }, context, depth + 1),
+        })),
+      };
+    }
   }
   return { kind: 'literal', type: 'number', value: 0 };
 }

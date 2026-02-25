@@ -78,8 +78,8 @@ module 0x1::staking_rewards {
     }
 
     public entry fun initialize(deployer: &signer, staking_token: address, rewards_token: address) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"staking_rewards");
-        move_to(&resource_signer, StakingRewardsState { rewards_token: rewards_token, staking_token: staking_token, total_staked: 0, staked_balance: table::new(), reward_rate: 0, rewards_duration: 0, period_finish: 0, last_update_time: 0, reward_per_token_stored: 0, user_reward_per_token_paid: table::new(), rewards: table::new(), owner: signer::address_of(deployer), rewards_distributor: signer::address_of(deployer), signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"staking_rewards");
+        move_to(deployer, StakingRewardsState { rewards_token: rewards_token, staking_token: staking_token, total_staked: 0, staked_balance: table::new(), reward_rate: 0, rewards_duration: 7u256, period_finish: 0, last_update_time: 0, reward_per_token_stored: 0, user_reward_per_token_paid: table::new(), rewards: table::new(), owner: signer::address_of(deployer), rewards_distributor: signer::address_of(deployer), signer_cap: signer_cap });
     }
 
     #[view]

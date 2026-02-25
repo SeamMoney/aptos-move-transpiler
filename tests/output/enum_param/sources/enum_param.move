@@ -39,8 +39,8 @@ module 0x1::enum_param {
     }
 
     fun init_module(deployer: &signer) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"enum_param");
-        move_to(&resource_signer, EnumParamState { item_status: table::new(), signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"enum_param");
+        move_to(deployer, EnumParamState { item_status: table::new(), signer_cap: signer_cap });
     }
 
     public entry fun set_status(account: &signer, id: u256, status: Status) acquires EnumParamState {

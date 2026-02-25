@@ -195,7 +195,7 @@ const EVM_COMPAT_MODULE_SOURCE = `module transpiler::evm_compat {
         bytes_to_u256(bytes)
     }
 
-    fun bytes_to_u256(bytes: vector<u8>): u256 {
+    public fun bytes_to_u256(bytes: vector<u8>): u256 {
         let len = vector::length(&bytes);
         let value: u256 = 0;
         let i = 0;

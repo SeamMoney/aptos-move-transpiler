@@ -341,6 +341,81 @@ describe('DeFi Protocol Transpilation', () => {
   });
 });
 
+describe('NovaDEX Complex AMM (exercises all 6 compilation fixes)', () => {
+  it('should transpile NovaDEX contract', () => {
+    const source = readFixture('NovaDEX.sol');
+    const result = transpileAndValidate(source, 'nova_dex');
+
+    expect(result.success).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('should not add state param to pure functions (Fix #1)', () => {
+    const source = readFixture('NovaDEX.sol');
+    const result = transpileAndValidate(source, 'nova_dex_fix1');
+
+    expect(result.success).toBe(true);
+    // Pure functions should NOT have 'state' parameter — only their declared params
+    expect(result.code).toContain('fun compute_fees_owed(volume: u256, fee_rate: u256, duration: u256): u256');
+    expect(result.code).toContain('fun get_pool_value(reserve0: u256, reserve1: u256, price0: u256, price1: u256): u256');
+    expect(result.code).toContain('fun get_amount_out(amount_in: u256, reserve_in: u256, reserve_out: u256): u256');
+  });
+
+  it('should declare E_ZERO_TREASURY error constant (Fix #2)', () => {
+    const source = readFixture('NovaDEX.sol');
+    const result = transpileAndValidate(source, 'nova_dex_fix2');
+
+    expect(result.success).toBe(true);
+    expect(result.code).toContain('E_ZERO_TREASURY');
+  });
+
+  it('should wrap keccak256 with bytes_to_u256 (Fix #3)', () => {
+    const source = readFixture('NovaDEX.sol');
+    const result = transpileAndValidate(source, 'nova_dex_fix3');
+
+    expect(result.success).toBe(true);
+    expect(result.code).toContain('evm_compat::bytes_to_u256');
+    expect(result.code).toContain('aptos_hash::keccak256');
+  });
+
+  it('should handle nested mapping access (Fix #4)', () => {
+    const source = readFixture('NovaDEX.sol');
+    const result = transpileAndValidate(source, 'nova_dex_fix4');
+
+    expect(result.success).toBe(true);
+    // Nested table type
+    expect(result.code).toContain('Table<u256, aptos_std::table::Table<address, UserPosition>>');
+    // Nested borrow pattern without double-& wrapper
+    expect(result.code).toContain('table::borrow(');
+    // Contains + add pattern for lazy initialization
+    expect(result.code).toContain('table::contains(');
+    expect(result.code).toContain('table::add(');
+  });
+
+  it('should harmonize arithmetic types (Fix #5)', () => {
+    const source = readFixture('NovaDEX.sol');
+    const result = transpileAndValidate(source, 'nova_dex_fix5');
+
+    expect(result.success).toBe(true);
+    // u16 and u8 fields/constants should be cast to u256 in arithmetic
+    expect(result.code).toContain('as u256)');
+  });
+
+  it('should generate evm_compat module', () => {
+    const source = readFixture('NovaDEX.sol');
+    const result = transpile(source, {
+      moduleAddress: '0x1',
+      packageName: 'nova_dex_compat',
+      generateToml: true,
+    });
+
+    expect(result.success).toBe(true);
+    const evmCompat = result.modules.find(m => m.name === 'evm_compat');
+    expect(evmCompat).toBeDefined();
+    expect(evmCompat!.code).toContain('public fun bytes_to_u256');
+  });
+});
+
 describe('Complex Solidity Features', () => {
   describe('Struct handling', () => {
     it('should handle nested structs', () => {

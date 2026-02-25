@@ -28,6 +28,12 @@ module 0x1::lb_token {
     const E_OVERFLOW: u64 = 17u64;
     const E_UNDERFLOW: u64 = 18u64;
     const E_DIVISION_BY_ZERO: u64 = 18u64;
+    const E_LB_TOKEN_SPENDER_NOT_APPROVED: u64 = 256u64;
+    const E_LB_TOKEN_BURN_EXCEEDS_BALANCE: u64 = 257u64;
+    const E_LB_TOKEN_TRANSFER_EXCEEDS_BALANCE: u64 = 258u64;
+    const E_LB_TOKEN_SELF_APPROVAL: u64 = 259u64;
+    const E_LB_TOKEN_ADDRESS_THIS_OR_ZERO: u64 = 260u64;
+    const E_LB_TOKEN_INVALID_LENGTH: u64 = 261u64;
 
     struct LBTokenState has key {
         balances: aptos_std::table::Table<address, aptos_std::table::Table<u256, u256>>,
@@ -37,8 +43,8 @@ module 0x1::lb_token {
     }
 
     fun init_module(deployer: &signer) {
-        let (resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_token");
-        move_to(&resource_signer, LBTokenState { balances: table::new(), total_supplies: table::new(), spender_approvals: table::new(), signer_cap: signer_cap });
+        let (_resource_signer, signer_cap) = account::create_resource_account(deployer, b"lb_token");
+        move_to(deployer, LBTokenState { balances: table::new(), total_supplies: table::new(), spender_approvals: table::new(), signer_cap: signer_cap });
     }
 
     public fun name(): std::string::String {
@@ -58,7 +64,7 @@ module 0x1::lb_token {
     #[view]
     public fun balance_of(account: address, id: u256): u256 acquires LBTokenState {
         let state = borrow_global<LBTokenState>(@0x1);
-        return *table::borrow(&*table::borrow_with_default(&state.balances, account, &0u256), id)
+        return *table::borrow_with_default(table::borrow(&state.balances, account), id, &0u256)
     }
 
     public fun balance_of_batch(accounts: vector<address>, ids: vector<u256>): vector<u256> {
@@ -85,21 +91,24 @@ module 0x1::lb_token {
         if (!is_approved_for_all(from, signer::address_of(account), state)) {
             abort E_LB_TOKEN_SPENDER_NOT_APPROVED
         };
-        batch_transfer_from(from, to, ids, amounts, state);
+        batch_transfer_from(account, from, to, ids, amounts, state);
     }
 
     #[view]
     public(package) fun is_approved_for_all(owner: address, spender: address, state: &LBTokenState): bool {
-        return ((owner == spender) || *table::borrow(&*table::borrow_with_default(&state.spender_approvals, owner, &0u256), spender))
+        return ((owner == spender) || *table::borrow_with_default(table::borrow(&state.spender_approvals, owner), spender, &false))
     }
 
     public(package) fun mint(account: address, id: u256, amount: u256, state: &mut LBTokenState) {
         *table::borrow_mut_with_default(&mut state.total_supplies, id, 0u256) += amount;
-        *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.balances, account, 0u256), id) += amount;
+        if (!table::contains(&state.balances, account)) {
+            table::add(&mut state.balances, account, table::new());
+        };
+        *table::borrow_mut(&mut *table::borrow_mut(&mut state.balances, account), id) += amount;
     }
 
     public(package) fun burn(account: address, id: u256, amount: u256, state: &LBTokenState) {
-        let account_balances: aptos_std::table::Table<u256, u256> = *table::borrow_with_default(&state.balances, account, &0u256);
+        let account_balances: aptos_std::table::Table<u256, u256> = table::borrow(&state.balances, account);
         let balance: u256 = *table::borrow_with_default(&account_balances, id, &0u256);
         if ((balance < amount)) {
             abort E_LB_TOKEN_BURN_EXCEEDS_BALANCE
@@ -111,8 +120,8 @@ module 0x1::lb_token {
     public(package) fun batch_transfer_from(account: &signer, from: address, to: address, ids: vector<u256>, amounts: vector<u256>, state: &mut LBTokenState) {
         check_length(vector::length(&ids), vector::length(&amounts));
         not_address_zero_or_this(to);
-        let from_balances: aptos_std::table::Table<u256, u256> = *table::borrow_with_default(&state.balances, from, &0u256);
-        let to_balances: aptos_std::table::Table<u256, u256> = *table::borrow_with_default(&state.balances, to, &0u256);
+        let from_balances: aptos_std::table::Table<u256, u256> = table::borrow(&state.balances, from);
+        let to_balances: aptos_std::table::Table<u256, u256> = table::borrow(&state.balances, to);
         let i: u256;
         while ((i < (vector::length(&ids) as u256))) {
             let id: u256 = *vector::borrow(&ids, (i as u64));
@@ -133,7 +142,10 @@ module 0x1::lb_token {
         if ((owner == spender)) {
             abort E_LB_TOKEN_SELF_APPROVAL
         };
-        *table::borrow_mut(&mut *table::borrow_mut_with_default(&mut state.spender_approvals, owner, 0u256), spender) = approved;
+        if (!table::contains(&state.spender_approvals, owner)) {
+            table::add(&mut state.spender_approvals, owner, table::new());
+        };
+        *table::borrow_mut(&mut *table::borrow_mut(&mut state.spender_approvals, owner), spender) = approved;
         event::emit(ApprovalForAll { arg0: owner, arg1: spender, arg2: approved });
     }
 
